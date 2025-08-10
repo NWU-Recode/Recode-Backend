@@ -61,10 +61,8 @@ python -m venv venv
 - **Windows:**
   ```sh
   .venv\Scripts\activate
-  ```
-- **Mac/Linux:**
-  ```sh
-  source venv/bin/activate
+  # or if your folder is named "venv"
+  venv\Scripts\activate
   ```
 
 ---
