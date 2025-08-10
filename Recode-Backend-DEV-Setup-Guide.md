@@ -60,7 +60,7 @@ python -m venv venv
 
 - **Windows:**
   ```sh
-  .venv\Scripts\Activate
+  venv\Scripts\activate
   ```
 - **Mac/Linux:**
   ```sh
