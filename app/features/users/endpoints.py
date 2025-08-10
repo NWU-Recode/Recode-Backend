@@ -6,4 +6,4 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 @router.get("/", response_model=list[User])
 def read_users():
-    return get_all_users();
+    return get_all_users()
