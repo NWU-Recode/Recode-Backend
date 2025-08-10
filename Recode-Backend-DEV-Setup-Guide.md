@@ -1,4 +1,3 @@
-
 # Recode Backend – Setup Guide
 
 ---
@@ -8,6 +7,7 @@
 To keep the codebase clean and collaboration simple, always work from the `dev` branch and never commit directly to `main` or `dev`.
 
 **Branch Structure:**
+
 - **`main`**: Stable, production-ready code. No direct commits—only merges from `dev` after testing and review.
 - **`dev`**: All development happens here. Feature and fix branches are merged into `dev` via pull requests.
 - **Feature branches:** For new features. Name as `feat/<short-feature-description>`, e.g., `feat/user-auth`.
@@ -15,6 +15,7 @@ To keep the codebase clean and collaboration simple, always work from the `dev` 
 - **Other types:** Use `hotfix/`, `docs/`, or `refactor/` as needed, e.g., `hotfix/deploy-issue`, `docs/setup-guide`.
 
 **Workflow:**
+
 1. Always start by switching to `dev` and pulling the latest changes:
    ```sh
    git checkout dev
@@ -30,6 +31,7 @@ To keep the codebase clean and collaboration simple, always work from the `dev` 
 4. Only leads/maintainers merge `dev` into `main` after code is tested and reviewed.
 
 **Key Points:**
+
 - Never work directly on `main` or `dev`.
 - Name branches clearly and briefly.
 - Use Pull Requests for all merges.
@@ -40,6 +42,7 @@ To keep the codebase clean and collaboration simple, always work from the `dev` 
 ## 2. Clone the Repository
 
 Open a terminal and run:
+
 ```sh
 git clone https://github.com/NWU-Recode/Recode-Backend.git
 cd Recode-Backend
@@ -50,14 +53,16 @@ cd Recode-Backend
 ## 2. Set Up Python Virtual Environment
 
 Create and activate your Python venv:
+
 ```sh
 python -m venv venv
 ```
-- **Windows:**  
+
+- **Windows:**
   ```sh
-  venv\Scriptsctivate
+  .venv\Scripts\Activate
   ```
-- **Mac/Linux:**  
+- **Mac/Linux:**
   ```sh
   source venv/bin/activate
   ```
@@ -75,23 +80,29 @@ pip install -r requirements.txt
 ## 4. Install Supabase CLI (Windows – Scoop Method)
 
 ### A. Install Scoop (if you don’t have it)
+
 Open PowerShell as Administrator:
+
 ```powershell
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 iwr -useb get.scoop.sh | iex
 ```
 
 ### B. Add Supabase Scoop Bucket and Install
+
 ```powershell
 scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
 scoop install supabase
 ```
 
 ### C. Confirm Installation
+
 Open a new terminal and check:
+
 ```sh
 supabase --version
 ```
+
 You should see a version number if installed successfully.
 
 ---
@@ -99,9 +110,11 @@ You should see a version number if installed successfully.
 ## 5. Set Up Environment Variables
 
 Copy the example env file and edit it:
+
 ```sh
 cp .env.template .env
 ```
+
 Edit `.env` in a text editor and set `SUPABASE_URL` and `SUPABASE_KEY` with your actual values from the Supabase dashboard.
 
 ---
@@ -109,10 +122,12 @@ Edit `.env` in a text editor and set `SUPABASE_URL` and `SUPABASE_KEY` with your
 ## 6. (Optional) Initialize Supabase Migrations
 
 If you plan to manage migrations (otherwise skip):
+
 ```sh
 supabase init
 supabase migration new create_users_table
 ```
+
 - Edit your migration file in `supabase/migrations/` to define the schema.
 - Apply the migration:
   ```sh
@@ -124,9 +139,11 @@ supabase migration new create_users_table
 ## 7. Start the FastAPI Server
 
 Run from the project root:
+
 ```sh
 uvicorn app.main:app --reload
 ```
+
 The API will be available at http://localhost:8000
 
 ---
@@ -137,9 +154,11 @@ The API will be available at http://localhost:8000
 - Test endpoint: [http://localhost:8000/users/](http://localhost:8000/users/)
 
 Or use curl:
+
 ```sh
 curl http://localhost:8000/users/
 ```
+
 If your Supabase `users` table has data, it will return all users as JSON.
 
 ---
@@ -155,6 +174,7 @@ To keep the codebase clean and make collaboration easy, use the following simple
 - **Other types:** Use `hotfix/`, `docs/`, or `refactor/` as needed, e.g., `hotfix/deploy-issue`, `docs/setup-guide`.
 
 **Workflow Example:**
+
 1. Pull the latest changes:
    ```sh
    git checkout dev
@@ -170,6 +190,7 @@ To keep the codebase clean and make collaboration easy, use the following simple
 4. Once tested and reviewed, `dev` is merged into `main` for release.
 
 **Key Points:**
+
 - Never commit directly to `main` or `dev`.
 - Keep branch names clear and short.
 - Always pull latest changes before creating a new branch.
