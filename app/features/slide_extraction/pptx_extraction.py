@@ -1,10 +1,3 @@
-"""Utility for extracting text from PPTX files.
-
-This module exposes :func:`extract_pptx_text` which reads a PowerPoint
-presentation and returns a dictionary mapping slide numbers to lists of text
-found on each slide.  The function accepts either a file path or a binary file
-object making it convenient to use with uploaded files.
-"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,18 +8,7 @@ from pptx.exc import PackageNotFoundError
 
 
 def _load_presentation(source: Union[str, Path, BinaryIO]) -> Presentation:
-    """Load a :class:`Presentation` from ``source``.
-
-    Parameters
-    ----------
-    source:
-        Either a path to a ``.pptx`` file or a binary file-like object.
-
-    Raises
-    ------
-    ValueError
-        If the file cannot be read as a presentation.
-    """
+    """Load a presentation from a file or binary data."""
     try:
         if isinstance(source, (str, Path)):
             path = Path(source)
@@ -41,24 +23,7 @@ def _load_presentation(source: Union[str, Path, BinaryIO]) -> Presentation:
 
 
 def extract_pptx_text(source: Union[str, Path, BinaryIO]) -> Dict[int, List[str]]:
-    """Extract all text from a presentation.
 
-    Parameters
-    ----------
-    source:
-        Path to the ``.pptx`` file or a binary file-like object.
-
-    Returns
-    -------
-    Dict[int, List[str]]
-        Dictionary where keys are 1-based slide numbers and values are lists of
-        text strings found on the corresponding slide.
-
-    Raises
-    ------
-    ValueError
-        If ``source`` is not a valid ``.pptx`` file.
-    """
     presentation = _load_presentation(source)
     slides: Dict[int, List[str]] = {}
 

@@ -29,6 +29,28 @@ class Judge0Service:
                 "X-RapidAPI-Key": self.settings.judge0_api_key,
                 "X-RapidAPI-Host": self.settings.judge0_host,
             })
+
+    @staticmethod
+    def _compute_success(status_id: int | None, stdout: str | None, expected_output: str | None) -> bool:
+        """Determine success.
+
+        Rules:
+        1. Base success if Judge0 status id == 3 (Accepted)
+        2. If expected_output provided, compare against the LAST non-empty line of stdout
+           (trimmed of whitespace & trailing newlines) to let users print steps.
+        3. If no stdout or mismatch, fail.
+        """
+        if status_id != 3:
+            return False
+        if expected_output is None:
+            return True
+        if stdout is None:
+            return False
+        # Extract last non-empty line
+        lines = [l.strip() for l in stdout.splitlines() if l.strip()]
+        if not lines:
+            return False
+        return lines[-1] == expected_output.strip()
     
     async def get_languages(self) -> List[LanguageInfo]:
         """Get list of supported programming languages"""
@@ -147,7 +169,7 @@ class Judge0Service:
                     status_id=status.get("id", -1),
                     status_description=status.get("description", "unknown"),
                     language_id=language.get("id", submission.language_id),
-                    success=status.get("id") == 3,
+                    success=self._compute_success(status.get("id"), data.get("stdout"), submission.expected_output),
                     created_at=datetime.utcnow()
                 )
                 # Store submission + result if user_id provided (create submission row first without token)
@@ -175,7 +197,7 @@ class Judge0Service:
                     status_id=result.status.get("id", -1),
                     status_description=result.status.get("description", "unknown"),
                     language_id=(result.language or {}).get("id", submission.language_id),
-                    success=result.status.get("id") == 3,
+                    success=self._compute_success(result.status.get("id"), result.stdout, submission.expected_output),
                     created_at=datetime.utcnow()
                 )
                 if user_id:
