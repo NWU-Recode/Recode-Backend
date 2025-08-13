@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from app.auth.service import get_current_user
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from .schemas import User
-from .service import get_all_users
-from app.db.base import get_db
+from app.db.session import get_db
+from .schemas import User as UserSchema
+from .service import list_users
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("/", response_model=list[User])
-async def read_users(current_user=Depends(get_current_user)) -> list[User]:
-    """Return all users from the database."""
-    return await get_all_users()
-def read_users(db: Session = Depends(get_db)):
-    return get_all_users(db)
+@router.get("/", response_model=list[UserSchema])
+def read_users(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> list[UserSchema]:
+    """Return all users (requires authentication)."""
+    return list_users(db)
+

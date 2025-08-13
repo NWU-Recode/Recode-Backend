@@ -1,12 +1,13 @@
 import os
 import sys
+import socket
 from pathlib import Path
 from logging.config import fileConfig
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.exc import OperationalError
-import socket
 
 # Ensure project root on sys.path
 THIS_DIR = Path(__file__).resolve().parent
@@ -16,45 +17,96 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # Load app settings & models
 from app.core.config import get_settings
-import os
-from app.db.models import Base  # ensure this imports your Declarative Base
+from app.db.base import Base  # dynamic discovery inside base imports feature models
 
 settings = get_settings()
 
-# Prefer dedicated migrations URL (5432) falling back to runtime pooled URL.
-force_pooled = os.getenv("FORCE_MIGRATIONS_POOLED", "false").lower() == "true"
-MIGRATIONS_URL = settings.get_database_url(for_migrations=not force_pooled)
-if not MIGRATIONS_URL:
-    raise RuntimeError(
-        "No database URL found. Provide DATABASE_URL and optionally DATABASE_URL_MIGRATIONS for Alembic."
-    )
+def _ensure_driver_and_ssl(url: str) -> str:
+    """Force psycopg2 driver and sslmode=require for Supabase-style URLs."""
+    if not url:
+        return ""
+    if url.startswith("postgresql://") and "+psycopg2://" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    parsed = urlparse(url)
+    q = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if "sslmode" not in q:
+        q["sslmode"] = "require"
+    return urlunparse(parsed._replace(query=urlencode(q)))
 
-# Basic DNS sanity check; if direct host fails resolution but runtime resolves, fallback.
-def _host_from_url(url: str) -> str:
+
+def _hostname(url: str) -> str:
     try:
-        return url.split('@')[1].split('/')[0]
+        return urlparse(url).hostname or ""
     except Exception:
         return ""
 
-direct_host = _host_from_url(MIGRATIONS_URL)
+
+def _swap_host(url: str, new_host: str) -> str:
+    p = urlparse(url)
+    # Preserve creds & port
+    netloc = ""
+    if p.username:
+        netloc += p.username
+        if p.password:
+            netloc += f":{p.password}"
+        netloc += "@"
+    if p.port:
+        netloc += f"{new_host}:{p.port}"
+    else:
+        netloc += new_host
+    return urlunparse(p._replace(netloc=netloc))
+
+
+def _sanitize(url: str) -> str:
+    if not url:
+        return url
+    p = urlparse(url)
+    # hide password
+    if p.password:
+        auth = p.username + ":***@" if p.username else "***@"
+    elif p.username:
+        auth = p.username + "@"
+    else:
+        auth = ""
+    hostport = p.hostname or ""
+    if p.port:
+        hostport += f":{p.port}"
+    netloc = auth + hostport
+    return urlunparse(p._replace(netloc=netloc))
+
+
+# Build URLs
+force_pooled = os.getenv("FORCE_MIGRATIONS_POOLED", "false").lower() == "true"
+raw_migrations_url = settings.get_database_url(for_migrations=not force_pooled)
+raw_runtime_url = settings.get_database_url(for_migrations=False)
+
+MIGRATIONS_URL = _ensure_driver_and_ssl(raw_migrations_url)
+RUNTIME_URL = _ensure_driver_and_ssl(raw_runtime_url)
+
+if not MIGRATIONS_URL:
+    raise RuntimeError(
+        "No database URL found for migrations. Set DATABASE_URL and optionally DATABASE_URL_MIGRATIONS."
+    )
+
+# DNS check on migrations host; if fails but runtime resolves, swap host (keeping port/creds)
+direct_host = _hostname(MIGRATIONS_URL)
 if direct_host:
     try:
         socket.getaddrinfo(direct_host, None)
     except socket.gaierror:
-        runtime_url = settings.get_database_url(for_migrations=False)
-        runtime_host = _host_from_url(runtime_url)
+        runtime_host = _hostname(RUNTIME_URL)
         if runtime_host:
             try:
                 socket.getaddrinfo(runtime_host, None)
-                # replace host portion
-                MIGRATIONS_URL = runtime_url
-                print(f"[alembic.env] DNS failed for direct host '{direct_host}', using runtime host '{runtime_host}' for migrations.")
+                MIGRATIONS_URL = _swap_host(MIGRATIONS_URL, runtime_host)
+                print(f"[alembic.env] DNS failed for '{direct_host}', using runtime host '{runtime_host}' for migrations.")
             except socket.gaierror:
-                pass  # both failed; let later connect raise
+                # both failed; allow later connection attempt to raise
+                pass
 
 # Alembic Config
 config = context.config
-# Override any value in alembic.ini
+# Inject URL dynamically (avoid secrets in ini)
 config.set_main_option("sqlalchemy.url", MIGRATIONS_URL)
 
 # Logging
@@ -88,42 +140,43 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode' with fallback to runtime URL if direct fails."""
-    section = config.get_section(config.config_ini_section, {}).copy()
-    section["sqlalchemy.url"] = MIGRATIONS_URL
+    """Run migrations in 'online' mode' with runtime fallback.
 
-    def _attempt(url: str):
+    Tries MIGRATIONS_URL first; on OperationalError falls back to RUNTIME_URL.
+    """
+    section_template = config.get_section(config.config_ini_section, {}).copy()
+
+    def _attempt(url: str, label: str):
+        section = section_template.copy()
         section["sqlalchemy.url"] = url
-        return engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
+        engine = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
+        with engine.connect() as connection:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                render_as_batch=True,
+                compare_type=True,
+                compare_server_default=True,
+                include_object=include_object,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
 
-    attempted_urls = []
-    runtime_url = settings.get_database_url(for_migrations=False)
     last_error = None
-    for url, label in ((MIGRATIONS_URL, "migrations"), (runtime_url, "runtime fallback")):
-        if not url or url in attempted_urls:
+    tried = set()
+    for url, label in ((MIGRATIONS_URL, "migrations"), (RUNTIME_URL, "runtime fallback")):
+        if not url or url in tried:
             continue
+        tried.add(url)
         try:
-            connectable = _attempt(url)
-            with connectable.connect() as connection:
-                if url != MIGRATIONS_URL:
-                    print(f"[alembic.env] Using {label} URL for migrations: {url}")
-                context.configure(
-                    connection=connection,
-                    target_metadata=target_metadata,
-                    render_as_batch=True,
-                    compare_type=True,
-                    compare_server_default=True,
-                    include_object=include_object,
-                )
-                with context.begin_transaction():
-                    context.run_migrations()
+            if url is RUNTIME_URL:
+                print(f"[alembic.env] Using runtime URL as fallback for migrations: {_sanitize(url)}")
+            _attempt(url, label)
             return
         except OperationalError as oe:
             last_error = oe
             print(f"[alembic.env] Connection failed for {label} URL: {oe}")
-            attempted_urls.append(url)
             continue
-    # If we exit loop without returning, re-raise last error
     if last_error:
         raise last_error
 
