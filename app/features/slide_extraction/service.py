@@ -7,6 +7,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from . import models, repository, schemas
+from fastapi.concurrency import run_in_threadpool
 from .pptx_extraction import extract_pptx_text
 
 
@@ -35,4 +36,5 @@ async def save_extraction_from_upload(
     """Extract slides from ``file`` and persist the result."""
     slides = await extract_slides_from_upload(file)
     data = schemas.SlideExtractionCreate(filename=file.filename, slides=slides)
-    return repository.create_extraction(db, data)
+    # Offload blocking DB work to threadpool since session is sync
+    return await run_in_threadpool(repository.create_extraction, db, data)
