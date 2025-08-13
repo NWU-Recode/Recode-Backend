@@ -5,8 +5,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.db.client import get_client
-from app.db.session import supabase_session
+from app.integrations.supabase_session import supabase_session, get_client
 from app.auth.schemas import LoginRequest, TokenResponse
 
 security = HTTPBearer()
