@@ -34,3 +34,9 @@ async def get_client() -> AsyncClient:
         except Exception as exc:  # pragma: no cover - network failure
             raise RuntimeError("Could not create Supabase client") from exc
     return _supabase
+from app.core.config import get_settings
+from supabase import create_client
+
+settings = get_settings()
+
+supabase = create_client(settings.supabase_url, settings.supabase_key)
