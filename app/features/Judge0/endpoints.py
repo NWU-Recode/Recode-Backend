@@ -11,6 +11,7 @@ from .schemas import (
     Judge0SubmissionResponse
 )
 from .service import judge0_service
+from .repository import judge0_repository
 
 router = APIRouter(prefix="/judge0", tags=["judge0"])
 
@@ -38,14 +39,49 @@ async def submit_code(submission: CodeSubmissionCreate, user_id: Optional[str] =
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code: {str(e)}")
 
+@router.post("/submit/full", response_model=CodeSubmissionResponse)
+async def submit_code_full(submission: CodeSubmissionCreate, user_id: str):
+    """Submit code and return stored submission record (requires user_id).
+
+    This wraps the standard submit endpoint but returns the full submission
+    (including generated id, token, timestamps) so the frontend can track
+    status without an extra round-trip.
+    """
+    try:
+        # Submit to Judge0 (this also stores when user_id provided)
+        judge0_resp = await judge0_service.submit_code(submission, user_id)
+        # Fetch stored submission by token (sync repository call)
+        db_submission = judge0_repository.get_submission_by_token_sql(judge0_resp.token)
+        if not db_submission:
+            raise HTTPException(status_code=500, detail="Submission stored record not found after creation")
+        return CodeSubmissionResponse(
+            id=db_submission.id,
+            user_id=db_submission.user_id,
+            source_code=db_submission.source_code,
+            language_id=db_submission.language_id,
+            stdin=db_submission.stdin,
+            expected_output=db_submission.expected_output,
+            judge0_token=db_submission.judge0_token,
+            status=db_submission.status,
+            created_at=db_submission.created_at,
+            completed_at=db_submission.completed_at
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit code (full): {str(e)}")
+
 @router.get("/result/{token}", response_model=CodeExecutionResult)
 async def get_execution_result(token: str):
-    """Get execution result by token"""
+    """Get execution result by token."""
     try:
         judge0_result = await judge0_service.get_submission_result(token)
-        
-        # Convert to our format
-        return CodeExecutionResult(
+        db_submission = judge0_repository.get_submission_by_token_sql(token)
+        expected_output = getattr(db_submission, "expected_output", None) if db_submission else None
+        language_id = (judge0_result.language or {}).get("id", db_submission.language_id if db_submission else -1)
+        success = judge0_service._compute_success(judge0_result.status.get("id"), judge0_result.stdout, expected_output)  # type: ignore
+
+        execution_result = CodeExecutionResult(
             stdout=judge0_result.stdout,
             stderr=judge0_result.stderr,
             compile_output=judge0_result.compile_output,
@@ -53,9 +89,17 @@ async def get_execution_result(token: str):
             memory_used=judge0_result.memory,
             status_id=judge0_result.status.get("id", -1),
             status_description=judge0_result.status.get("description", "unknown"),
-            language_id=(judge0_result.language or {}).get("id", -1),
-            success=judge0_result.status.get("id") == 3  # 3=Accepted
+            language_id=language_id,
+            success=success
         )
+        # Persist if we have submission and terminal state (id not in queued/processing)
+        if db_submission and judge0_result.status.get("id") not in [1, 2]:
+            # Attempt store (ignore errors silently here)
+            try:
+                await judge0_service._store_result(token, execution_result)  # type: ignore
+            except Exception:
+                pass
+        return execution_result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get result: {str(e)}")
 

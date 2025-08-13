@@ -74,4 +74,9 @@ try:  # pragma: no cover
 except Exception:
     pass
 
-__all__ = ["Base", "list_models"]
+try:  # optional backward compatibility re-export
+    from app.db.session import SessionLocal  # type: ignore
+except Exception:  # pragma: no cover
+    SessionLocal = None  # placeholder if session not yet configured
+
+__all__ = ["Base", "list_models", "SessionLocal"]

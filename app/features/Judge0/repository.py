@@ -2,8 +2,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
 from sqlalchemy.orm import Session
-from app.db.client import supabase
-from app.db.base import SessionLocal
+from app.db.client import get_supabase 
+from app.db.session import SessionLocal 
 from .models import CodeSubmission, CodeResult
 from .schemas import CodeSubmissionCreate, CodeExecutionResult
 
@@ -11,7 +11,7 @@ class Judge0Repository:
     """Database operations for Judge0"""
     
     def __init__(self):
-        self.supabase = supabase
+        self.supabase = get_supabase
     
     # Using SQLAlchemy for new operations
     def create_submission_sql(self, submission: CodeSubmissionCreate, user_id: str, judge0_token: str, db: Session = None) -> CodeSubmission:
