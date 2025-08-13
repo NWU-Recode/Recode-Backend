@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.auth.routes import router as auth_router
 from app.features.users.endpoints import router as users_router
 from app.features.Judge0.endpoints import router as judge0_router
+from app.features.slide_extraction.endpoints import router as slide_extraction_router
 
 app = FastAPI(title="Recode Backend")
 
@@ -14,3 +15,4 @@ app = FastAPI(title="Recode Backend")
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(judge0_router)
+app.include_router(slide_extraction_router)
