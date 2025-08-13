@@ -1,30 +1,46 @@
-import os
-from contextlib import contextmanager
-from typing import Iterator
+"""Database engine and session client for the application."""
+
+from __future__ import annotations
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
-from app.db.base import Base
+from app.core.config import get_settings
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+settings = get_settings()
 
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+
+def get_database_url(for_migrations: bool = False) -> str:
+    """Return DB URL (runtime pooled vs direct migrations)."""
+    return settings.get_database_url(for_migrations=for_migrations)
+
+
+# Runtime (pooled) URL for the web app
+runtime_url = get_database_url(False)
+if not runtime_url:
+    raise RuntimeError("DATABASE_URL not configured")
+
+# Respect existing sslmode in URL; default to require if absent (Supabase)
+connect_args = {"sslmode": "require"} if "sslmode=" not in runtime_url else {}
+
+engine = create_engine(
+    runtime_url,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=5,
+    pool_recycle=300,
+    echo=settings.debug,
+    connect_args=connect_args,
+)
+
+# Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def init_db() -> None:
-    """Create database tables."""
-    Base.metadata.create_all(bind=engine)
-
-
-@contextmanager
-def get_db() -> Iterator[Session]:
-    """Provide a transactional scope around a series of operations."""
+# FastAPI dependency
+def get_db():
     db = SessionLocal()
     try:
         yield db
-        db.commit()
     finally:
         db.close()

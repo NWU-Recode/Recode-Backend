@@ -9,10 +9,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+# Allow "app" imports when running tests directly
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db.base import Base
-from app.db.session import get_db
+from app.db.client import get_db           # <- updated import (was app.db.session)
 from app.features.slide_extraction.endpoints import router as slide_router
 from app.features.slide_extraction.pptx_extraction import extract_pptx_text
 from app.features.slide_extraction import repository, schemas
@@ -21,9 +22,12 @@ from app.features.slide_extraction import repository, schemas
 application = FastAPI()
 application.include_router(slide_router)
 
-
-# Setup in-memory database for tests
-engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+# In-memory SQLite for isolated tests
+engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
@@ -32,6 +36,7 @@ def override_get_db():
     db = TestingSessionLocal()
     try:
         yield db
+        db.commit()  # commit after request handlers using the session
     finally:
         db.close()
 
@@ -112,11 +117,4 @@ def test_repository_multiple_inserts(tmp_path: Path) -> None:
     db = TestingSessionLocal()
     try:
         initial = len(repository.list_extractions(db))
-        data1 = schemas.SlideExtractionCreate(filename="a.pptx", slides={1: ["A"]})
-        data2 = schemas.SlideExtractionCreate(filename="b.pptx", slides={1: ["B"]})
-        repository.create_extraction(db, data1)
-        repository.create_extraction(db, data2)
-        all_records = repository.list_extractions(db)
-        assert len(all_records) == initial + 2
-    finally:
-        db.close()
+        data1 = schemas.SlideExtractionCreate(filename="a.pptx
