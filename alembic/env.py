@@ -16,8 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 # Load app settings & models
-from app.core.config import get_settings
-from app.db.base import Base  # dynamic discovery inside base imports feature models
+from app.Core.config import get_settings
+from app.DB.base import Base  # dynamic discovery inside base imports feature models
 
 settings = get_settings()
 
@@ -75,8 +75,8 @@ def _sanitize(url: str) -> str:
     return urlunparse(p._replace(netloc=netloc))
 
 
-# Build URLs
-force_pooled = os.getenv("FORCE_MIGRATIONS_POOLED", "false").lower() == "true"
+# Building URLs
+force_pooled = True 
 raw_migrations_url = settings.get_database_url(for_migrations=not force_pooled)
 raw_runtime_url = settings.get_database_url(for_migrations=False)
 

@@ -6,9 +6,8 @@ from typing import BinaryIO, Dict, List, Union
 from pptx import Presentation
 from pptx.exc import PackageNotFoundError
 
-
+#Load a presentation from a file or binary data.
 def _load_presentation(source: Union[str, Path, BinaryIO]) -> Presentation:
-    """Load a presentation from a file or binary data."""
     try:
         if isinstance(source, (str, Path)):
             path = Path(source)
@@ -38,11 +37,3 @@ def extract_pptx_text(source: Union[str, Path, BinaryIO]) -> Dict[int, List[str]
 
     return slides
 
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python pptx_extraction.py <path-to-pptx>")
-        raise SystemExit(1)
-    result = extract_pptx_text(sys.argv[1])
-    print(result)
