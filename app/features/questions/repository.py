@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from app.DB.client import get_supabase
+from app.DB.client_backup import get_supabase
 
 class QuestionRepository:
     async def get_question(self, question_id: str) -> Optional[Dict[str, Any]]:
@@ -65,6 +65,21 @@ class QuestionRepository:
             .eq("question_id", question_id)
             .eq("user_id", user_id)
             .eq("idempotency_key", idempotency_key)
+            .limit(1)
+            .execute()
+        )
+        if resp.data:
+            return resp.data[0]
+        return None
+
+    async def find_by_token(self, question_id: str, user_id: str, token: str) -> Optional[Dict[str, Any]]:
+        client = await get_supabase()
+        resp = (
+            client.table("question_attempts")
+            .select("*")
+            .eq("question_id", question_id)
+            .eq("user_id", user_id)
+            .eq("judge0_token", token)
             .limit(1)
             .execute()
         )
