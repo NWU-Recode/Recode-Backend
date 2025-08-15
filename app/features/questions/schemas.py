@@ -37,7 +37,9 @@ class QuestionSubmitRequest(BaseModel):
 
 class QuestionSubmitResponse(BaseModel):
     question_attempt_id: UUID
-    judge0_token: str
+    challenge_attempt_id: UUID
+    token: str
+    app_status: str
     is_correct: bool
     stdout: Optional[str]
     stderr: Optional[str]
@@ -46,6 +48,7 @@ class QuestionSubmitResponse(BaseModel):
     time: Optional[str] = None
     memory: Optional[int] = None
     points_awarded: int
+    hash: Optional[str] = None
 
 class BatchQuestionCode(BaseModel):
     question_id: UUID
@@ -78,7 +81,8 @@ class BatchSubmitRequest(BaseModel):
 class BatchSubmitItemResponse(BaseModel):
     question_id: UUID
     question_attempt_id: UUID
-    judge0_token: str
+    token: str
+    app_status: str
     is_correct: bool
     stdout: Optional[str]
     stderr: Optional[str]
@@ -90,6 +94,16 @@ class BatchSubmitItemResponse(BaseModel):
 
 class BatchSubmitResponse(BaseModel):
     items: List[BatchSubmitItemResponse]
+
+class TileItem(BaseModel):
+    question_id: UUID
+    status: str  # unattempted | passed | failed
+    last_submitted_at: Optional[datetime] = None
+    token: Optional[str] = None
+
+class ChallengeTilesResponse(BaseModel):
+    challenge_id: UUID
+    items: List[TileItem]
 
 class QuestionAttempt(BaseModel):
     id: UUID

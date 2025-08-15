@@ -1,30 +1,79 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .repository import question_repository
 from .schemas import (
     ExecuteRequest, ExecuteResponse,
     QuestionSubmitRequest, QuestionSubmitResponse,
     BatchExecuteRequest, BatchExecuteResponse, BatchExecuteItemResponse,
-    BatchSubmitRequest, BatchSubmitResponse, BatchSubmitItemResponse
+    BatchSubmitRequest, BatchSubmitResponse, BatchSubmitItemResponse,
+    ChallengeTilesResponse, TileItem
 )
 import hashlib
 from fastapi import HTTPException
 from app.features.judge0.schemas import CodeSubmissionCreate
 from app.features.judge0.service import judge0_service
 from app.features.challenges.repository import challenge_repository
-from app.DB.client import get_supabase
+from app.DB.client_backup import get_supabase
+from app.features.submissions.service import submission_service
+from app.features.submissions.schemas import SubmissionCreate
+import asyncio, time
 
 class QuestionService:
+    # ---- Helpers ----
+    @staticmethod
+    def _map_app_status(status_id: int, is_correct: Optional[bool]) -> str:
+        if status_id == 3:  # Accepted
+            return "accepted" if is_correct else "wrong_answer"
+        compile_error_ids = {6, 7}
+        runtime_error_ids = {4, 5, 8, 9, 10, 11, 12, 13}
+        if status_id in compile_error_ids:
+            return "compile_error"
+        if status_id in runtime_error_ids:
+            return "runtime_error"
+        if status_id in {1, 2}:
+            return "pending"
+        return "other_error"
+
+    @staticmethod
+    def _enforce_size_limits(source: str, stdin: Optional[str]):
+        if len(source.encode()) > 128 * 1024:
+            raise ValueError("payload_too_large: source_code exceeds 128KiB limit")
+        if stdin and len(stdin.encode()) > 32 * 1024:
+            raise ValueError("payload_too_large: stdin exceeds 32KiB limit")
+
+    async def _ensure_snapshot_membership(self, question_id: str, challenge_id: str, user_id: str):
+        attempt = await challenge_repository.create_or_get_open_attempt(challenge_id, user_id)
+        snapshot = attempt.get("snapshot_questions") or []
+        ids = {q["question_id"] for q in snapshot}
+        if question_id not in ids:
+            raise ValueError("invalid_question: not in snapshot for attempt")
+        # Enforce status & deadline
+        status = attempt.get("status")
+        if status == "submitted":
+            raise ValueError("challenge_already_submitted")
+        if status == "expired":
+            raise ValueError("challenge_expired")
+        deadline_at = attempt.get("deadline_at")
+        if deadline_at:
+            from datetime import datetime, timezone
+            try:
+                dt = datetime.fromisoformat(str(deadline_at).replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) > dt:
+                    raise ValueError("challenge_expired")
+            except ValueError:
+                pass
+        return attempt, snapshot
+
     async def execute(self, req: ExecuteRequest, user_id: str) -> ExecuteResponse:
+        self._enforce_size_limits(req.source_code, req.stdin)
         q = await question_repository.get_question(str(req.question_id))
         if not q:
-            raise ValueError("Question not found")
-        # Hash includes expected_output for staleness safety
+            raise ValueError("question_not_found")
+        await self._ensure_snapshot_membership(str(req.question_id), str(q["challenge_id"]), user_id)
         hasher = hashlib.sha256()
         composite = f"{q['language_id']}\n{req.stdin or ''}\n{req.source_code}\n{q.get('expected_output') or ''}".encode()
         hasher.update(composite)
         code_hash = hasher.hexdigest()
-        # Cache reuse: if an existing attempt with same code_hash graded, reuse its stdout
         cached = await question_repository.find_by_code_hash(str(req.question_id), user_id, code_hash)
         if cached and cached.get("is_correct") is not None:
             return ExecuteResponse(
@@ -33,7 +82,7 @@ class QuestionService:
                 stderr=cached.get("stderr"),
                 status_id=cached.get("status_id", -1),
                 status_description=cached.get("status_description", "cached"),
-                is_correct=None,  # preview stays neutral
+                is_correct=None,
                 time=cached.get("time"),
                 memory=cached.get("memory"),
             )
@@ -41,60 +90,47 @@ class QuestionService:
             source_code=req.source_code,
             language_id=q["language_id"],
             stdin=req.stdin,
-            expected_output=None  # execute preview does not grade
+            expected_output=None
         )
-        # Per spec: use execute_with_token (polling) rather than waited submit for execute path
-        token, result = await judge0_service.execute_with_token(submission)  # type: ignore
-        is_correct = None  # preview does not grade
+        token, result = await judge0_service.execute_code_sync(submission)  # waited
         return ExecuteResponse(
             judge0_token=token,
             stdout=result.stdout,
             stderr=result.stderr,
             status_id=result.status_id,
             status_description=result.status_description,
-            is_correct=is_correct,
+            is_correct=None,
             time=result.execution_time,
             memory=result.memory_used,
         )
 
     async def submit(self, req: QuestionSubmitRequest, user_id: str) -> QuestionSubmitResponse:
+        self._enforce_size_limits(req.source_code, req.stdin)
+        if not req.idempotency_key:
+            raise ValueError("idempotency_key_required")
         q = await question_repository.get_question(str(req.question_id))
         if not q:
-            raise ValueError("Question not found")
-        # Ensure open challenge attempt exists for user/challenge
-        challenge_id = str(q["challenge_id"])
-        attempt = await challenge_repository.get_open_attempt(challenge_id, user_id)
-        if not attempt:
-            attempt = await challenge_repository.start_attempt(challenge_id, user_id)
+            raise ValueError("question_not_found")
+        attempt, snapshot = await self._ensure_snapshot_membership(str(req.question_id), str(q["challenge_id"]), user_id)
+        # Build hash including attempt id for reuse specificity
         hasher = hashlib.sha256()
-        composite = f"{q['language_id']}\n{req.stdin or ''}\n{req.source_code}\n{q.get('expected_output') or ''}".encode()
+        composite = f"{q['language_id']}\n{req.stdin or ''}\n{req.source_code}\n{attempt['id']}".encode()
         hasher.update(composite)
         code_hash = hasher.hexdigest()
-        idempotency_key = req.idempotency_key
-        # Idempotent replay: if key supplied and existing attempt with that key exists, return it immediately
-        if idempotency_key:
-            existing_idem = await question_repository.find_by_idempotency_key(str(req.question_id), user_id, idempotency_key)
-            if existing_idem:
-                points_awarded = existing_idem.get("points_awarded") or (q.get("points") if existing_idem.get("is_correct") else 0)
-                return QuestionSubmitResponse(
-                    question_attempt_id=existing_idem["id"],
-                    judge0_token=existing_idem.get("judge0_token", ""),
-                    is_correct=existing_idem.get("is_correct", False),
-                    stdout=existing_idem.get("stdout"),
-                    stderr=existing_idem.get("stderr"),
-                    status_id=existing_idem.get("status_id", -1),
-                    status_description=existing_idem.get("status_description", "idempotent-replay"),
-                    time=existing_idem.get("time"),
-                    memory=existing_idem.get("memory"),
-                    points_awarded=points_awarded or 0,
-                )
-        # Cache shortcut: same code_hash and previous attempt graded correct or incorrect -> reuse
+        # Idempotent replay
+        existing_idem = await question_repository.find_by_idempotency_key(str(req.question_id), user_id, req.idempotency_key)
+        if existing_idem:
+            # Spec: duplicate idempotency key should raise conflict (409)
+            raise ValueError("duplicate_idempotency_key")
+        # Reuse by code hash
         cached = await question_repository.find_by_code_hash(str(req.question_id), user_id, code_hash)
         if cached and cached.get("is_correct") is not None:
-            points_awarded = cached.get("points_awarded") or (q.get("points") if cached.get("is_correct") else 0)
+            app_status = self._map_app_status(cached.get("status_id", -1), cached.get("is_correct"))
             return QuestionSubmitResponse(
                 question_attempt_id=cached["id"],
-                judge0_token=cached.get("judge0_token", ""),
+                challenge_attempt_id=attempt["id"],
+                token=cached.get("judge0_token", ""),
+                app_status=app_status,
                 is_correct=cached.get("is_correct", False),
                 stdout=cached.get("stdout"),
                 stderr=cached.get("stderr"),
@@ -102,30 +138,65 @@ class QuestionService:
                 status_description=cached.get("status_description", "cached"),
                 time=cached.get("time"),
                 memory=cached.get("memory"),
-                points_awarded=points_awarded or 0,
+                points_awarded=(1 if cached.get("is_correct") else 0),
+                hash=cached.get("code_hash") or cached.get("hash"),
             )
+        # Async submit (wait=false) then poll up to 45s for terminal state
         submission = CodeSubmissionCreate(
             source_code=req.source_code,
             language_id=q["language_id"],
             stdin=req.stdin,
             expected_output=q.get("expected_output")
         )
-        # Attach question_id for submission join by temporarily setting on submission object clone
-        token, result = await judge0_service.submit_question_run(submission, user_id)
-        # Update the code_submissions row with question_id if missing (simple patch update)
+        token_resp = await judge0_service.submit_code(submission)
+        token = token_resp.token  # type: ignore
+        start = time.time()
+        poll_interval = 1.0
+        result = None
+        while time.time() - start < 45:
+            raw = await judge0_service.get_submission_result(token)
+            status_id = raw.status.get("id") if raw.status else None
+            if status_id not in [1, 2]:
+                # Terminal
+                result = judge0_service._to_code_execution_result(raw, submission.expected_output, submission.language_id)
+                break
+            await asyncio.sleep(poll_interval)
+        if result is None:
+            # Pending path: persist submission row only (processing) and return 202 envelope sentinel
+            sub_create = SubmissionCreate(
+                source_code=submission.source_code,
+                language_id=submission.language_id,
+                stdin=submission.stdin,
+                expected_output=submission.expected_output,
+                question_id=str(req.question_id),
+            )
+            await submission_service.store_submission(sub_create, user_id, token)
+            return {"__pending__": True, "token": token, "question_id": str(req.question_id), "challenge_attempt_id": attempt["id"], "hash": code_hash}
+        # Terminal: persist attempt & submission/result
+        is_correct = result.success
+        app_status = self._map_app_status(result.status_id, is_correct)
+        # Persist submission & result (idempotent if exists)
+        sub_create = SubmissionCreate(
+            source_code=submission.source_code,
+            language_id=submission.language_id,
+            stdin=submission.stdin,
+            expected_output=submission.expected_output,
+            question_id=str(req.question_id),
+        )
         try:
-            from app.features.submissions.repository import submission_repository
-            sub_row = await submission_repository.get_by_token(token)  # type: ignore
-            if sub_row and not sub_row.get("question_id"):
-                client = await get_supabase()  # type: ignore
-                client.table("code_submissions").update({"question_id": str(req.question_id)}).eq("id", sub_row["id"]).execute()
+            await submission_service.store_submission(sub_create, user_id, token)
         except Exception:
             pass
-        is_correct = result.success
-        existing = await question_repository.get_existing_attempt(str(req.question_id), user_id)
+        try:
+            from app.features.judge0.schemas import CodeExecutionResult as CER
+            await submission_service.store_result(token, result)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        existing_latest = await question_repository.get_existing_attempt(str(req.question_id), user_id)
         payload = {
             "question_id": str(req.question_id),
             "challenge_id": str(q["challenge_id"]),
+            "challenge_attempt_id": attempt["id"],
             "user_id": user_id,
             "judge0_token": token,
             "source_code": req.source_code,
@@ -137,17 +208,19 @@ class QuestionService:
             "memory": result.memory_used,
             "is_correct": is_correct,
             "code_hash": code_hash,
-            "idempotency_key": idempotency_key,
+            "hash": code_hash,
+            "idempotency_key": req.idempotency_key,
             "latest": True,
         }
-        if existing:
+        if existing_latest:
             await question_repository.mark_previous_not_latest(str(req.question_id), user_id)
-            payload["id"] = existing["id"]
+            payload["id"] = existing_latest["id"]
         stored = await question_repository.upsert_attempt(payload)
-        points_awarded = q.get("points") if is_correct else 0
         return QuestionSubmitResponse(
             question_attempt_id=stored["id"],
-            judge0_token=token,
+            challenge_attempt_id=attempt["id"],
+            token=token,
+            app_status=app_status,
             is_correct=is_correct,
             stdout=result.stdout,
             stderr=result.stderr,
@@ -155,7 +228,8 @@ class QuestionService:
             status_description=result.status_description,
             time=result.execution_time,
             memory=result.memory_used,
-            points_awarded=points_awarded or 0,
+            points_awarded=(1 if is_correct else 0),
+            hash=code_hash,
         )
 
     async def batch_execute(self, req: BatchExecuteRequest, user_id: str) -> BatchExecuteResponse:
@@ -244,7 +318,7 @@ class QuestionService:
             hasher = hashlib.sha256()
             src = next(i.source_code for i in to_run_items if str(i.question_id) == question_id)
             stdin_val = next(i.stdin for i in to_run_items if str(i.question_id) == question_id)
-            composite = f"{q['language_id']}\n{stdin_val or ''}\n{src}\n{q.get('expected_output') or ''}".encode()
+            composite = f"{q['language_id']}\n{stdin_val or ''}\n{src}\n{attempt['id']}".encode()
             hasher.update(composite)
             code_hash = hasher.hexdigest()
             existing_latest = await question_repository.get_existing_attempt(question_id, user_id)
@@ -268,11 +342,13 @@ class QuestionService:
                 await question_repository.mark_previous_not_latest(question_id, user_id)
                 payload["id"] = existing_latest["id"]
             stored = await question_repository.upsert_attempt(payload)
-            points_awarded = q.get("points") if is_correct else 0
+            points_awarded = 1 if is_correct else 0
+            app_status = self._map_app_status(exec_result.status_id, is_correct)
             responses.append(BatchSubmitItemResponse(
                 question_id=question_id,
                 question_attempt_id=stored["id"],
-                judge0_token=token,
+                token=token,
+                app_status=app_status,
                 is_correct=is_correct,
                 stdout=exec_result.stdout,
                 stderr=exec_result.stderr,
@@ -285,11 +361,13 @@ class QuestionService:
         # Add skipped existing attempts to response list
         for qid, existing in skipped_existing.items():
             q = question_map[qid]
-            points_awarded = q.get("points") if existing.get("is_correct") else 0
+            points_awarded = 1 if existing.get("is_correct") else 0
+            app_status = self._map_app_status(existing.get("status_id", -1), existing.get("is_correct"))
             responses.append(BatchSubmitItemResponse(
                 question_id=qid,
                 question_attempt_id=existing["id"],
-                judge0_token=existing.get("judge0_token", ""),
+                token=existing.get("judge0_token", ""),
+                app_status=app_status,
                 is_correct=existing.get("is_correct", False),
                 stdout=existing.get("stdout"),
                 stderr=existing.get("stderr"),
@@ -300,5 +378,26 @@ class QuestionService:
                 points_awarded=points_awarded or 0,
             ))
         return BatchSubmitResponse(items=responses)
+
+    async def get_tiles(self, challenge_id: str, user_id: str) -> ChallengeTilesResponse:
+        attempt = await challenge_repository.create_or_get_open_attempt(challenge_id, user_id)
+        snapshot = attempt.get("snapshot_questions") or []
+        latest_attempts = await question_repository.list_latest_attempts_for_challenge(challenge_id, user_id)
+        index: Dict[str, Any] = {a.get("question_id"): a for a in latest_attempts}
+        items: List[TileItem] = []
+        for snap in snapshot:
+            qid = snap["question_id"]
+            existing = index.get(qid)
+            if not existing:
+                items.append(TileItem(question_id=qid, status="unattempted"))
+            else:
+                status = "passed" if existing.get("is_correct") else "failed"
+                items.append(TileItem(
+                    question_id=qid,
+                    status=status,
+                    last_submitted_at=existing.get("updated_at") or existing.get("created_at"),
+                    token=existing.get("judge0_token")
+                ))
+        return ChallengeTilesResponse(challenge_id=challenge_id, items=items)
 
 question_service = QuestionService()
