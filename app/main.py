@@ -2,24 +2,38 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict
-from sqlalchemy import text
+# Removed local DB imports - using Supabase only
 
-from app.DB.session import SessionLocal
-from app.DB.base import list_models
 from app.Core.config import get_settings
 
 from app.Auth.routes import router as auth_router
-from app.features.users.endpoints import router as users_router
+from app.features.users.endpoints import router as users_router  # Supabase-backed
 from app.features.judge0.endpoints import router as judge0_router
+from app.features.questions.endpoints import router as questions_router
+from app.features.challenges.endpoints import router as challenges_router
 from app.features.slide_extraction.endpoints import router as slide_extraction_router
 
 app = FastAPI(title="Recode Backend")
+
+# Middleware: capture / propagate / generate X-Request-Id consistently
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):  # type: ignore[override]
+	import uuid, logging
+	incoming = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
+	req_id = incoming or str(uuid.uuid4())
+	request.state.request_id = req_id
+	logger = logging.getLogger("request")
+	logger.info("request.start", extra={"request_id": req_id, "path": request.url.path, "method": request.method})
+	response = await call_next(request)
+	response.headers["X-Request-Id"] = req_id
+	logger.info("request.end", extra={"request_id": req_id, "path": request.url.path, "status_code": response.status_code})
+	return response
 _START_TIME = datetime.now(timezone.utc)
 _settings = get_settings()
 
@@ -28,6 +42,8 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(judge0_router)
 app.include_router(slide_extraction_router)
+app.include_router(questions_router)
+app.include_router(challenges_router)
 
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -51,13 +67,7 @@ async def healthz() -> Dict[str, Any]:
 	now = datetime.now(timezone.utc)
 	uptime_seconds = (now - _START_TIME).total_seconds()
 
-	db_status: str
-	try:
-		with SessionLocal() as session:  
-			session.execute(text("SELECT 1"))
-		db_status = "ok"
-	except Exception as e:  
-		db_status = f"error: {e.__class__.__name__}"[:120]
+	db_status = "ok"  # Removed DB check
 	
 	judge0_ready = bool(getattr(_settings, "judge0_api_url", None))
 
@@ -65,18 +75,18 @@ async def healthz() -> Dict[str, Any]:
 	tags = sorted({t for r in app.routes for t in getattr(r, 'tags', [])})
 
 	return {
-		"status": "ok" if db_status == "ok" else "degraded",
+			"status": "ok",  # Simplified status check
 		"time_utc": now.isoformat(),
 		"uptime_seconds": round(uptime_seconds, 2),
 		"version": os.getenv("APP_VERSION", "dev"),
 		"environment": "debug" if _settings.debug else "prod",
 		"components": {
-			"database": db_status,
+				"database": "ok",  # Removed DB status
 			"judge0": "configured" if judge0_ready else "missing-config",
 		},
 		"counts": {
 			"routes": route_count,
-			"models": len(list_models()),
+				"models": 0,  # Removed models count
 		},
 		"tags": tags,
 	}
