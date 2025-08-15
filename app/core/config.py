@@ -1,5 +1,3 @@
-"""Config. Keep it lean."""
-
 from __future__ import annotations
 
 import os
@@ -17,17 +15,12 @@ class Settings:
         def __init__(self) -> None:
                 self.supabase_url = os.getenv("SUPABASE_URL", "")
                 self.supabase_key = os.getenv("SUPABASE_KEY", "")
-                self.database_url = os.getenv("DATABASE_URL", "")
-                self.database_url_runtime = self.database_url  # legacy alias
-                self.database_url_direct = self.database_url   # legacy alias
+                # Removed local database_url - using Supabase only
                 self.judge0_api_url = os.getenv("JUDGE0_BASE_URL", "")
                 self.judge0_api_key = os.getenv("JUDGE0_KEY", "")
                 self.judge0_host = os.getenv("JUDGE0_HOST", "")
                 self.app_name = "Recode Backend"
                 self.debug = os.getenv("DEBUG", "False").lower() == "true"
-
-        def get_database_url(self, for_migrations: bool = False) -> str:  # for_migrations kept for backward compat
-                return self.database_url
 
 
 @lru_cache()
