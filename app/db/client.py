@@ -12,7 +12,7 @@ from typing import Optional
 
 from supabase import AsyncClient, create_async_client, create_client
 
-from app.core.config import get_settings
+from app.Core.config import get_settings
 
 _settings = get_settings()
 

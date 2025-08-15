@@ -2,11 +2,12 @@ from sqlalchemy import Column, String, Text, Integer, DateTime, Boolean, Foreign
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from app.db.base import Base
 import uuid
+from app.DB.base import Base
+from app.features.users.models import User  #fk relation
 
 class CodeSubmission(Base):
-    """Code submissions table"""
+    #Code submissions table
     __tablename__ = "code_submissions"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -20,7 +21,7 @@ class CodeSubmission(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     
-    # Relationships
+    #Relationships
     results = relationship("CodeResult", back_populates="submission", cascade="all, delete-orphan")
     
     def __repr__(self):
@@ -41,7 +42,6 @@ class CodeResult(Base):
     status_description = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
-    # Relationships
     submission = relationship("CodeSubmission", back_populates="results")
     
     def __repr__(self):

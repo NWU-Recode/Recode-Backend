@@ -5,14 +5,12 @@ from uuid import UUID
 
 
 class CodeSubmissionCreate(BaseModel):
-    """Schema for creating a new code submission"""
     source_code: str
     language_id: int
     stdin: Optional[str] = None
     expected_output: Optional[str] = None
 
 class CodeSubmissionResponse(BaseModel):
-    """Schema for code submission response"""
     id: Optional[UUID] = None
     user_id: Optional[UUID] = None
     source_code: str
@@ -25,7 +23,6 @@ class CodeSubmissionResponse(BaseModel):
     completed_at: Optional[datetime] = None
 
 class Judge0SubmissionRequest(BaseModel):
-    """Schema for Judge0 API submission request"""
     source_code: str
     language_id: int
     stdin: Optional[str] = None
@@ -46,16 +43,9 @@ class Judge0SubmissionRequest(BaseModel):
     command_line_arguments: Optional[str] = None
 
 class Judge0SubmissionResponse(BaseModel):
-    """Schema for Judge0 API submission response"""
     token: str
 
 class Judge0ExecutionResult(BaseModel):
-    """Schema for Judge0 execution result.
-
-    Note: Some Judge0 deployments (or specific field filters) may omit the
-    nested "language" object. We make it optional to avoid validation errors
-    and downstream code will fallback gracefully when absent.
-    """
     stdout: Optional[str] = None
     stderr: Optional[str] = None
     compile_output: Optional[str] = None
@@ -64,9 +54,9 @@ class Judge0ExecutionResult(BaseModel):
     memory: Optional[int] = None
     status: dict  # Contains id and description (always expected)
     language: Optional[dict] = None  # May be missing on some responses
-
+    
+#Executiion Result 
 class CodeExecutionResult(BaseModel):
-    """Final result schema for our API"""
     submission_id: Optional[UUID] = None
     stdout: Optional[str] = None
     stderr: Optional[str] = None
@@ -80,11 +70,9 @@ class CodeExecutionResult(BaseModel):
     created_at: Optional[datetime] = None
 
 class LanguageInfo(BaseModel):
-    """Schema for programming language information"""
     id: int
     name: str
 
 class Judge0Status(BaseModel):
-    """Schema for Judge0 status information"""
     id: int
     description: str

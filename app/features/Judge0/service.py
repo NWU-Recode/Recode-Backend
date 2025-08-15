@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from uuid import uuid4
 
-from app.core.config import get_settings
+from app.Core.config import get_settings
 from .repository import judge0_repository
 from .schemas import (
     CodeSubmissionCreate,
@@ -22,7 +22,6 @@ class Judge0Service:
     def __init__(self):
         self.settings = get_settings()
         self.base_url = self.settings.judge0_api_url
-        # Build headers conditionally (RapidAPI vs direct instance)
         self.headers = {"Content-Type": "application/json"}
         if self.settings.judge0_api_key and self.settings.judge0_host:
             self.headers.update({
@@ -32,14 +31,6 @@ class Judge0Service:
 
     @staticmethod
     def _compute_success(status_id: int | None, stdout: str | None, expected_output: str | None) -> bool:
-        """Determine success.
-
-        Rules:
-        1. Base success if Judge0 status id == 3 (Accepted)
-        2. If expected_output provided, compare against the LAST non-empty line of stdout
-           (trimmed of whitespace & trailing newlines) to let users print steps.
-        3. If no stdout or mismatch, fail.
-        """
         if status_id != 3:
             return False
         if expected_output is None:
@@ -53,7 +44,6 @@ class Judge0Service:
         return lines[-1] == expected_output.strip()
     
     async def get_languages(self) -> List[LanguageInfo]:
-        """Get list of supported programming languages"""
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/languages",
@@ -72,7 +62,7 @@ class Judge0Service:
             )
     
     async def get_statuses(self) -> List[Judge0Status]:
-        """Get list of submission statuses"""
+        """Statuses."""
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/statuses",
@@ -118,7 +108,7 @@ class Judge0Service:
                 raise Exception(f"Failed to submit code: {response.status_code} - {response.text}")
     
     async def get_submission_result(self, token: str) -> Judge0ExecutionResult:
-        """Get execution result by token"""
+        #Result by token.
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/submissions/{token}?base64_encoded=false",
@@ -134,15 +124,8 @@ class Judge0Service:
     async def execute_code_sync(self, submission: CodeSubmissionCreate, user_id: Optional[str] = None,
                                max_wait_time: int = 45, poll_interval: float = 1.0,
                                prefer_wait: bool = True) -> CodeExecutionResult:
-        """Submit code and wait for result.
-
-        prefer_wait: when True try Judge0 wait=true for immediate result (saves polling).
-        max_wait_time: total seconds to poll if still queued/processing.
-        poll_interval: seconds between polls.
-        """
 
         if prefer_wait:
-            # Direct wait submission (does not use stored submission because no token until result)
             judge0_request = Judge0SubmissionRequest(
                 source_code=submission.source_code,
                 language_id=submission.language_id,
@@ -157,7 +140,6 @@ class Judge0Service:
                 )
             if resp.status_code == 201:
                 data = resp.json()
-                # Build pseudo Judge0ExecutionResult shape compatibility
                 status = data.get("status") or {}
                 language = data.get("language") or {"id": submission.language_id}
                 execution_result = CodeExecutionResult(
@@ -172,15 +154,13 @@ class Judge0Service:
                     success=self._compute_success(status.get("id"), data.get("stdout"), submission.expected_output),
                     created_at=datetime.utcnow()
                 )
-                # Store submission + result if user_id provided (create submission row first without token)
                 if user_id:
-                    # We still want a submission record; token may be absent in wait=true response
                     token = data.get("token")
                     if token:
                         await self._store_submission(submission, user_id, token)
                         await self._store_result(token, execution_result)
                 return execution_result
-            # fallback to polling path if wait=true not allowed
+            #fallback
 
         judge0_response = await self.submit_code(submission, user_id)
 
@@ -207,7 +187,7 @@ class Judge0Service:
         raise Exception("Timeout waiting for execution result")
     
     async def _store_submission(self, submission: CodeSubmissionCreate, user_id: str, judge0_token: str):
-        """Store submission using SQLAlchemy"""
+        """Store submission."""
         try:
             return judge0_repository.create_submission_sql(submission, user_id, judge0_token)
         except Exception as e:
@@ -215,12 +195,12 @@ class Judge0Service:
             raise e
     
     async def _store_result(self, judge0_token: str, result: CodeExecutionResult):
-        """Store execution result using SQLAlchemy"""
+        """Store result."""
         try:
-            # Get submission by token
+            #Get submission by token
             submission = judge0_repository.get_submission_by_token_sql(judge0_token)
             if submission:
-                # Create result
+                #Create result
                 return judge0_repository.create_result_sql(str(submission.id), result)
             else:
                 print(f"No submission found for token: {judge0_token}")
@@ -228,22 +208,21 @@ class Judge0Service:
             print(f"Error storing result: {e}")
             raise e
     
-    # Additional service methods using repository
+    #Additional service methods using repository
     async def get_user_submissions(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Get all submissions for a user"""
+        """User submissions."""
         return await judge0_repository.get_user_submissions(user_id, limit)
     
     async def get_submission_with_results(self, submission_id: str) -> Optional[Dict[str, Any]]:
-        """Get submission with its execution results"""
+        """Submission + results."""
         return await judge0_repository.get_submission_with_results(submission_id)
     
     async def delete_user_submission(self, submission_id: str, user_id: str) -> bool:
-        """Delete a submission (only if it belongs to the user)"""
+        """Delete owned submission."""
         return await judge0_repository.delete_submission(submission_id, user_id)
     
     async def get_language_statistics(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get statistics about language usage"""
+        """Language stats."""
         return await judge0_repository.get_language_statistics(user_id)
 
-#Create instance
 judge0_service = Judge0Service()

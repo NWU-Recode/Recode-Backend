@@ -2,8 +2,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
 from sqlalchemy.orm import Session
-from app.db.client import get_supabase 
-from app.db.session import SessionLocal 
+from app.DB.client import get_supabase 
+from app.DB.session import SessionLocal 
 from .models import CodeSubmission, CodeResult
 from .schemas import CodeSubmissionCreate, CodeExecutionResult
 
@@ -15,7 +15,6 @@ class Judge0Repository:
     
     # Using SQLAlchemy for new operations
     def create_submission_sql(self, submission: CodeSubmissionCreate, user_id: str, judge0_token: str, db: Session = None) -> CodeSubmission:
-        """Create submission using SQLAlchemy"""
         if not db:
             db = SessionLocal()
             close_db = True
@@ -41,7 +40,6 @@ class Judge0Repository:
                 db.close()
     
     def get_submission_by_token_sql(self, judge0_token: str, db: Session = None) -> Optional[CodeSubmission]:
-        """Get submission by token using SQLAlchemy"""
         if not db:
             db = SessionLocal()
             close_db = True
@@ -55,7 +53,6 @@ class Judge0Repository:
                 db.close()
     
     def create_result_sql(self, submission_id: str, result: CodeExecutionResult, db: Session = None) -> CodeResult:
-        """Create result using SQLAlchemy"""
         if not db:
             db = SessionLocal()
             close_db = True
@@ -81,7 +78,6 @@ class Judge0Repository:
             if close_db:
                 db.close()
     
-    # Keep existing Supabase methods for backward compatibility
     async def create_submission(self, submission: CodeSubmissionCreate, user_id: str, judge0_token: str) -> Dict[str, Any]:
         """Create new submission record"""
         try:
@@ -107,7 +103,6 @@ class Judge0Repository:
             print(f"Error creating submission: {e}")
             raise e
 
-    # --- Async (Supabase) query utilities used by service endpoints ---
     async def get_user_submissions(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         try:
             resp = self.supabase.table("code_submissions").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(limit).execute()
@@ -144,7 +139,6 @@ class Judge0Repository:
             raise e
 
     async def get_language_statistics(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Aggregate submissions per language (basic fallback implementation)."""
         try:
             query = self.supabase.table("code_submissions").select("language_id").order("created_at", desc=True)
             if user_id:
