@@ -14,6 +14,10 @@ from .schemas import (
 )
 from .service import judge0_service
 from app.features.submissions.service import submission_service
+from app.features.questions.repository import question_repository
+from app.features.challenges.repository import challenge_repository
+from app.features.questions.service import question_service
+from app.features.submissions.schemas import SubmissionCreate
 
 router = APIRouter(prefix="/judge0", tags=["judge0"])
 
@@ -74,9 +78,10 @@ async def submit_code_full(submission: CodeSubmissionCreate, current_user: Curre
         raise HTTPException(status_code=500, detail=f"Failed to submit code (full): {str(e)}")
 
 @router.get("/result/{token}", response_model=CodeExecutionResult)
-async def get_execution_result(token: str):
-    """Get execution result by token."""
+async def get_execution_result(token: str, current_user: CurrentUser = Depends(get_current_user)):
+    """Get execution result by token. Finalizes pending question attempt if applicable."""
     try:
+        user_id = str(current_user.id)
         judge0_result = await judge0_service.get_submission_result(token)
         db_submission = await submission_service.get_submission_by_token(token)
         expected_output = db_submission.get("expected_output") if db_submission else None
@@ -93,15 +98,50 @@ async def get_execution_result(token: str):
             language_id=language_id,
             success=success
         )
-        # Persist terminal state result
-        if db_submission and judge0_result.status.get("id") not in [1, 2]:
+        status_id = judge0_result.status.get("id") if judge0_result.status else None
+        if db_submission and status_id not in [1, 2]:
+            # Persist result row (ignore errors)
             try:
                 await submission_service.store_result(token, exec_result)
             except Exception:
                 pass
+            # If this corresponds to a question & no question_attempt yet, create one
+            qid = db_submission.get("question_id")
+            if qid:
+                existing_attempt = await question_repository.find_by_token(qid, user_id, token)
+                if not existing_attempt:
+                    # Need challenge_id from question
+                    qmeta = await question_repository.get_question(qid)
+                    if qmeta:
+                        attempt = await challenge_repository.create_or_get_open_attempt(str(qmeta["challenge_id"]), user_id)
+                        # Build attempt payload
+                        payload = {
+                            "question_id": qid,
+                            "challenge_id": str(qmeta["challenge_id"]),
+                            "challenge_attempt_id": attempt["id"],
+                            "user_id": user_id,
+                            "judge0_token": token,
+                            "source_code": db_submission.get("source_code"),
+                            "stdout": exec_result.stdout,
+                            "stderr": exec_result.stderr,
+                            "status_id": exec_result.status_id,
+                            "status_description": exec_result.status_description,
+                            "time": exec_result.execution_time,
+                            "memory": exec_result.memory_used,
+                            "is_correct": success,
+                            "code_hash": None,
+                            "hash": None,
+                            "latest": True,
+                        }
+                        existing_latest = await question_repository.get_existing_attempt(qid, user_id)
+                        if existing_latest:
+                            await question_repository.mark_previous_not_latest(qid, user_id)
+                        await question_repository.upsert_attempt(payload)
         return exec_result
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get result: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error_code":"E_UNKNOWN","message":f"Failed to get result: {str(e)}"})
 
 @router.post("/execute", response_model=CodeExecutionResult)
 async def execute_code_sync(submission: CodeSubmissionCreate):

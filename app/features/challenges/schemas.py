@@ -35,4 +35,23 @@ class ChallengeSubmitResponse(BaseModel):
     score: int
     correct_count: int
     status: str
+    snapshot_question_ids: List[UUID]
+    passed_ids: List[UUID]
+    failed_ids: List[UUID]
     missing_question_ids: Optional[List[UUID]] = None
+
+class ChallengeAttemptQuestionStatus(BaseModel):
+    question_id: UUID
+    status: str  # unattempted | passed | failed
+    last_submitted_at: Optional[datetime] = None
+    token: Optional[str] = None
+
+class GetChallengeAttemptResponse(BaseModel):
+    challenge_attempt_id: UUID
+    challenge_id: UUID
+    status: str
+    started_at: Optional[datetime] = None
+    deadline_at: Optional[datetime] = None
+    submitted_at: Optional[datetime] = None
+    snapshot_question_ids: List[UUID]
+    questions: List[ChallengeAttemptQuestionStatus]
