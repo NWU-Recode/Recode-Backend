@@ -1,0 +1,38 @@
+from __future__ import annotations
+from pydantic import BaseModel
+from typing import Optional, List
+from datetime import datetime
+from uuid import UUID
+
+class Challenge(BaseModel):
+    id: UUID
+    title: str
+    description: Optional[str] = None
+    created_at: datetime
+
+class ChallengeAttempt(BaseModel):
+    id: UUID
+    challenge_id: UUID
+    user_id: UUID
+    started_at: datetime
+    submitted_at: Optional[datetime] = None
+    score: int = 0
+    correct_count: int = 0
+    status: str
+
+class ChallengeMissingCode(BaseModel):
+    question_id: UUID
+    source_code: str
+    stdin: Optional[str] = None
+
+class ChallengeSubmitRequest(BaseModel):
+    challenge_id: UUID
+    # Optional code for questions without attempts: executed (waited) before aggregation
+    items: Optional[List[ChallengeMissingCode]] = None
+
+class ChallengeSubmitResponse(BaseModel):
+    challenge_attempt_id: UUID
+    score: int
+    correct_count: int
+    status: str
+    missing_question_ids: Optional[List[UUID]] = None

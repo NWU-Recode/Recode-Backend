@@ -1,66 +1,34 @@
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from sqlalchemy.orm import Session
-from app.DB.client import get_supabase 
-from app.DB.session import SessionLocal 
+from sqlalchemy import desc, func
+from app.DB.session import get_db
 from .models import CodeSubmission, CodeResult
 from .schemas import CodeSubmissionCreate, CodeExecutionResult
 
+
 class Judge0Repository:
-    """Database operations for Judge0"""
-    
+    """SQLAlchemy-based repository for Judge0 operations."""
+
     def __init__(self):
-        self.supabase = get_supabase
-    
-    # Using SQLAlchemy for new operations
-    def create_submission_sql(self, submission: CodeSubmissionCreate, user_id: str, judge0_token: str, db: Session = None) -> CodeSubmission:
-        if not db:
-            db = SessionLocal()
-            close_db = True
-        else:
-            close_db = False
-            
+        pass
+
+    def get_submission_by_token(self, judge0_token: str) -> Optional[CodeSubmission]:
+        """Get submission by Judge0 token."""
+        db = next(get_db())
         try:
-            db_submission = CodeSubmission(
-                user_id=user_id,
-                source_code=submission.source_code,
-                language_id=submission.language_id,
-                stdin=submission.stdin,
-                expected_output=submission.expected_output,
-                judge0_token=judge0_token,
-                status="submitted"
-            )
-            db.add(db_submission)
-            db.commit()
-            db.refresh(db_submission)
-            return db_submission
+            return db.query(CodeSubmission).filter(
+                CodeSubmission.judge0_token == judge0_token
+            ).first()
         finally:
-            if close_db:
-                db.close()
-    
-    def get_submission_by_token_sql(self, judge0_token: str, db: Session = None) -> Optional[CodeSubmission]:
-        if not db:
-            db = SessionLocal()
-            close_db = True
-        else:
-            close_db = False
-            
+            db.close()
+
+    def create_result(self, submission_id: UUID, result: CodeExecutionResult) -> CodeResult:
+        """Create a new execution result."""
+        db = next(get_db())
         try:
-            return db.query(CodeSubmission).filter(CodeSubmission.judge0_token == judge0_token).first()
-        finally:
-            if close_db:
-                db.close()
-    
-    def create_result_sql(self, submission_id: str, result: CodeExecutionResult, db: Session = None) -> CodeResult:
-        if not db:
-            db = SessionLocal()
-            close_db = True
-        else:
-            close_db = False
-            
-        try:
-            db_result = CodeResult(
+            result_data = CodeResult(
                 submission_id=submission_id,
                 stdout=result.stdout,
                 stderr=result.stderr,
@@ -68,91 +36,150 @@ class Judge0Repository:
                 execution_time=result.execution_time,
                 memory_used=result.memory_used,
                 status_id=result.status_id,
-                status_description=result.status_description
+                status_description=result.status_description,
+                created_at=datetime.now(timezone.utc)
             )
-            db.add(db_result)
+            db.add(result_data)
             db.commit()
-            db.refresh(db_result)
-            return db_result
+            db.refresh(result_data)
+            return result_data
+        except Exception as e:
+            db.rollback()
+            raise RuntimeError(f"Failed to create result record: {e}")
         finally:
-            if close_db:
-                db.close()
-    
-    async def create_submission(self, submission: CodeSubmissionCreate, user_id: str, judge0_token: str) -> Dict[str, Any]:
-        """Create new submission record"""
-        try:
-            submission_data = {
-                "user_id": user_id,
-                "source_code": submission.source_code,
-                "language_id": submission.language_id,
-                "stdin": submission.stdin,
-                "expected_output": submission.expected_output,
-                "judge0_token": judge0_token,
-                "status": "submitted",
-                "created_at": datetime.utcnow().isoformat()
-            }
-            
-            response = self.supabase.table("code_submissions").insert(submission_data).execute()
-            
-            if response.data:
-                return response.data[0]
-            else:
-                raise Exception("Failed to create submission record")
-                
-        except Exception as e:
-            print(f"Error creating submission: {e}")
-            raise e
+            db.close()
 
-    async def get_user_submissions(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    def create_submission(self, submission: CodeSubmissionCreate, user_id: UUID, judge0_token: str) -> CodeSubmission:
+        """Create new submission record."""
+        db = next(get_db())
         try:
-            resp = self.supabase.table("code_submissions").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(limit).execute()
-            return resp.data or []
+            submission_data = CodeSubmission(
+                user_id=user_id,
+                source_code=submission.source_code,
+                language_id=submission.language_id,
+                stdin=submission.stdin,
+                expected_output=submission.expected_output,
+                judge0_token=judge0_token,
+                status="submitted",
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(submission_data)
+            db.commit()
+            db.refresh(submission_data)
+            return submission_data
         except Exception as e:
-            print(f"Error fetching user submissions: {e}")
-            raise e
+            db.rollback()
+            raise RuntimeError(f"Failed to create submission record: {e}")
+        finally:
+            db.close()
 
-    async def get_submission_with_results(self, submission_id: str) -> Optional[Dict[str, Any]]:
+    def get_user_submissions(self, user_id: UUID, limit: int = 50) -> List[CodeSubmission]:
+        """Get user's submissions with pagination."""
+        db = next(get_db())
         try:
-            # Fetch submission
-            submission_resp = self.supabase.table("code_submissions").select("*").eq("id", submission_id).single().execute()
-            if not submission_resp.data:
+            return db.query(CodeSubmission).filter(
+                CodeSubmission.user_id == user_id
+            ).order_by(desc(CodeSubmission.created_at)).limit(limit).all()
+        finally:
+            db.close()
+
+    def get_submission_with_results(self, submission_id: UUID) -> Optional[Dict[str, Any]]:
+        """Get submission with all related results."""
+        db = next(get_db())
+        try:
+            submission = db.query(CodeSubmission).filter(
+                CodeSubmission.id == submission_id
+            ).first()
+            
+            if not submission:
                 return None
-            # Fetch related results
-            results_resp = self.supabase.table("code_results").select("*").eq("submission_id", submission_id).order("created_at", desc=True).execute()
-            return {"submission": submission_resp.data, "results": results_resp.data or []}
-        except Exception as e:
-            print(f"Error fetching submission details: {e}")
-            raise e
+                
+            results = db.query(CodeResult).filter(
+                CodeResult.submission_id == submission_id
+            ).order_by(desc(CodeResult.created_at)).all()
+            
+            return {
+                "submission": submission,
+                "results": results
+            }
+        finally:
+            db.close()
 
-    async def delete_submission(self, submission_id: str, user_id: str) -> bool:
+    def delete_submission(self, submission_id: UUID, user_id: UUID) -> bool:
+        """Delete submission and related results if user owns it."""
+        db = next(get_db())
         try:
-            # Ensure ownership then delete (Supabase RLS may enforce this too)
-            sub_resp = self.supabase.table("code_submissions").select("id,user_id").eq("id", submission_id).single().execute()
-            if not sub_resp.data or sub_resp.data.get("user_id") != user_id:
+            # Check ownership
+            submission = db.query(CodeSubmission).filter(
+                CodeSubmission.id == submission_id,
+                CodeSubmission.user_id == user_id
+            ).first()
+            
+            if not submission:
                 return False
-            # Delete results first (if no cascade)
-            self.supabase.table("code_results").delete().eq("submission_id", submission_id).execute()
-            self.supabase.table("code_submissions").delete().eq("id", submission_id).execute()
+                
+            # Delete results first (cascade should handle this, but being explicit)
+            db.query(CodeResult).filter(
+                CodeResult.submission_id == submission_id
+            ).delete()
+            
+            # Delete submission
+            db.delete(submission)
+            db.commit()
             return True
         except Exception as e:
-            print(f"Error deleting submission: {e}")
-            raise e
+            db.rollback()
+            raise RuntimeError(f"Failed to delete submission: {e}")
+        finally:
+            db.close()
 
-    async def get_language_statistics(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_language_statistics(self, user_id: Optional[UUID] = None) -> List[Dict[str, Any]]:
+        """Get language usage statistics."""
+        db = next(get_db())
         try:
-            query = self.supabase.table("code_submissions").select("language_id").order("created_at", desc=True)
+            query = db.query(
+                CodeSubmission.language_id,
+                func.count(CodeSubmission.id).label('submission_count')
+            ).group_by(CodeSubmission.language_id)
+            
             if user_id:
-                query = query.eq("user_id", user_id)
-            resp = query.execute()
-            counts: Dict[int, int] = {}
-            for row in resp.data or []:
-                lang_id = row.get("language_id")
-                if lang_id is not None:
-                    counts[lang_id] = counts.get(lang_id, 0) + 1
-            return [ {"language_id": k, "submission_count": v} for k, v in sorted(counts.items(), key=lambda kv: kv[1], reverse=True) ]
+                query = query.filter(CodeSubmission.user_id == user_id)
+                
+            results = query.order_by(desc('submission_count')).all()
+            
+            return [
+                {
+                    "language_id": result.language_id,
+                    "submission_count": result.submission_count
+                }
+                for result in results
+            ]
+        finally:
+            db.close()
+
+    def update_submission_status(self, submission_id: UUID, status: str, completed_at: Optional[datetime] = None) -> bool:
+        """Update submission status and completion time."""
+        db = next(get_db())
+        try:
+            submission = db.query(CodeSubmission).filter(
+                CodeSubmission.id == submission_id
+            ).first()
+            
+            if not submission:
+                return False
+                
+            submission.status = status
+            if completed_at:
+                submission.completed_at = completed_at
+                
+            db.commit()
+            return True
         except Exception as e:
-            print(f"Error computing language statistics: {e}")
-            raise e
+            db.rollback()
+            raise RuntimeError(f"Failed to update submission status: {e}")
+        finally:
+            db.close()
+
 
 # Repository instance
 judge0_repository = Judge0Repository()

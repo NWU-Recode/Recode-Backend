@@ -1,12 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import List, Optional
-from uuid import UUID
+from typing import List
 
-# Use authenticated user instead of passing user_id in query for certain actions
-try:  # keep consistent with existing lowercase import usage elsewhere
-    from app.auth.service import get_current_user
-except ImportError:  # fallback to actual folder case (Windows insensitive, Linux sensitive)
-    from app.Auth.service import get_current_user  # type: ignore
+
+from app.common.deps import get_current_user, CurrentUser  
 
 from .schemas import (
     CodeSubmissionCreate,
@@ -14,13 +10,17 @@ from .schemas import (
     CodeExecutionResult,
     LanguageInfo,
     Judge0Status,
-    Judge0SubmissionResponse
+    Judge0SubmissionResponse,
 )
 from .service import judge0_service
-from .repository import judge0_repository
+from app.features.submissions.service import submission_service
 
 router = APIRouter(prefix="/judge0", tags=["judge0"])
 
+"""Judge0-focused endpoints (execution + token lifecycle).
+
+Submission management (listing, deleting, statistics) moved to `app.features.submissions.endpoints`.
+"""
 @router.get("/languages", response_model=List[LanguageInfo])
 async def get_supported_languages():
     """Get list of supported programming languages"""
@@ -38,42 +38,38 @@ async def get_submission_statuses():
         raise HTTPException(status_code=500, detail=f"Failed to fetch statuses: {str(e)}")
 
 @router.post("/submit", response_model=Judge0SubmissionResponse)
-async def submit_code(submission: CodeSubmissionCreate, user_id: Optional[str] = None):
-    """Submit code for execution (async - returns token)"""
+async def submit_code(submission: CodeSubmissionCreate):
+    """Submit code for async execution (returns token)."""
     try:
-        return await judge0_service.submit_code(submission, user_id)
+        return await judge0_service.submit_code(submission)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code: {str(e)}")
 
-@router.post("/submit/full", response_model=CodeSubmissionResponse, summary="Submit code (auth) and return stored record")
-async def submit_code_full(
-    submission: CodeSubmissionCreate,
-    current_user = Depends(get_current_user)
-):
-    """Authenticated submit that stores and returns full submission (no user_id query param).
+@router.post("/submit/wait", response_model=CodeExecutionResult, summary="Single-call waited execution (no persistence)")
+async def submit_code_wait(submission: CodeSubmissionCreate):
+    """Submit code with wait=true and return normalized result (no persistence)."""
+    try:
+        waited = await judge0_service.submit_code_wait(submission)
+        return judge0_service._to_code_execution_result(waited, submission.expected_output, submission.language_id)  # type: ignore
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed waited submit: {str(e)}")
 
-    Uses bearer token to resolve the user, avoiding manual UUID passing & FK errors.
-    """
+@router.post("/submit/full", response_model=CodeSubmissionResponse, summary="(Auth) Submit & persist")
+async def submit_code_full(submission: CodeSubmissionCreate, current_user: CurrentUser = Depends(get_current_user)):
+    """Submit code (auth), persist a record, return stored submission row + token."""
     try:
         user_id = str(current_user.id)
-        judge0_resp = await judge0_service.submit_code(submission, user_id)
-        db_submission = judge0_repository.get_submission_by_token_sql(judge0_resp.token)
-        if not db_submission:
-            raise HTTPException(status_code=500, detail="Submission stored record not found after creation")
-        return CodeSubmissionResponse(
-            id=db_submission.id,
-            user_id=db_submission.user_id,
-            source_code=db_submission.source_code,
-            language_id=db_submission.language_id,
-            stdin=db_submission.stdin,
-            expected_output=db_submission.expected_output,
-            judge0_token=db_submission.judge0_token,
-            status=db_submission.status,
-            created_at=db_submission.created_at,
-            completed_at=db_submission.completed_at
+        judge0_resp = await judge0_service.submit_code(submission)
+        # Persist initial submission row
+        await submission_service.store_submission(
+            submission=submission,  # type: ignore[arg-type]
+            user_id=user_id,
+            judge0_token=judge0_resp.token
         )
-    except HTTPException:
-        raise
+        created = await submission_service.get_submission_by_token(judge0_resp.token)
+        if not created:
+            raise HTTPException(status_code=500, detail="Submission record not found after creation")
+        return CodeSubmissionResponse(**created)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code (full): {str(e)}")
 
@@ -82,12 +78,11 @@ async def get_execution_result(token: str):
     """Get execution result by token."""
     try:
         judge0_result = await judge0_service.get_submission_result(token)
-        db_submission = judge0_repository.get_submission_by_token_sql(token)
-        expected_output = getattr(db_submission, "expected_output", None) if db_submission else None
-        language_id = (judge0_result.language or {}).get("id", db_submission.language_id if db_submission else -1)
+        db_submission = await submission_service.get_submission_by_token(token)
+        expected_output = db_submission.get("expected_output") if db_submission else None
+        language_id = (judge0_result.language or {}).get("id", db_submission.get("language_id") if db_submission else -1)
         success = judge0_service._compute_success(judge0_result.status.get("id"), judge0_result.stdout, expected_output)  # type: ignore
-
-        execution_result = CodeExecutionResult(
+        exec_result = CodeExecutionResult(
             stdout=judge0_result.stdout,
             stderr=judge0_result.stderr,
             compile_output=judge0_result.compile_output,
@@ -98,24 +93,52 @@ async def get_execution_result(token: str):
             language_id=language_id,
             success=success
         )
-        # Persist if we have submission and terminal state (id not in queued/processing)
+        # Persist terminal state result
         if db_submission and judge0_result.status.get("id") not in [1, 2]:
-            # Attempt store (ignore errors silently here)
             try:
-                await judge0_service._store_result(token, execution_result)  # type: ignore
+                await submission_service.store_result(token, exec_result)
             except Exception:
                 pass
-        return execution_result
+        return exec_result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get result: {str(e)}")
 
 @router.post("/execute", response_model=CodeExecutionResult)
-async def execute_code_sync(submission: CodeSubmissionCreate, user_id: Optional[str] = None):
-    """Submit code and wait for execution result (synchronous)"""
+async def execute_code_sync(submission: CodeSubmissionCreate):
+    """Legacy execute endpoint (polling). Prefer /submit/wait if immediate result acceptable."""
     try:
-        return await judge0_service.execute_code_sync(submission, user_id)
+        return await judge0_service.execute_code(submission)
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Execution timeout")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
+
+@router.post("/execute/stdout", summary="Quick execute (stdout only)")
+async def execute_stdout_only(submission: CodeSubmissionCreate):
+    """Execute code (no expected_output, not persisted) and return only stdout."""
+    try:
+        temp = CodeSubmissionCreate(
+            source_code=submission.source_code,
+            language_id=submission.language_id,
+            stdin=submission.stdin,
+            expected_output=None  # ignore any provided expected output
+        )
+        result = await judge0_service.execute_code(temp)  # type: ignore
+        return {"stdout": result.stdout}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to execute: {str(e)}")
+
+@router.post("/execute/batch", summary="Execute multiple submissions via batch API")
+async def execute_batch(submissions: List[CodeSubmissionCreate]):
+    """Submit a batch and poll until all complete; returns list of {token, result}."""
+    try:
+        batch = await judge0_service.execute_batch(submissions)  # type: ignore
+        return [{"token": tok, "result": res} for tok, res in batch]
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Batch execution timeout")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed batch execution: {str(e)}")
+
 
 @router.post("/test", response_model=dict)
 async def test_code_execution():
@@ -126,9 +149,7 @@ async def test_code_execution():
             source_code='print("Hello, World!")',
             language_id=71  # Python 3
         )
-        
-        result = await judge0_service.execute_code_sync(test_submission)
-        
+        result = await judge0_service.execute_code(test_submission)  # type: ignore
         return {
             "message": "Test execution completed",
             "result": result,
@@ -137,60 +158,4 @@ async def test_code_execution():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Test execution failed: {str(e)}")
 
-# Additional endpoints for stored submissions (using repository.py)
-@router.get("/submissions/user/{user_id}", response_model=List[dict])
-async def get_user_submissions(user_id: str, limit: int = 50):
-    """(Admin/legacy) Get all submissions for a specific user by id."""
-    try:
-        return await judge0_service.get_user_submissions(user_id, limit)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch submissions: {str(e)}")
-
-@router.get("/submissions/me", response_model=List[dict], summary="My submissions")
-async def get_my_submissions(limit: int = 50, current_user = Depends(get_current_user)):
-    """Get submissions for the authenticated user."""
-    try:
-        return await judge0_service.get_user_submissions(str(current_user.id), limit)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch submissions: {str(e)}")
-
-@router.get("/submission/{submission_id}/details", response_model=dict)
-async def get_submission_details(submission_id: str):
-    """Get submission with all its results"""
-    try:
-        submission = await judge0_service.get_submission_with_results(submission_id)
-        if not submission:
-            raise HTTPException(status_code=404, detail="Submission not found")
-        return submission
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch submission details: {str(e)}")
-
-@router.delete("/submission/{submission_id}", summary="Delete my submission")
-async def delete_submission(submission_id: str, current_user = Depends(get_current_user)):
-    """Delete one of the current user's submissions."""
-    try:
-        success = await judge0_service.delete_user_submission(submission_id, str(current_user.id))
-        if not success:
-            raise HTTPException(status_code=404, detail="Submission not found or not owned by you")
-        return {"message": "Submission deleted"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete submission: {str(e)}")
-
-@router.get("/statistics/languages", response_model=List[dict])
-async def get_language_statistics(user_id: Optional[str] = None):
-    """Get statistics about language usage (optionally for a given user id)."""
-    try:
-        return await judge0_service.get_language_statistics(user_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch statistics: {str(e)}")
-
-@router.get("/statistics/languages/me", response_model=List[dict], summary="My language statistics")
-async def get_my_language_statistics(current_user = Depends(get_current_user)):
-    try:
-        return await judge0_service.get_language_statistics(str(current_user.id))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch statistics: {str(e)}")
+# NOTE: Submission management endpoints moved to `submissions/endpoints.py`.
