@@ -32,17 +32,27 @@ class Judge0Service:
 
     @staticmethod
     def _compute_success(status_id: int | None, stdout: str | None, expected_output: str | None) -> bool:
+        # Accepted status required
         if status_id != 3:
             return False
         if expected_output is None:
             return True
         if stdout is None:
             return False
-        # Extract last non-empty line
-        lines = [l.strip() for l in stdout.splitlines() if l.strip()]
-        if not lines:
+        def _norm(s: str) -> str | None:
+            if s is None:
+                return None
+            # Normalise newlines, trim, split, take last non-empty
+            s2 = s.replace('\r\n', '\n').strip()
+            lines = [ln.rstrip() for ln in s2.split('\n') if ln.strip()]
+            if not lines:
+                return None
+            return lines[-1].strip()
+        expected = _norm(expected_output)
+        actual = _norm(stdout)
+        if expected is None or actual is None:
             return False
-        return lines[-1] == expected_output.strip()
+        return actual == expected
     
     async def get_languages(self) -> List[LanguageInfo]:
         async with httpx.AsyncClient() as client:
@@ -136,6 +146,20 @@ class Judge0Service:
         if "status" not in data and "status_id" in data:
             data["status"] = {"id": data["status_id"], "description": data.get("status_description", "")}
         return Judge0ExecutionResult(**data)
+
+    async def execute_code_sync(
+        self,
+        submission: CodeSubmissionCreate,
+        fields: str = "token,stdout,stderr,status_id,time,memory,language"
+    ) -> tuple[str, CodeExecutionResult]:
+        """Waited single-call execution returning (token, CodeExecutionResult) with no persistence.
+
+        Mirrors spec 'execute_code_sync(wait=True)'. Internally uses submit_code_wait.
+        """
+        waited = await self.submit_code_wait(submission, fields=fields)
+        token = waited.token  # type: ignore[attr-defined]
+        exec_result = self._to_code_execution_result(waited, submission.expected_output, submission.language_id)
+        return token, exec_result
 
     async def submit_question_run(
         self,

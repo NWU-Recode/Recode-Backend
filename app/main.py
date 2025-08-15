@@ -18,6 +18,7 @@ from app.features.judge0.endpoints import router as judge0_router
 from app.features.questions.endpoints import router as questions_router
 from app.features.challenges.endpoints import router as challenges_router
 from app.features.slide_extraction.endpoints import router as slide_extraction_router
+from app.features.dashboard.endpoints import router as dashboard_router
 
 app = FastAPI(title="Recode Backend")
 
@@ -44,6 +45,7 @@ app.include_router(judge0_router)
 app.include_router(slide_extraction_router)
 app.include_router(questions_router)
 app.include_router(challenges_router)
+app.include_router(dashboard_router)
 
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")

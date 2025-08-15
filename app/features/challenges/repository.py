@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
-from app.DB.client import get_supabase
+from datetime import datetime, timedelta, timezone
+from app.DB.client_backup import get_supabase
 
 class ChallengeRepository:
     async def get_challenge(self, challenge_id: str) -> Optional[Dict[str, Any]]:
@@ -39,6 +40,92 @@ class ChallengeRepository:
             raise RuntimeError("Failed to start challenge attempt")
         return resp.data[0]
 
+    async def create_or_get_open_attempt(self, challenge_id: str, user_id: str) -> Dict[str, Any]:
+        """Return an open attempt creating + snapshotting + deadlines if needed.
+
+        Deadline is 7 days from first start. Expire if exceeded.
+        """
+        existing = await self.get_open_attempt(challenge_id, user_id)
+        now = datetime.now(timezone.utc)
+        client = await get_supabase()
+        if existing:
+            started_at = existing.get("started_at")
+            deadline_at = existing.get("deadline_at")
+            # Expire if deadline passed
+            try:
+                if deadline_at:
+                    ddt = datetime.fromisoformat(str(deadline_at).replace("Z", "+00:00"))
+                    if now > ddt:
+                        client.table("challenge_attempts").update({"status": "expired"}).eq("id", existing["id"]).execute()
+                        existing["status"] = "expired"
+                        return existing
+            except Exception:
+                pass
+        if not existing:
+            # Create base attempt with started/deadline
+            started_at = now.isoformat()
+            deadline_at = (now + timedelta(days=7)).isoformat()
+            resp = client.table("challenge_attempts").insert({
+                "challenge_id": challenge_id,
+                "user_id": user_id,
+                "status": "open",
+                "started_at": started_at,
+                "deadline_at": deadline_at,
+            }).execute()
+            if not resp.data:
+                raise RuntimeError("Failed to start challenge attempt")
+            existing = resp.data[0]
+        # Ensure snapshot exists & set started/deadline if missing legacy rows
+        patch: Dict[str, Any] = {}
+        if not existing.get("snapshot_questions"):
+            snapshot = await self._build_snapshot(challenge_id)
+            patch["snapshot_questions"] = snapshot
+        if not existing.get("started_at"):
+            patch["started_at"] = now.isoformat()
+        if not existing.get("deadline_at"):
+            patch["deadline_at"] = (now + timedelta(days=7)).isoformat()
+        if patch:
+            upd = client.table("challenge_attempts").update(patch).eq("id", existing["id"]).execute()
+            if upd.data:
+                existing = upd.data[0]
+        return existing
+
+    async def list_challenges(self) -> List[Dict[str, Any]]:
+        client = await get_supabase()
+        resp = client.table("challenges").select("*").order("sequence_index").execute()
+        return resp.data or []
+
+    async def list_user_attempts(self, user_id: str) -> List[Dict[str, Any]]:
+        client = await get_supabase()
+        resp = client.table("challenge_attempts").select("*").eq("user_id", user_id).execute()
+        return resp.data or []
+
+    async def _build_snapshot(self, challenge_id: str) -> List[Dict[str, Any]]:
+        """Fetch exactly 10 questions and return frozen snapshot list.
+
+        Raises if not exactly 10.
+        """
+        questions = await self.get_challenge_questions(challenge_id)
+        if len(questions) != 10:
+            raise ValueError("challenge_not_configured: needs 10 questions")
+        snapshot: List[Dict[str, Any]] = []
+        for idx, q in enumerate(sorted(questions, key=lambda r: str(r.get("id")))):
+            snapshot.append({
+                "question_id": str(q["id"]),
+                "expected_output": (q.get("expected_output") or "").strip(),
+                "language_id": q.get("language_id"),
+                "max_time_ms": q.get("max_time_ms"),
+                "max_memory_kb": q.get("max_memory_kb"),
+                "points": 1,
+                "order_index": idx,
+                "version": 1,
+            })
+        return snapshot
+
+    async def get_snapshot(self, attempt: Dict[str, Any]) -> List[Dict[str, Any]]:
+        snap = attempt.get("snapshot_questions") or []
+        return snap
+
     async def finalize_attempt(self, attempt_id: str, score: int, correct_count: int) -> Dict[str, Any]:
         client = await get_supabase()
         resp = (
@@ -46,7 +133,7 @@ class ChallengeRepository:
             .update({
                 "score": score,
                 "correct_count": correct_count,
-                "status": "completed",
+                "status": "submitted",
                 "submitted_at": "now()",
             })
             .eq("id", attempt_id)
