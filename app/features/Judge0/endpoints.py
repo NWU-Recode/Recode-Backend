@@ -2,6 +2,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
 from uuid import UUID
 
+# Use authenticated user instead of passing user_id in query for certain actions
+try:  # keep consistent with existing lowercase import usage elsewhere
+    from app.auth.service import get_current_user
+except ImportError:  # fallback to actual folder case (Windows insensitive, Linux sensitive)
+    from app.Auth.service import get_current_user  # type: ignore
+
 from .schemas import (
     CodeSubmissionCreate,
     CodeSubmissionResponse,
@@ -39,18 +45,18 @@ async def submit_code(submission: CodeSubmissionCreate, user_id: Optional[str] =
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code: {str(e)}")
 
-@router.post("/submit/full", response_model=CodeSubmissionResponse)
-async def submit_code_full(submission: CodeSubmissionCreate, user_id: str):
-    """Submit code and return stored submission record (requires user_id).
+@router.post("/submit/full", response_model=CodeSubmissionResponse, summary="Submit code (auth) and return stored record")
+async def submit_code_full(
+    submission: CodeSubmissionCreate,
+    current_user = Depends(get_current_user)
+):
+    """Authenticated submit that stores and returns full submission (no user_id query param).
 
-    This wraps the standard submit endpoint but returns the full submission
-    (including generated id, token, timestamps) so the frontend can track
-    status without an extra round-trip.
+    Uses bearer token to resolve the user, avoiding manual UUID passing & FK errors.
     """
     try:
-        # Submit to Judge0 (this also stores when user_id provided)
+        user_id = str(current_user.id)
         judge0_resp = await judge0_service.submit_code(submission, user_id)
-        # Fetch stored submission by token (sync repository call)
         db_submission = judge0_repository.get_submission_by_token_sql(judge0_resp.token)
         if not db_submission:
             raise HTTPException(status_code=500, detail="Submission stored record not found after creation")
@@ -134,9 +140,17 @@ async def test_code_execution():
 # Additional endpoints for stored submissions (using repository.py)
 @router.get("/submissions/user/{user_id}", response_model=List[dict])
 async def get_user_submissions(user_id: str, limit: int = 50):
-    """Get all submissions for a user"""
+    """(Admin/legacy) Get all submissions for a specific user by id."""
     try:
         return await judge0_service.get_user_submissions(user_id, limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch submissions: {str(e)}")
+
+@router.get("/submissions/me", response_model=List[dict], summary="My submissions")
+async def get_my_submissions(limit: int = 50, current_user = Depends(get_current_user)):
+    """Get submissions for the authenticated user."""
+    try:
+        return await judge0_service.get_user_submissions(str(current_user.id), limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch submissions: {str(e)}")
 
@@ -153,14 +167,14 @@ async def get_submission_details(submission_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch submission details: {str(e)}")
 
-@router.delete("/submission/{submission_id}")
-async def delete_submission(submission_id: str, user_id: str):
-    """Delete a submission (only if it belongs to the user)"""
+@router.delete("/submission/{submission_id}", summary="Delete my submission")
+async def delete_submission(submission_id: str, current_user = Depends(get_current_user)):
+    """Delete one of the current user's submissions."""
     try:
-        success = await judge0_service.delete_user_submission(submission_id, user_id)
+        success = await judge0_service.delete_user_submission(submission_id, str(current_user.id))
         if not success:
-            raise HTTPException(status_code=404, detail="Submission not found or you don't have permission to delete it")
-        return {"message": "Submission deleted successfully"}
+            raise HTTPException(status_code=404, detail="Submission not found or not owned by you")
+        return {"message": "Submission deleted"}
     except HTTPException:
         raise
     except Exception as e:
@@ -168,8 +182,15 @@ async def delete_submission(submission_id: str, user_id: str):
 
 @router.get("/statistics/languages", response_model=List[dict])
 async def get_language_statistics(user_id: Optional[str] = None):
-    """Get statistics about language usage"""
+    """Get statistics about language usage (optionally for a given user id)."""
     try:
         return await judge0_service.get_language_statistics(user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch statistics: {str(e)}")
+
+@router.get("/statistics/languages/me", response_model=List[dict], summary="My language statistics")
+async def get_my_language_statistics(current_user = Depends(get_current_user)):
+    try:
+        return await judge0_service.get_language_statistics(str(current_user.id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch statistics: {str(e)}")

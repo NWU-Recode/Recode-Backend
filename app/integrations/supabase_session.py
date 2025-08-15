@@ -1,29 +1,26 @@
-"""Supabase session utilities (optional, used outside SQLAlchemy paths)."""
+"""Supabase session utilities for authentication and user management."""
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-# If you actually use supabase-py v2 async client, wire it here.
-# Placeholder import to avoid breaking builds if not installed everywhere:
-try:
-    from supabase import AsyncClient  # type: ignore
-except Exception:  # pragma: no cover
-    AsyncClient = object  # fallback to avoid import errors
+from supabase import AsyncClient, create_async_client
+from app.Core.config import get_settings
 
-# Implement your own factory returning an AsyncClient instance.
-# For now this is a stub so you can wire it later without blocking the rebase.
-async def get_client() -> AsyncClient:  # type: ignore
-    raise NotImplementedError("Wire up Supabase AsyncClient creation here.")
+_settings = get_settings()
+
+async def get_client() -> AsyncClient:
+    return await create_async_client(
+        _settings.supabase_url, 
+        _settings.supabase_key
+    )
 
 @asynccontextmanager
-async def supabase_session() -> AsyncIterator[AsyncClient]:  # type: ignore
-    """Provide a Supabase client session."""
+async def supabase_session() -> AsyncIterator[AsyncClient]:
+    #Provide a Supabase client session
     client = await get_client()
     try:
         yield client
     finally:
-        # add any client cleanup if needed
-        ...
-# await client.close()  # type: ignore
+        pass
