@@ -18,6 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
 # Load app settings & models
 from app.Core.config import get_settings
 from app.DB.base import Base  
+# Ensure all models are imported so Base.metadata is populated
+import app.DB.models  # noqa: F401
 
 settings = get_settings()
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
-from app.DB.client_backup import get_supabase
+from app.DB.supabase import get_supabase
 
 class ChallengeRepository:
     async def get_challenge(self, challenge_id: str) -> Optional[Dict[str, Any]]:
@@ -142,5 +142,37 @@ class ChallengeRepository:
         if not resp.data:
             raise RuntimeError("Failed to finalize challenge attempt")
         return resp.data[0]
+
+    # --- Milestone helpers (plain challenge progress) ---
+    async def count_plain_completed(self, user_id: str) -> int:
+        """Return number of submitted plain (weekly) challenges for user."""
+        client = await get_supabase()
+        # tier stored as enum -> cast to text compare
+        resp = (
+            client.table("challenge_attempts")
+            .select("id, challenge:challenges(tier)")
+            .eq("user_id", user_id)
+            .eq("status", "submitted")
+            .execute()
+        )
+        data = resp.data or []
+        count = 0
+        for row in data:
+            ch = row.get("challenge")
+            # PostgREST join returns object or list
+            tier = None
+            if isinstance(ch, dict):
+                tier = ch.get("tier")
+            elif isinstance(ch, list) and ch:
+                tier = ch[0].get("tier")
+            if tier == "plain":
+                count += 1
+        return count
+
+    async def total_plain_planned(self) -> int:
+        """Total number of planned plain challenges (configured)."""
+        client = await get_supabase()
+        resp = client.table("challenges").select("id").eq("tier", "plain").execute()
+        return len(resp.data or [])
 
 challenge_repository = ChallengeRepository()

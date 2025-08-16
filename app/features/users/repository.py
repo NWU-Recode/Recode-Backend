@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-from app.DB.client import get_supabase
+from app.DB.supabase import get_supabase  # updated import (was app.DB.client)
 from .schemas import UserCreate, UserUpdate
 
 

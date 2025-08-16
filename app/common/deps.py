@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 
-from app.Integrations.supabase_session import get_client
+from app.DB.supabase import get_supabase
 from app.features.users.service import ensure_user_provisioned, get_user_schema_by_supabase_id
 
 logger = logging.getLogger("auth.deps")
@@ -42,7 +42,7 @@ async def get_current_user(
       3. Return typed minimal identity object
       4. Log request with X-Request-Id if provided
     """
-    client = await get_client()
+    client = await get_supabase()
     token = credentials.credentials
     try:
         auth_user = await client.auth.get_user(token)

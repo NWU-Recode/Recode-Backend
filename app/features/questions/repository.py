@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from app.DB.client_backup import get_supabase
+from app.DB.supabase import get_supabase
 
 class QuestionRepository:
     async def get_question(self, question_id: str) -> Optional[Dict[str, Any]]:

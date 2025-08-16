@@ -2,7 +2,7 @@ from sqlalchemy import Column, DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 import uuid
-from app.db.base import Base
+from app.DB.base import Base
 
 
 class SlideExtraction(Base):

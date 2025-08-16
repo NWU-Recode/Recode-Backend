@@ -13,7 +13,9 @@ from fastapi import HTTPException
 from app.features.judge0.schemas import CodeSubmissionCreate
 from app.features.judge0.service import judge0_service
 from app.features.challenges.repository import challenge_repository
-from app.DB.client_backup import get_supabase
+from app.DB.supabase import get_supabase
+from app.features.questions.grading import map_app_status
+from app.common.quota import enforce_source_stdin, QuotaError
 from app.features.submissions.service import submission_service
 from app.features.submissions.schemas import SubmissionCreate
 import asyncio, time
@@ -21,25 +23,8 @@ import asyncio, time
 class QuestionService:
     # ---- Helpers ----
     @staticmethod
-    def _map_app_status(status_id: int, is_correct: Optional[bool]) -> str:
-        if status_id == 3:  # Accepted
-            return "accepted" if is_correct else "wrong_answer"
-        compile_error_ids = {6, 7}
-        runtime_error_ids = {4, 5, 8, 9, 10, 11, 12, 13}
-        if status_id in compile_error_ids:
-            return "compile_error"
-        if status_id in runtime_error_ids:
-            return "runtime_error"
-        if status_id in {1, 2}:
-            return "pending"
-        return "other_error"
-
-    @staticmethod
-    def _enforce_size_limits(source: str, stdin: Optional[str]):
-        if len(source.encode()) > 128 * 1024:
-            raise ValueError("payload_too_large: source_code exceeds 128KiB limit")
-        if stdin and len(stdin.encode()) > 32 * 1024:
-            raise ValueError("payload_too_large: stdin exceeds 32KiB limit")
+    def _map_app_status(status_id: int, is_correct: Optional[bool]) -> str:  # backward compat wrapper
+        return map_app_status(status_id, is_correct)
 
     async def _ensure_snapshot_membership(self, question_id: str, challenge_id: str, user_id: str):
         attempt = await challenge_repository.create_or_get_open_attempt(challenge_id, user_id)
@@ -65,7 +50,10 @@ class QuestionService:
         return attempt, snapshot
 
     async def execute(self, req: ExecuteRequest, user_id: str) -> ExecuteResponse:
-        self._enforce_size_limits(req.source_code, req.stdin)
+        try:
+            enforce_source_stdin(req.source_code, req.stdin)
+        except QuotaError as qe:
+            raise ValueError(str(qe))
         q = await question_repository.get_question(str(req.question_id))
         if not q:
             raise ValueError("question_not_found")
@@ -105,7 +93,10 @@ class QuestionService:
         )
 
     async def submit(self, req: QuestionSubmitRequest, user_id: str) -> QuestionSubmitResponse:
-        self._enforce_size_limits(req.source_code, req.stdin)
+        try:
+            enforce_source_stdin(req.source_code, req.stdin)
+        except QuotaError as qe:
+            raise ValueError(str(qe))
         if not req.idempotency_key:
             raise ValueError("idempotency_key_required")
         q = await question_repository.get_question(str(req.question_id))
