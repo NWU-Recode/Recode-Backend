@@ -5,6 +5,19 @@ from app.DB.base import Base
 from app.features.users.models import User  # Updated user model
 from app.features.judge0.models import CodeSubmission, CodeResult
 from app.features.slide_extraction.models import SlideExtraction
+from app.features.challenges.models import Challenge
+from app.features.questions.models import Question
+from app.features.submissions.models import QuestionAttempt, ChallengeAttempt
 
 # This ensures all models are registered with SQLAlchemy
-__all__ = ["Base", "User", "CodeSubmission", "CodeResult", "SlideExtraction"]
+__all__ = [
+	"Base",
+	"User",
+	"CodeSubmission",
+	"CodeResult",
+	"SlideExtraction",
+	"Challenge",
+	"Question",
+	"QuestionAttempt",
+	"ChallengeAttempt",
+]
