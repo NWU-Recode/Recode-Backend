@@ -5,14 +5,14 @@ Exits with code 0 on success, non-zero on failure.
 """
 
 import asyncio
-from app.DB.client import get_supabase
+from app.DB.supabase import get_supabase
 
 
 async def main() -> int:
     try:
         client = await get_supabase()
         # Test basic connectivity with a simple query
-        result = client.table("users").select("id").limit(1).execute()
+        result = await client.table("users").select("id").limit(1).execute()
         print("Supabase connection OK")
         return 0
     except Exception as e:

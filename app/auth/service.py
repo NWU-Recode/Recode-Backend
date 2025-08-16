@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.Integrations.supabase_session import get_client
+from app.DB.supabase import get_supabase
 from app.Auth.schemas import LoginRequest, TokenResponse, RegisterRequest, PasswordChangeRequest
 from app.features.users.service import (
     ensure_user_provisioned,
@@ -17,7 +17,7 @@ security = HTTPBearer()
 
 async def register_user(data: RegisterRequest) -> TokenResponse:
     """Register a new user with Supabase Auth then ensure local profile row (idempotent)."""
-    client = await get_client()
+    client = await get_supabase()
     try:
         auth_response = await client.auth.sign_up({
             "email": data.email,
@@ -50,7 +50,7 @@ async def register_user(data: RegisterRequest) -> TokenResponse:
 
 async def authenticate_user(data: LoginRequest) -> TokenResponse:
     """Authenticate user (email/password) and auto-provision local row (idempotent)."""
-    client = await get_client()
+    client = await get_supabase()
     try:
         result = await client.auth.sign_in_with_password({"email": data.email, "password": data.password})
         if not result.session or not result.user:
@@ -68,14 +68,14 @@ async def authenticate_user(data: LoginRequest) -> TokenResponse:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Authentication failed") from exc
 
-
+#to be researched
 async def change_password(
     data: PasswordChangeRequest,
     current_user,  # injected via route dependency from common.deps.get_current_user
     credentials: HTTPAuthorizationCredentials,
 ) -> dict:
     """Change user password by re-validating the current password via Supabase."""
-    client = await get_client()
+    client = await get_supabase()
     email = getattr(current_user, "email", None) or (current_user.get("email") if isinstance(current_user, dict) else None)  # type: ignore[call-arg]
     if not email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User email not found")
@@ -83,10 +83,10 @@ async def change_password(
         await client.auth.sign_in_with_password({"email": email, "password": data.current_password})
         await client.auth.update_user({"password": data.new_password})
         return {"message": "Password updated successfully"}
-    except Exception:  # noqa: BLE001
+    except Exception:  
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to change password")
 
 
-async def logout_user(credentials: HTTPAuthorizationCredentials) -> dict:  # noqa: ARG001
-    """Logout user (token invalidation handled by Supabase automatically)."""
+async def logout_user(credentials: HTTPAuthorizationCredentials) -> dict: 
+    #Logout user (token invalidation handled by Supabase automatically).
     return {"message": "Logged out successfully"}

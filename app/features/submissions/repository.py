@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from .schemas import SubmissionCreate, SubmissionResultCreate
-from app.DB.client import get_supabase
+from app.DB.supabase import get_supabase
 
 
 class SubmissionRepository:

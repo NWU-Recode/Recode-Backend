@@ -1,13 +1,22 @@
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Dict, Any, List
 from .repository import challenge_repository
 from .schemas import ChallengeSubmitRequest, ChallengeSubmitResponse
 from app.features.questions.repository import question_repository
 from app.features.judge0.schemas import CodeSubmissionCreate
 from app.features.judge0.service import judge0_service
+from app.features.challenges.scoring import (
+    AttemptScore,
+    Tier,
+    recompute_semester_mark,
+    summarize,
+    determine_milestones,
+)
 
 class ChallengeService:
-    async def submit(self, req: ChallengeSubmitRequest, user_id: str) -> ChallengeSubmitResponse:
+    async def submit(self, req: ChallengeSubmitRequest, user_id: str, user_role: str = "student") -> ChallengeSubmitResponse:
+        if user_role != "student":
+            raise ValueError("only_students_scored")
         challenge = await challenge_repository.get_challenge(str(req.challenge_id))
         if not challenge:
             raise ValueError("Challenge not found")
@@ -16,7 +25,6 @@ class ChallengeService:
             raise ValueError("challenge_already_submitted")
         snapshot = await challenge_repository.get_snapshot(attempt)
         snapshot_ids = [s["question_id"] for s in snapshot]
-        # Latest attempts by question
         latest_attempts = await question_repository.list_latest_attempts_for_challenge(str(req.challenge_id), user_id)
         attempts_by_qid = {str(a.get("question_id")): a for a in latest_attempts if str(a.get("question_id")) in snapshot_ids}
         missing_qids = [qid for qid in snapshot_ids if qid not in attempts_by_qid]
@@ -24,8 +32,8 @@ class ChallengeService:
         if missing_qids and req.items:
             run_items = [i for i in req.items if str(i.question_id) in missing_qids]
             if run_items:
-                ordered: list[str] = []
-                batch_submissions: list[CodeSubmissionCreate] = []
+                ordered: List[str] = []
+                batch_submissions: List[CodeSubmissionCreate] = []
                 snap_map = {s["question_id"]: s for s in snapshot}
                 for item in run_items:
                     qid = str(item.question_id)
@@ -60,20 +68,39 @@ class ChallengeService:
                     latest_attempts = await question_repository.list_latest_attempts_for_challenge(str(req.challenge_id), user_id)
                     attempts_by_qid = {str(a.get("question_id")): a for a in latest_attempts if str(a.get("question_id")) in snapshot_ids}
                     missing_qids = [qid for qid in snapshot_ids if qid not in attempts_by_qid]
-        # If still missing after attempt to fill, return 400 semantics via raise
         if missing_qids:
             raise ValueError(f"missing_questions:{','.join(missing_qids)}")
-        passed_ids: list[str] = []
-        failed_ids: list[str] = []
+        passed_ids: List[str] = []
+        failed_ids: List[str] = []
+        attempt_scores: List[AttemptScore] = []
         for qid in snapshot_ids:
             att = attempts_by_qid.get(qid)
-            if att and att.get("is_correct"):
+            correct = bool(att and att.get("is_correct"))
+            if correct:
                 passed_ids.append(qid)
             else:
                 failed_ids.append(qid)
+            # derive tier from snapshot meta if present else default bronze
+            meta = next((s for s in snapshot if s["question_id"] == qid), None)
+            tier_raw = (meta or {}).get("tier", "bronze").lower()
+            tier = Tier(tier_raw) if tier_raw in Tier._value2member_map_ else Tier.bronze
+            attempt_scores.append(AttemptScore(tier=tier, correct=correct))
         correct_count = len(passed_ids)
         score = correct_count
         finalized = await challenge_repository.finalize_attempt(attempt["id"], score, correct_count)
+        # milestone detection (placeholder plain count lookups)
+        plain_completed = await challenge_repository.count_plain_completed(user_id)
+        total_plain_planned = await challenge_repository.total_plain_planned()
+        unlocks = determine_milestones(plain_completed, total_plain_planned)
+        agg = recompute_semester_mark(
+            plain_attempts=attempt_scores,
+            ruby_correct=unlocks.ruby and any(a.tier == Tier.ruby and a.correct for a in attempt_scores),
+            emerald_correct=unlocks.emerald and any(a.tier == Tier.emerald and a.correct for a in attempt_scores),
+            diamond_correct=unlocks.diamond and any(a.tier == Tier.diamond and a.correct for a in attempt_scores),
+        )
+        breakdown = summarize(agg)
+        # Persist (idempotent upsert) into progress table (pseudo - implement repository later)
+        # await progress_repository.upsert_student_progress(user_id, breakdown)
         return ChallengeSubmitResponse(
             challenge_attempt_id=finalized["id"],
             score=score,
