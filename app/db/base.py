@@ -58,11 +58,9 @@ try:  # pragma: no cover
 except Exception:
     pass
 
-
 try:  # pragma: no cover
     from app.DB.session import SessionLocal  # type: ignore
 except Exception:
     SessionLocal = None
-
 
 __all__ = ["Base", "list_models", "SessionLocal"]
