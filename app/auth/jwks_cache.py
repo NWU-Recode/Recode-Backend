@@ -1,7 +1,6 @@
 import time
 import httpx
 from jose import jwt
-from jose.utils import base64url_decode
 from app.Core.config import get_settings
 
 _settings = get_settings()
@@ -57,22 +56,39 @@ class JWKSCache:
         return self._jwks
 
     async def verify(self, token: str, audience: str | None = None) -> dict:
-        jwks = await self.get()
-        headers = jwt.get_unverified_header(token)
-        kid = headers.get("kid")
-        key = next((k for k in jwks["keys"] if k["kid"] == kid), None)
-        if not key:
-            # Force refresh once if kid not found
-            self._jwks = None
-            jwks = await self.get()
-            key = next((k for k in jwks["keys"] if k["kid"] == kid), None)
-        if not key:
-            raise ValueError("Signing key not found for token")
+        header = jwt.get_unverified_header(token)
+        alg = header.get("alg", "")
+        # HS256 legacy path
+        if alg.startswith("HS"):
+            secret = _settings.supabase_jwt_secret
+            if not secret:
+                raise ValueError("HS token but SUPABASE_JWT_SECRET not configured")
+            return jwt.decode(
+                token,
+                secret,
+                algorithms=[alg],
+                audience=audience,
+                options={"verify_aud": audience is not None},
+            )
 
+        # RS256 path (kid required)
+        jwks = await self.get()
+        kid = header.get("kid")
+        key = None
+        if kid:
+            key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+            if not key:
+                # Force refresh and retry once
+                self._jwks = None
+                jwks = await self.get()
+                key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+        if not key:
+            available = [k.get("kid") for k in jwks.get("keys", [])]
+            raise ValueError(f"Signing key not found (alg={alg}, kid={kid}, available={available})")
         return jwt.decode(
             token,
             key,
-            algorithms=[key["alg"]],
+            algorithms=[key.get("alg", alg)],
             audience=audience,
             options={"verify_aud": audience is not None},
         )
