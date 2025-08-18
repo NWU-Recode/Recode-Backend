@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict
-# Removed local DB imports - using Supabase only
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.Core.config import get_settings
 
 from app.Auth.routes import router as auth_router
-from app.features.users.endpoints import router as users_router  # Supabase-backed
+from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
 from app.features.judge0.endpoints import router as judge0_router
 from app.features.questions.endpoints import router as questions_router
 from app.features.challenges.endpoints import router as challenges_router
@@ -22,6 +24,22 @@ from app.features.dashboard.endpoints import router as dashboard_router
 from app.features.lecturer.endpoints import router as lecturer_router
 
 app = FastAPI(title="Recode Backend")
+
+# CORS (dev friendly, tighten for prod)
+_FRONTEND_ORIGINS = [
+	"http://localhost:5173",  # Vite
+	"http://localhost:3000",  # Next/CRA
+]
+if (frontend_env := os.getenv("FRONTEND_ORIGIN")):
+	_FRONTEND_ORIGINS.append(frontend_env.rstrip("/"))
+
+app.add_middleware(
+	CORSMiddleware,
+	allow_origins=_FRONTEND_ORIGINS,
+	allow_credentials=True,
+	allow_methods=["*"],
+	allow_headers=["*"],
+)
 
 # Middleware: capture / propagate / generate X-Request-Id consistently
 @app.middleware("http")
@@ -41,7 +59,7 @@ _settings = get_settings()
 
 # Plug the veins
 app.include_router(auth_router)
-app.include_router(users_router)
+app.include_router(profiles_router)
 app.include_router(judge0_router)
 app.include_router(slide_extraction_router)
 app.include_router(questions_router)
@@ -67,30 +85,44 @@ async def root():
 
 @app.get("/healthz", tags=["meta"], summary="Liveness / readiness probe")
 async def healthz() -> Dict[str, Any]:
-	"""Vitals. Quick, clean, fearless."""
+	"""Vitals with lightweight DB ping."""
 	now = datetime.now(timezone.utc)
 	uptime_seconds = (now - _START_TIME).total_seconds()
 
-	db_status = "ok"  # Removed DB check
-	
+	# Database check (only "ok" if query succeeds)
+	db_status: str = "unknown"
+	db_latency_ms: float | None = None
+	try:
+		import time
+		from app.DB.session import engine  
+		start = time.perf_counter()
+		with engine.connect() as conn:
+			conn.execute(text("SELECT 1"))
+		db_latency_ms = round((time.perf_counter() - start) * 1000, 2)
+		db_status = "ok"
+	except SQLAlchemyError as e:
+		db_status = f"error:{type(e).__name__}"
+	except Exception as e: 
+		db_status = f"error:{type(e).__name__}"
+
 	judge0_ready = bool(getattr(_settings, "judge0_api_url", None))
 
 	route_count = len(app.routes)
 	tags = sorted({t for r in app.routes for t in getattr(r, 'tags', [])})
 
 	return {
-			"status": "ok",  # Simplified status check
+		"status": "ok" if db_status == "ok" else "degraded",
 		"time_utc": now.isoformat(),
 		"uptime_seconds": round(uptime_seconds, 2),
 		"version": os.getenv("APP_VERSION", "dev"),
 		"environment": "debug" if _settings.debug else "prod",
 		"components": {
-				"database": "ok",  # Removed DB status
+			"database": ( {"status": db_status, "latency_ms": db_latency_ms} if db_status == "ok" else {"status": db_status} ),
 			"judge0": "configured" if judge0_ready else "missing-config",
 		},
 		"counts": {
 			"routes": route_count,
-				"models": 0,  # Removed models count
+			"models": 0,
 		},
 		"tags": tags,
 	}

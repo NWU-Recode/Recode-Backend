@@ -12,7 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 
 from app.DB.supabase import get_supabase
-from app.features.users.service import ensure_user_provisioned, get_user_schema_by_supabase_id
+from app.features.profiles.service import ensure_profile_provisioned as ensure_user_provisioned, get_profile_by_supabase_id
 
 logger = logging.getLogger("auth.deps")
 security = HTTPBearer(auto_error=True)
@@ -60,7 +60,7 @@ async def get_current_user(
     # Ensure local provisioning (idempotent)
     db_user = await ensure_user_provisioned(sup_user.id, email, (sup_user.user_metadata or {}).get("full_name"))
     # Re-fetch typed (optional improvement) or build minimal identity
-    typed = await get_user_schema_by_supabase_id(sup_user.id)
+    typed = await get_profile_by_supabase_id(sup_user.id)
     role = (typed.role if typed else db_user.get("role")) or "student"
 
     current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]

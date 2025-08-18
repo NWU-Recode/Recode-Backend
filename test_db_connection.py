@@ -13,6 +13,7 @@ async def main() -> int:
         client = await get_supabase()
         # Test basic connectivity with a simple query
         result = await client.table("users").select("id").limit(1).execute()
+        print(result)
         print("Supabase connection OK")
         return 0
     except Exception as e:
