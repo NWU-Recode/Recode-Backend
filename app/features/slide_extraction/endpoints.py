@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from app.common.deps import get_current_user, CurrentUser
 
 
+
 router = APIRouter(prefix="/slides", tags=["slide-extraction"])
 
 

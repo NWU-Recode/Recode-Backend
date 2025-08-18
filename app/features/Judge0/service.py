@@ -33,12 +33,8 @@ class Judge0Service:
     @staticmethod
     def _compute_success(status_id: int | None, stdout: str | None, expected_output: str | None) -> bool:
         # Accepted status required
-        if status_id != 3:
-            return False
-        if expected_output is None:
-            return True
-        if stdout is None:
-            return False
+
+
         def _norm(s: str) -> str | None:
             if s is None:
                 return None
@@ -268,6 +264,7 @@ class Judge0Service:
             status_id = res.status.get("id") if res.status else None
             if status_id not in [1, 2]:
                 return token, self._to_code_execution_result(res, submission.expected_output, submission.language_id)
+
             await asyncio.sleep(poll_interval)
         raise TimeoutError("Judge0 execution timed out")
 

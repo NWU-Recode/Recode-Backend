@@ -19,6 +19,7 @@ from app.features.challenges.repository import challenge_repository
 from app.features.questions.service import question_service
 from app.features.submissions.schemas import SubmissionCreate
 
+
 router = APIRouter(prefix="/judge0", tags=["judge0"])
 
 """Judge0-focused endpoints (execution + token lifecycle).
@@ -74,12 +75,14 @@ async def submit_code_full(submission: CodeSubmissionCreate, current_user: Curre
         if not created:
             raise HTTPException(status_code=500, detail="Submission record not found after creation")
         return CodeSubmissionResponse(**created)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code (full): {str(e)}")
 
 @router.get("/result/{token}", response_model=CodeExecutionResult)
 async def get_execution_result(token: str, current_user: CurrentUser = Depends(get_current_user)):
     """Get execution result by token. Finalizes pending question attempt if applicable."""
+
     try:
         user_id = str(current_user.id)
         judge0_result = await judge0_service.get_submission_result(token)

@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 from app.DB.session import get_db
+
 from .models import CodeSubmission, CodeResult
 from .schemas import CodeSubmissionCreate, CodeExecutionResult
 
@@ -17,6 +18,7 @@ class Judge0Repository:
     def get_submission_by_token(self, judge0_token: str) -> Optional[CodeSubmission]:
         """Get submission by Judge0 token."""
         db = next(get_db())
+       
         try:
             return db.query(CodeSubmission).filter(
                 CodeSubmission.judge0_token == judge0_token

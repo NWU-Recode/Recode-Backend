@@ -1,5 +1,3 @@
-"""FastAPI heartbeat. Lean core."""
-
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
@@ -24,6 +22,8 @@ from app.features.dashboard.endpoints import router as dashboard_router
 from app.features.lecturer.endpoints import router as lecturer_router
 
 app = FastAPI(title="Recode Backend")
+_START_TIME = datetime.now(timezone.utc)
+_settings = get_settings()
 
 # CORS (dev friendly, tighten for prod)
 _FRONTEND_ORIGINS = [
@@ -57,7 +57,6 @@ async def request_id_middleware(request: Request, call_next):  # type: ignore[ov
 _START_TIME = datetime.now(timezone.utc)
 _settings = get_settings()
 
-# Plug the veins
 app.include_router(auth_router)
 app.include_router(profiles_router)
 app.include_router(judge0_router)
@@ -66,6 +65,7 @@ app.include_router(questions_router)
 app.include_router(challenges_router)
 app.include_router(dashboard_router)
 app.include_router(lecturer_router)
+
 
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -117,7 +117,9 @@ async def healthz() -> Dict[str, Any]:
 		"version": os.getenv("APP_VERSION", "dev"),
 		"environment": "debug" if _settings.debug else "prod",
 		"components": {
+      
 			"database": ( {"status": db_status, "latency_ms": db_latency_ms} if db_status == "ok" else {"status": db_status} ),
+
 			"judge0": "configured" if judge0_ready else "missing-config",
 		},
 		"counts": {

@@ -1,4 +1,3 @@
-
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
@@ -6,6 +5,7 @@ from sqlalchemy import desc, func
 from app.DB.session import get_db
 from .models import SlideExtraction
 from .schemas import SlideExtractionCreate
+
 
 
 class SlideExtractionRepository:
@@ -115,3 +115,4 @@ class SlideExtractionRepository:
 
 # Repository instance
 slide_extraction_repository = SlideExtractionRepository()
+

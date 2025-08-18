@@ -18,3 +18,4 @@ async def extract_slides_from_upload(file: UploadFile) -> Dict[int, List[str]]:
         raise ValueError("Uploaded file is empty")
 
     return extract_pptx_text(BytesIO(data))
+
