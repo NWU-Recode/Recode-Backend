@@ -4,14 +4,13 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from app.DB.base import Base
-from app.features.users.models import User  #fk relation
 
 class CodeSubmission(Base):
     #Code submissions table
     __tablename__ = "code_submissions"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)
     source_code = Column(Text, nullable=False)
     language_id = Column(Integer, nullable=False)
     stdin = Column(Text, nullable=True)

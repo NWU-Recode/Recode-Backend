@@ -10,10 +10,10 @@ from app.Core.config import get_settings
 settings = get_settings()
 
 
-def get_database_url(for_migrations: bool = False) -> str:
-    return settings.get_database_url(for_migrations=for_migrations)
+def get_database_url() -> str:
+    return settings.get_database_url()
 
-runtime_url = get_database_url(False)
+runtime_url = get_database_url()
 if not runtime_url:
     raise RuntimeError("DATABASE_URL not configured")
 

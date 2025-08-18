@@ -1,43 +1,29 @@
-"""Pydantic models for user resources."""
-
 from __future__ import annotations
-
 from datetime import datetime
 from uuid import UUID
 from typing import Optional, Dict, Any
-
 from pydantic import BaseModel, EmailStr
 
-
-class UserBase(BaseModel):
-    """Base user fields."""
+class ProfileBase(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
     phone: Optional[str] = None
     bio: Optional[str] = None
 
-
-class UserCreate(UserBase):
-    """Schema for creating a new user."""
+class ProfileCreate(ProfileBase):
     password: str
 
-
-class UserUpdate(BaseModel):
-    """Schema for updating user profile."""
+class ProfileUpdate(BaseModel):
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
     phone: Optional[str] = None
     bio: Optional[str] = None
 
-
-class UserRoleUpdate(BaseModel):
-    """Schema for updating user role (admin only)."""
+class ProfileRoleUpdate(BaseModel):
     role: str
 
-
-class User(BaseModel):
-    """Represents a user stored in the database."""
+class Profile(BaseModel):
     id: UUID
     supabase_id: str
     email: str
@@ -57,9 +43,7 @@ class User(BaseModel):
     class Config:
         from_attributes = True
 
-
-class UserProfile(BaseModel):
-    """User profile for public viewing."""
+class PublicProfile(BaseModel):
     id: UUID
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
