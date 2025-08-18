@@ -1,6 +1,5 @@
 import os
 import sys
-import socket
 from pathlib import Path
 from logging.config import fileConfig
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
@@ -77,34 +76,10 @@ def _sanitize(url: str) -> str:
     return urlunparse(p._replace(netloc=netloc))
 
 
-# Building URLs
-force_pooled = True 
-raw_migrations_url = settings.get_database_url(for_migrations=not force_pooled)
-raw_runtime_url = settings.get_database_url(for_migrations=False)
-
-MIGRATIONS_URL = _ensure_driver_and_ssl(raw_migrations_url)
-RUNTIME_URL = _ensure_driver_and_ssl(raw_runtime_url)
-
+raw_url = settings.get_database_url()
+MIGRATIONS_URL = _ensure_driver_and_ssl(raw_url)
 if not MIGRATIONS_URL:
-    raise RuntimeError(
-        "No database URL found for migrations. Set DATABASE_URL and optionally DATABASE_URL_MIGRATIONS."
-    )
-
-# DNS check on migrations host; if fails but runtime resolves, swap host (keeping port/creds)
-direct_host = _hostname(MIGRATIONS_URL)
-if direct_host:
-    try:
-        socket.getaddrinfo(direct_host, None)
-    except socket.gaierror:
-        runtime_host = _hostname(RUNTIME_URL)
-        if runtime_host:
-            try:
-                socket.getaddrinfo(runtime_host, None)
-                MIGRATIONS_URL = _swap_host(MIGRATIONS_URL, runtime_host)
-                print(f"[alembic.env] DNS failed for '{direct_host}', using runtime host '{runtime_host}' for migrations.")
-            except socket.gaierror:
-                # both failed; allow later connection attempt to raise
-                pass
+    raise RuntimeError("No DATABASE_URL configured.")
 
 # Alembic Config
 config = context.config
@@ -166,13 +141,11 @@ def run_migrations_online() -> None:
 
     last_error = None
     tried = set()
-    for url, label in ((MIGRATIONS_URL, "migrations"), (RUNTIME_URL, "runtime fallback")):
+    for url, label in ((MIGRATIONS_URL, "primary"),):
         if not url or url in tried:
             continue
         tried.add(url)
         try:
-            if url is RUNTIME_URL:
-                print(f"[alembic.env] Using runtime URL as fallback for migrations: {_sanitize(url)}")
             _attempt(url, label)
             return
         except OperationalError as oe:
