@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from jose import JWTError
+from typing import Any, TypedDict
 from app.DB.session import get_db
 from app.features.profiles.models import Profile
 from .jwks_cache import JWKSCache
@@ -21,7 +22,13 @@ async def _extract_bearer_or_cookie(request: Request) -> str | None:
     cookie = request.cookies.get(ACCESS_COOKIE_NAME)
     return cookie
 
-async def get_current_claims(request: Request) -> dict:
+class Claims(TypedDict, total=False):
+    sub: str
+    email: str
+    user_metadata: dict[str, Any]
+
+
+async def get_current_claims(request: Request) -> Claims:
     token = await _extract_bearer_or_cookie(request)
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing token")
