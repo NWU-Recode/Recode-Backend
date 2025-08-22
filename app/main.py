@@ -28,7 +28,6 @@ app = FastAPI(title="Recode Backend")
 # CORS (dev friendly, tighten for prod)
 _FRONTEND_ORIGINS = [
 	"http://localhost:5173",  # Vite
-	"http://localhost:3000",  # Next/CRA
 ]
 if (frontend_env := os.getenv("FRONTEND_ORIGIN")):
 	_FRONTEND_ORIGINS.append(frontend_env.rstrip("/"))
