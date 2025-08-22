@@ -123,6 +123,9 @@ credentials.json
 *.pem
 *.key
 
+# Dev token storage (never commit)
+.dev_refresh_token.json
+
 # Redis dump
 dump.rdb
 

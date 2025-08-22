@@ -7,6 +7,7 @@ from .service import (
     supabase_revoke,
     set_auth_cookies,
     clear_auth_cookies,
+    load_refresh_token_dev,
 )
 from .deps import get_current_user
 from app.features.profiles.models import Profile  
@@ -29,7 +30,7 @@ async def login(payload: LoginRequest, resp: Response):
     """Authenticate user with JSON body (email, password)."""
     tokens = await supabase_password_grant(payload.email, payload.password)
     set_auth_cookies(resp, tokens)
-    return {"detail": "Logged in"}
+    return {"detail": "Logged in", "access_token": tokens.access_token}  # Include token in response for dev
 
 @router.post("/refresh", response_model=None)
 async def refresh(request: Request, resp: Response, refresh_token: str | None = None):
@@ -46,6 +47,35 @@ async def logout(resp: Response):
     # Optionally call services.supabase_revoke(refresh_cookie) if wired.
     clear_auth_cookies(resp)
     return {"detail": "Logged out"}
+
+
+@router.post("/dev/refresh-from-file", response_model=None, include_in_schema=False)
+async def dev_refresh_from_file(resp: Response):
+    """DEV ONLY: Refresh using token from .dev_refresh_token.json file.
+    
+    This endpoint is for development testing when your access token expires.
+    It loads the latest refresh token from the dev file and uses it to get new tokens.
+    """
+    from app.Core.config import get_settings
+    settings = get_settings()
+    
+    if not getattr(settings, "debug", False):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    
+    refresh_token = load_refresh_token_dev()
+    if not refresh_token:
+        return {"error": "No dev refresh token found", "hint": "Login first to generate tokens"}
+    
+    try:
+        tokens = await supabase_refresh(refresh_token)
+        set_auth_cookies(resp, tokens)
+        return {
+            "detail": "Refreshed from dev file", 
+            "access_token": tokens.access_token,
+            "hint": "New refresh token saved to dev file automatically"
+        }
+    except Exception as e:
+        return {"error": f"Refresh failed: {str(e)}", "hint": "Login again to get fresh tokens"}
 
 @router.get("/me", response_model=ProfileOut)
 async def me(user: Profile = Depends(get_current_user)):
