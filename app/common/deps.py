@@ -16,6 +16,7 @@ from app.features.profiles.service import ensure_profile_provisioned as ensure_u
 from app.Auth.deps import get_current_claims
 from app.Auth.service import refresh_tokens_if_needed, set_auth_cookies, ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
 
+
 logger = logging.getLogger("auth.deps")
 security = HTTPBearer(auto_error=True)
 
@@ -103,7 +104,9 @@ async def get_current_user_from_cookie(
     # Ensure local provisioning (idempotent)
     db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
     typed = await get_profile_by_supabase_id(user_id)
+    
     role = (typed.get("role") if typed else db_user.get("role")) or "student"
+
 
     current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
 
@@ -119,6 +122,7 @@ async def get_current_user_from_cookie(
         request.url.path,
     )
     return current
+
 
 
 async def get_current_user_with_refresh(
@@ -174,7 +178,6 @@ async def get_current_user_with_refresh(
         request.url.path,
     )
     return current
-
 
 def require_role(*roles: str) -> Callable:
     """Factory returning dependency enforcing that user has one of the roles.
