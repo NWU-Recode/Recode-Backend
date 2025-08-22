@@ -19,13 +19,19 @@ from app.features.challenges.repository import challenge_repository
 from app.features.questions.service import question_service
 from app.features.submissions.schemas import SubmissionCreate
 
-router = APIRouter(prefix="/judge0", tags=["judge0"])
+# Public router (no authentication required)
+public_router = APIRouter(prefix="/judge0", tags=["judge0-public"])
+
+# Protected router (authentication required)
+protected_router = APIRouter(prefix="/judge0", tags=["judge0-protected"])
 
 """Judge0-focused endpoints (execution + token lifecycle).
 
 Submission management (listing, deleting, statistics) moved to `app.features.submissions.endpoints`.
 """
-@router.get("/languages", response_model=List[LanguageInfo])
+
+# PUBLIC ENDPOINTS (No authentication required)
+@public_router.get("/languages", response_model=List[LanguageInfo])
 async def get_supported_languages():
     """Get list of supported programming languages"""
     try:
@@ -33,7 +39,7 @@ async def get_supported_languages():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch languages: {str(e)}")
 
-@router.get("/statuses", response_model=List[Judge0Status])
+@public_router.get("/statuses", response_model=List[Judge0Status])
 async def get_submission_statuses():
     """Get list of possible submission statuses"""
     try:
@@ -41,7 +47,7 @@ async def get_submission_statuses():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch statuses: {str(e)}")
 
-@router.post("/submit", response_model=Judge0SubmissionResponse)
+@public_router.post("/submit", response_model=Judge0SubmissionResponse)
 async def submit_code(submission: CodeSubmissionCreate):
     """Submit code for async execution (returns token)."""
     try:
@@ -49,7 +55,7 @@ async def submit_code(submission: CodeSubmissionCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code: {str(e)}")
 
-@router.post("/submit/wait", response_model=CodeExecutionResult, summary="Single-call waited execution (no persistence)")
+@public_router.post("/submit/wait", response_model=CodeExecutionResult, summary="Single-call waited execution (no persistence)")
 async def submit_code_wait(submission: CodeSubmissionCreate):
     """Submit code with wait=true and return normalized result (no persistence)."""
     try:
@@ -58,7 +64,62 @@ async def submit_code_wait(submission: CodeSubmissionCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed waited submit: {str(e)}")
 
-@router.post("/submit/full", response_model=CodeSubmissionResponse, summary="(Auth) Submit & persist")
+@public_router.post("/execute", response_model=CodeExecutionResult)
+async def execute_code_sync(submission: CodeSubmissionCreate):
+    """Legacy execute endpoint (polling). Prefer /submit/wait if immediate result acceptable."""
+    try:
+        return await judge0_service.execute_code(submission)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Execution timeout") if isinstance(e, TimeoutError) else HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
+
+@public_router.post("/execute/stdout", summary="Quick execute (stdout only)")
+async def execute_stdout_only(submission: CodeSubmissionCreate):
+    """Execute code (no expected_output, not persisted) and return only stdout."""
+    try:
+        temp = CodeSubmissionCreate(
+            source_code=submission.source_code,
+            language_id=submission.language_id,
+            stdin=submission.stdin,
+            expected_output=None  # ignore any provided expected output
+        )
+        result = await judge0_service.execute_code(temp)  # type: ignore
+        return {"stdout": result.stdout}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to execute: {str(e)}")
+
+@public_router.post("/execute/batch", summary="Execute multiple submissions via batch API")
+async def execute_batch(submissions: List[CodeSubmissionCreate]):
+    """Submit a batch and poll until all complete; returns list of {token, result}."""
+    try:
+        batch = await judge0_service.execute_batch(submissions)  # type: ignore
+        return [{"token": tok, "result": res} for tok, res in batch]
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Batch execution timeout")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed batch execution: {str(e)}")
+
+@public_router.post("/test", response_model=dict)
+async def test_code_execution():
+    """Test endpoint with a simple Hello World program"""
+    try:
+        # Simple Python Hello World test
+        test_submission = CodeSubmissionCreate(
+            source_code='print("Hello, World!")',
+            language_id=71  # Python 3
+        )
+        result = await judge0_service.execute_code(test_submission)  # type: ignore
+        return {
+            "message": "Test execution completed",
+            "result": result,
+            "success": result.success
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Test execution failed: {str(e)}")
+
+# PROTECTED ENDPOINTS (Authentication required)
+@protected_router.post("/submit/full", response_model=CodeSubmissionResponse, summary="(Auth) Submit & persist")
+# PROTECTED ENDPOINTS (Authentication required)
+@protected_router.post("/submit/full", response_model=CodeSubmissionResponse, summary="(Auth) Submit & persist")
 async def submit_code_full(submission: CodeSubmissionCreate, current_user: CurrentUser = Depends(get_current_user)):
     """Submit code (auth), persist a record, return stored submission row + token."""
     try:
@@ -77,7 +138,7 @@ async def submit_code_full(submission: CodeSubmissionCreate, current_user: Curre
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code (full): {str(e)}")
 
-@router.get("/result/{token}", response_model=CodeExecutionResult)
+@protected_router.get("/result/{token}", response_model=CodeExecutionResult)
 async def get_execution_result(token: str, current_user: CurrentUser = Depends(get_current_user)):
     """Get execution result by token. Finalizes pending question attempt if applicable."""
     try:
@@ -143,59 +204,7 @@ async def get_execution_result(token: str, current_user: CurrentUser = Depends(g
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error_code":"E_UNKNOWN","message":f"Failed to get result: {str(e)}"})
 
-@router.post("/execute", response_model=CodeExecutionResult)
-async def execute_code_sync(submission: CodeSubmissionCreate):
-    """Legacy execute endpoint (polling). Prefer /submit/wait if immediate result acceptable."""
-    try:
-        return await judge0_service.execute_code(submission)
-    except TimeoutError:
-        raise HTTPException(status_code=504, detail="Execution timeout")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
-
-@router.post("/execute/stdout", summary="Quick execute (stdout only)")
-async def execute_stdout_only(submission: CodeSubmissionCreate):
-    """Execute code (no expected_output, not persisted) and return only stdout."""
-    try:
-        temp = CodeSubmissionCreate(
-            source_code=submission.source_code,
-            language_id=submission.language_id,
-            stdin=submission.stdin,
-            expected_output=None  # ignore any provided expected output
-        )
-        result = await judge0_service.execute_code(temp)  # type: ignore
-        return {"stdout": result.stdout}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to execute: {str(e)}")
-
-@router.post("/execute/batch", summary="Execute multiple submissions via batch API")
-async def execute_batch(submissions: List[CodeSubmissionCreate]):
-    """Submit a batch and poll until all complete; returns list of {token, result}."""
-    try:
-        batch = await judge0_service.execute_batch(submissions)  # type: ignore
-        return [{"token": tok, "result": res} for tok, res in batch]
-    except TimeoutError:
-        raise HTTPException(status_code=504, detail="Batch execution timeout")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed batch execution: {str(e)}")
-
-
-@router.post("/test", response_model=dict)
-async def test_code_execution():
-    """Test endpoint with a simple Hello World program"""
-    try:
-        # Simple Python Hello World test
-        test_submission = CodeSubmissionCreate(
-            source_code='print("Hello, World!")',
-            language_id=71  # Python 3
-        )
-        result = await judge0_service.execute_code(test_submission)  # type: ignore
-        return {
-            "message": "Test execution completed",
-            "result": result,
-            "success": result.success
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Test execution failed: {str(e)}")
+# For backward compatibility
+router = public_router  # Default export is the public router
 
 # NOTE: Submission management endpoints moved to `submissions/endpoints.py`.

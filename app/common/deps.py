@@ -7,13 +7,15 @@ from uuid import UUID
 from functools import lru_cache
 from typing import Callable, Iterable, Optional, Any
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 
 from app.DB.supabase import get_supabase
 from app.features.profiles.service import ensure_profile_provisioned as ensure_user_provisioned, get_profile_by_supabase_id
 from app.Auth.deps import get_current_claims
+from app.Auth.service import refresh_tokens_if_needed, set_auth_cookies, ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
+
 
 logger = logging.getLogger("auth.deps")
 security = HTTPBearer(auto_error=True)
@@ -62,7 +64,7 @@ async def get_current_user(
     db_user = await ensure_user_provisioned(sup_user.id, email, (sup_user.user_metadata or {}).get("full_name"))
     # Re-fetch typed (optional improvement) or build minimal identity
     typed = await get_profile_by_supabase_id(sup_user.id)
-    role = (typed.role if typed else db_user.get("role")) or "student"
+    role = (typed.get("role") if typed else db_user.get("role")) or "student"
 
     current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
 
@@ -102,7 +104,9 @@ async def get_current_user_from_cookie(
     # Ensure local provisioning (idempotent)
     db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
     typed = await get_profile_by_supabase_id(user_id)
-    role = (typed.role if typed else db_user.get("role")) or "student"
+    
+    role = (typed.get("role") if typed else db_user.get("role")) or "student"
+
 
     current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
 
@@ -119,6 +123,61 @@ async def get_current_user_from_cookie(
     )
     return current
 
+
+
+async def get_current_user_with_refresh(
+    request: Request,
+    response: Response,
+    claims: dict[str, Any] = Depends(get_current_claims),
+) -> CurrentUser:
+    """Enhanced dependency that handles automatic token refresh.
+    
+    This checks if the access token is close to expiring and automatically
+    refreshes it using the refresh token if available. Sets new cookies
+    with updated tokens.
+    """
+    from fastapi import Response
+    
+    # Get current user from claims
+    user_id = claims.get("sub")
+    email = claims.get("email") or (claims.get("user_metadata") or {}).get("email") or ""
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: missing subject")
+
+    # Check if we should refresh the token
+    access_token = request.cookies.get(ACCESS_COOKIE_NAME)
+    refresh_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    
+    if access_token and refresh_token:
+        try:
+            new_tokens = await refresh_tokens_if_needed(access_token, refresh_token)
+            if new_tokens:
+                # Set new cookies with refreshed tokens
+                set_auth_cookies(response, new_tokens)
+                logger.info(f"Auto-refreshed tokens for user {user_id}")
+        except Exception as e:
+            # Log but don't fail the request - use existing token
+            logger.warning(f"Failed to auto-refresh token for user {user_id}: {e}")
+
+    # Ensure local provisioning (idempotent)
+    db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
+    typed = await get_profile_by_supabase_id(user_id)
+    role = (typed.get("role") if typed else db_user.get("role")) or "student"
+
+    current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
+
+    request_id = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
+    if request_id:
+        request.state.request_id = request_id
+    logger.info(
+        "auth_with_refresh_resolved user_id=%s email=%s role=%s request_id=%s path=%s",
+        current.id,
+        current.email,
+        current.role,
+        request_id,
+        request.url.path,
+    )
+    return current
 
 def require_role(*roles: str) -> Callable:
     """Factory returning dependency enforcing that user has one of the roles.
