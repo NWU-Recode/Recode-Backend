@@ -120,10 +120,10 @@ class QuestionAttempt(BaseModel):
     is_correct: bool
     created_at: datetime
 
-#CAITLIN 
+#CAITLIN
 class FetchedRequest(BaseModel):
     slide_tags: List[str]  #tags extracted from uploaded slides
-    tier : str 
+    tier : str
 
 class FetchedResponse(BaseModel):
     questions: List['QuestionSummaryResponse']
@@ -165,11 +165,11 @@ class QuestionStatsResponse(BaseModel):
     total_questions: int            #shows total nr of questions recorded on system
     questions_per_tier: Dict[str, int]     #dictionary that maps tier to questions to get count of each
     questions_per_topic: Dict[str, int] #maps topics to counts
-    usage_history: Optional[Dict[str, int]] = {}  #maps question IDs to nr of attempts 
+    usage_history: Optional[Dict[str, int]] = {}  #maps question IDs to nr of attempts
 
 class QuestionHintRequest(BaseModel):
     question_id: str
-    tier: Optional[str]  
+    tier: Optional[str]
 
 class QuestionHintResponse(BaseModel):
     hint_id: str
@@ -199,3 +199,116 @@ class QuestionHintUpdateResponse(BaseModel):
     text: str
     tier: Optional[str]
     updated_at: datetime
+
+#Kay
+
+class QuestionDetailResponse(BaseModel):
+    """Detailed question information"""
+    question_id: str
+    challenge_id: Optional[str]
+    language_id: int
+    expected_output: Optional[str]
+    points: int
+    starter_code: Optional[str]
+    max_time_ms: Optional[int]
+    max_memory_kb: Optional[int]
+    tier: str
+    topic: Optional[str]
+    question_text: Optional[str]
+    is_active: bool
+    created_at: datetime
+    hints: List[QuestionHintResponse] = []
+
+class QuestionSearchRequest(BaseModel):
+    """Search/filter request for questions"""
+    query: Optional[str] = None
+    topic: Optional[str] = None
+    tier: Optional[str] = None
+    language_id: Optional[int] = None
+    is_active: Optional[bool] = True
+    limit: int = 50
+    offset: int = 0
+
+class QuestionSearchResponse(BaseModel):
+    """Search results for questions"""
+    questions: List[QuestionSummaryResponse]
+    total_count: int
+    has_more: bool
+
+class QuestionUsageStats(BaseModel):
+    """Usage statistics for a question"""
+    question_id: str
+    times_attempted: int
+    times_passed: int
+    success_rate: float
+    average_time: Optional[str]
+    most_common_errors: List[str] = []
+
+class HintUnlockRequest(BaseModel):
+    """Request to unlock a hint"""
+    question_id: str
+    challenge_id: str
+    hint_tier: str
+
+class HintUnlockResponse(BaseModel):
+    """Response when unlocking a hint"""
+    hint_id: str
+    text: str
+    tier: str
+    hints_remaining: int
+    penalty_applied: bool
+
+# EDITOR EVENT SCHEMAS
+
+class EditorEventCreate(BaseModel):
+    """Create editor event for plagiarism detection"""
+    user_id: str
+    challenge_id: str
+    question_id: str
+    event_type: str  # paste, focus, blur, keydown, etc.
+    payload: Optional[Dict[str, Any]] = None
+
+class EditorEventResponse(BaseModel):
+    """Editor event response"""
+    event_id: str
+    event_type: str
+    occurred_at: datetime
+    payload: Optional[Dict[str, Any]]
+
+class PlagiarismCheckRequest(BaseModel):
+    """Request plagiarism check"""
+    submission_id: str
+    check_against_user_ids: Optional[List[str]] = None
+    similarity_threshold: float = 0.8
+
+class PlagiarismCheckResponse(BaseModel):
+    """Plagiarism check results"""
+    check_id: str
+    submission_id: str
+    similarity_score: int
+    matched_submissions: List[Dict[str, Any]]
+    status: str
+    flagged: bool
+
+# IMPORT/EXPORT SCHEMAS
+
+class QuestionImportRequest(BaseModel):
+    """Import questions from file"""
+    file_format: str  # "json", "csv", "xlsx"
+    questions_data: List[Dict[str, Any]]
+    overwrite_existing: bool = False
+
+class QuestionExportRequest(BaseModel):
+    """Export questions to file"""
+    question_ids: Optional[List[str]] = None
+    format: str = "json"  # "json", "csv", "xlsx"
+    include_attempts: bool = False
+    include_hints: bool = True
+
+class BulkOperationResponse(BaseModel):
+    """Response for bulk operations"""
+    total_processed: int
+    successful: int
+    failed: int
+    errors: List[Dict[str, Any]]
+    operation_id: str

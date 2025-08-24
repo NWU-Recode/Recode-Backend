@@ -7,7 +7,7 @@ from .schemas import (
     QuestionSubmitRequest, QuestionSubmitResponse,
     BatchExecuteRequest, BatchExecuteResponse,
     BatchSubmitRequest, BatchSubmitResponse,
-    ChallengeTilesResponse, 
+    ChallengeTilesResponse,
     FetchedRequest, FetchedResponse,
     QuestionCreateRequest, QuestionCreateResponse,
     QuestionUpdateRequest, QuestionUpdateResponse,

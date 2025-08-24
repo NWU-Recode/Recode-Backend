@@ -392,3 +392,296 @@ class QuestionService:
         return ChallengeTilesResponse(challenge_id=challenge_id, items=items)
 
 question_service = QuestionService()
+
+# Extending the QuestionService class
+
+from typing import Optional, Dict, Any, List
+from .schemas import (
+    FetchedRequest, FetchedResponse,
+    QuestionCreateRequest, QuestionCreateResponse,
+    QuestionUpdateRequest, QuestionUpdateResponse,
+    QuestionSummaryResponse, QuestionStatsResponse,
+    QuestionHintRequest, QuestionHintResponse,
+    QuestionHintCreateRequest, QuestionHintCreateResponse,
+    QuestionHintUpdateRequest, QuestionHintUpdateResponse
+)
+from app.DB.supabase import get_supabase
+import uuid
+from datetime import datetime
+
+class QuestionService:
+    # ... existing methods ...
+
+    async def fetch(self, req: FetchedRequest) -> FetchedResponse:
+        """Fetch questions from question bank based on slide tags and tier"""
+        client = await get_supabase()
+        
+        # Build query based on tags and tier
+        query = client.table("questions").select("*")
+        
+        # Filter by tier if provided
+        if req.tier:
+            query = query.eq("tier", req.tier)
+        
+        # Filter by topics/tags - assuming questions have a topic field
+        if req.slide_tags:
+            # Use ilike for partial matching on topic field
+            for tag in req.slide_tags:
+                query = query.ilike("topic", f"%{tag}%")
+        
+        resp = query.execute()
+        questions_data = resp.data or []
+        
+        # Convert to QuestionSummaryResponse format
+        questions = []
+        for q in questions_data:
+            questions.append(QuestionSummaryResponse(
+                question_id=str(q["id"]),
+                challenge_id=str(q.get("challenge_id", "")),
+                language_id=q["language_id"],
+                points=q["points"],
+                tier=q["tier"]
+            ))
+        
+        return FetchedResponse(questions=questions)
+
+    async def create_question(self, req: QuestionCreateRequest, user_id: str) -> QuestionCreateResponse:
+        """Create a new question"""
+        client = await get_supabase()
+        
+        question_data = {
+            "id": str(uuid.uuid4()),
+            "language_id": req.language_id,
+            "expected_output": req.expected_output,
+            "points": req.points,
+            "starter_code": req.starter_code,
+            "max_time_ms": req.max_time_ms,
+            "max_memory_kb": req.max_memory_kb,
+            "tier": req.tier,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        resp = client.table("questions").insert(question_data).execute()
+        
+        if not resp.data:
+            raise ValueError("Failed to create question")
+        
+        return QuestionCreateResponse(
+            question_id=resp.data[0]["id"],
+            message="Question created successfully"
+        )
+
+    async def update_question(self, question_id: str, req: QuestionUpdateRequest, user_id: str) -> QuestionUpdateResponse:
+        """Update existing question"""
+        client = await get_supabase()
+        
+        # Check if question exists
+        existing = client.table("questions").select("id").eq("id", question_id).single().execute()
+        if not existing.data:
+            raise ValueError("Question not found")
+        
+        # Build update data - only include non-None fields
+        update_data = {}
+        if req.language_id is not None:
+            update_data["language_id"] = req.language_id
+        if req.expected_output is not None:
+            update_data["expected_output"] = req.expected_output
+        if req.points is not None:
+            update_data["points"] = req.points
+        if req.starter_code is not None:
+            update_data["starter_code"] = req.starter_code
+        if req.max_time_ms is not None:
+            update_data["max_time_ms"] = req.max_time_ms
+        if req.max_memory_kb is not None:
+            update_data["max_memory_kb"] = req.max_memory_kb
+        if req.tier:
+            update_data["tier"] = req.tier
+        
+        resp = client.table("questions").update(update_data).eq("id", question_id).execute()
+        
+        if not resp.data:
+            raise ValueError("Failed to update question")
+        
+        return QuestionUpdateResponse(
+            question_id=question_id,
+            message="Question updated successfully"
+        )
+
+    async def delete_question(self, question_id: str, user_id: str):
+        """Delete a question"""
+        client = await get_supabase()
+        
+        # Check if question exists
+        existing = client.table("questions").select("id").eq("id", question_id).single().execute()
+        if not existing.data:
+            raise ValueError("Question not found")
+        
+        # Delete the question - CASCADE will handle related records
+        resp = client.table("questions").delete().eq("id", question_id).execute()
+        
+        if not resp.data:
+            raise ValueError("Failed to delete question")
+
+    async def filter_questions(
+        self,
+        topic: Optional[str] = None,
+        difficulty: Optional[str] = None
+    ) -> List[QuestionSummaryResponse]:
+        """Filter questions by topic and difficulty for lecturer selection"""
+        client = await get_supabase()
+        
+        query = client.table("questions").select("*")
+        
+        if topic:
+            query = query.ilike("topic", f"%{topic}%")
+        
+        if difficulty:
+            query = query.eq("tier", difficulty)
+        
+        resp = query.execute()
+        questions_data = resp.data or []
+        
+        questions = []
+        for q in questions_data:
+            questions.append(QuestionSummaryResponse(
+                question_id=str(q["id"]),
+                challenge_id=str(q.get("challenge_id", "")),
+                language_id=q["language_id"],
+                points=q["points"],
+                tier=q["tier"]
+            ))
+        
+        return questions
+
+    async def get_question_stats(self) -> QuestionStatsResponse:
+        """Get statistics about questions"""
+        client = await get_supabase()
+        
+        # Get all questions
+        resp = client.table("questions").select("tier, topic").execute()
+        questions_data = resp.data or []
+        
+        total_questions = len(questions_data)
+        
+        # Count by tier
+        tier_counts = {}
+        topic_counts = {}
+        
+        for q in questions_data:
+            tier = q.get("tier", "unknown")
+            topic = q.get("topic", "unknown")
+            
+            tier_counts[tier] = tier_counts.get(tier, 0) + 1
+            topic_counts[topic] = topic_counts.get(topic, 0) + 1
+        
+        # Get usage statistics from question_usage table
+        usage_resp = client.table("question_usage").select("question_id, times_attempted").execute()
+        usage_data = usage_resp.data or []
+        
+        usage_history = {}
+        for usage in usage_data:
+            qid = str(usage["question_id"])
+            attempts = usage["times_attempted"]
+            usage_history[qid] = attempts
+        
+        return QuestionStatsResponse(
+            total_questions=total_questions,
+            questions_per_tier=tier_counts,
+            questions_per_topic=topic_counts,
+            usage_history=usage_history
+        )
+
+    # HINT MANAGEMENT METHODS
+    async def create_hint(self, question_id: str, req: QuestionHintCreateRequest, user_id: str) -> QuestionHintCreateResponse:
+        """Create a hint for a question"""
+        client = await get_supabase()
+        
+        # Verify question exists
+        question = client.table("questions").select("id").eq("id", question_id).single().execute()
+        if not question.data:
+            raise ValueError("Question not found")
+        
+        hint_data = {
+            "id": str(uuid.uuid4()),
+            "question_id": question_id,
+            "text": req.text,
+            "tier": req.tier or "bronze",
+            "created_at": datetime.now().isoformat()
+        }
+        
+        resp = client.table("question_hints").insert(hint_data).execute()
+        
+        if not resp.data:
+            raise ValueError("Failed to create hint")
+        
+        hint = resp.data[0]
+        return QuestionHintCreateResponse(
+            question_id=question_id,
+            hint_id=hint["id"],
+            text=hint["text"],
+            tier=hint["tier"],
+            created_at=datetime.fromisoformat(hint["created_at"])
+        )
+
+    async def update_hint(self, hint_id: str, req: QuestionHintUpdateRequest, user_id: str) -> QuestionHintUpdateResponse:
+        """Update a hint"""
+        client = await get_supabase()
+        
+        # Check if hint exists
+        existing = client.table("question_hints").select("*").eq("id", hint_id).single().execute()
+        if not existing.data:
+            raise ValueError("Hint not found")
+        
+        update_data = {
+            "text": req.text,
+            "tier": req.tier or existing.data["tier"]
+        }
+        
+        resp = client.table("question_hints").update(update_data).eq("id", hint_id).execute()
+        
+        if not resp.data:
+            raise ValueError("Failed to update hint")
+        
+        hint = resp.data[0]
+        return QuestionHintUpdateResponse(
+            hint_id=hint_id,
+            question_id=hint["question_id"],
+            text=hint["text"],
+            tier=hint["tier"],
+            updated_at=datetime.now()
+        )
+
+    async def delete_hint(self, hint_id: str, user_id: str):
+        """Delete a hint"""
+        client = await get_supabase()
+        
+        # Check if hint exists
+        existing = client.table("question_hints").select("id").eq("id", hint_id).single().execute()
+        if not existing.data:
+            raise ValueError("Hint not found")
+        
+        resp = client.table("question_hints").delete().eq("id", hint_id).execute()
+        
+        if not resp.data:
+            raise ValueError("Failed to delete hint")
+
+    async def get_student_hints(self, question_id: str, user_id: str) -> List[QuestionHintResponse]:
+        """Get hints for a student - implement tier-based unlocking logic here"""
+        client = await get_supabase()
+        
+        # Get all hints for the question
+        hints_resp = client.table("question_hints").select("*").eq("question_id", question_id).order("tier").execute()
+        hints_data = hints_resp.data or []
+        
+        # TODO: Implement logic to check how many attempts student has made
+        # and unlock hints accordingly. For now, return all hints.
+        
+        hints = []
+        for hint in hints_data:
+            hints.append(QuestionHintResponse(
+                hint_id=str(hint["id"]),
+                question_id=str(hint["question_id"]),
+                text=hint["text"]
+            ))
+        
+        return hints
