@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 from uuid import UUID
 from datetime import datetime
 
@@ -119,3 +119,83 @@ class QuestionAttempt(BaseModel):
     memory: Optional[int]
     is_correct: bool
     created_at: datetime
+
+#CAITLIN 
+class FetchedRequest(BaseModel):
+    slide_tags: List[str]  #tags extracted from uploaded slides
+    tier : str 
+
+class FetchedResponse(BaseModel):
+    questions: List['QuestionSummaryResponse']
+
+class QuestionCreateRequest(BaseModel):
+    language_id: int
+    expected_output: Optional[str]
+    points: int
+    starter_code: Optional[str]
+    max_time_ms: Optional[int]
+    max_memory_kb: Optional[int]
+    tier: str
+
+class QuestionCreateResponse(BaseModel):
+    question_id: str
+    message: str = "Question created successfully"
+class QuestionUpdateRequest(BaseModel):
+    language_id: Optional[int]
+    expected_output: Optional[str]
+    points: Optional[int]
+    starter_code: Optional[str]
+    max_time_ms: Optional[int]
+    max_memory_kb: Optional[int]
+    tier: str
+
+class QuestionUpdateResponse(BaseModel):
+    question_id: str
+    message: str = "Question updated successfully"
+
+class QuestionSummaryResponse(BaseModel):
+    question_id: str
+    challenge_id: str
+    language_id: int
+    points: int
+    tier: str
+
+
+class QuestionStatsResponse(BaseModel):
+    total_questions: int            #shows total nr of questions recorded on system
+    questions_per_tier: Dict[str, int]     #dictionary that maps tier to questions to get count of each
+    questions_per_topic: Dict[str, int] #maps topics to counts
+    usage_history: Optional[Dict[str, int]] = {}  #maps question IDs to nr of attempts 
+
+class QuestionHintRequest(BaseModel):
+    question_id: str
+    tier: Optional[str]  
+
+class QuestionHintResponse(BaseModel):
+    hint_id: str
+    question_id: str
+    text: str
+    
+
+class QuestionHintCreateRequest(BaseModel):
+    question_id: str
+    text: str
+    tier: Optional[str]
+
+class QuestionHintCreateResponse(BaseModel):
+    question_id: str
+    hint_id: str
+    text: str
+    tier: Optional[str]
+    created_at: datetime
+
+class QuestionHintUpdateRequest(BaseModel):
+    hint_id:str
+    text: str
+    tier: Optional[str]
+class QuestionHintUpdateResponse(BaseModel):
+    hint_id: str
+    question_id: str
+    text: str
+    tier: Optional[str]
+    updated_at: datetime
