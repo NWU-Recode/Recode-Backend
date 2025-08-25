@@ -3,7 +3,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 import uuid
 
-from app.DB.base import Base
+from app.db.base import Base
 
 class Profile(Base):
     __tablename__ = "profiles"

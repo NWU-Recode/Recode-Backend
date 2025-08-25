@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from app.Auth.service import (
+from app.auth.service import (
     refresh_tokens_if_needed,
     set_auth_cookies,
     ACCESS_COOKIE_NAME,

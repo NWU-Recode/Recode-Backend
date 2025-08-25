@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 from supabase import AsyncClient, create_async_client
-from app.Core.config import get_settings
+from app.core.config import get_settings
 
 _settings = get_settings()
 _client: Optional[AsyncClient] = None

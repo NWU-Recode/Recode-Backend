@@ -11,10 +11,10 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 
-from app.DB.supabase import get_supabase
+from app.db.supabase import get_supabase
 from app.features.profiles.service import ensure_profile_provisioned as ensure_user_provisioned, get_profile_by_supabase_id
-from app.Auth.deps import get_current_claims
-from app.Auth.service import refresh_tokens_if_needed, set_auth_cookies, ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
+from app.auth.deps import get_current_claims
+from app.auth.service import refresh_tokens_if_needed, set_auth_cookies, ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
 
 
 logger = logging.getLogger("auth.deps")

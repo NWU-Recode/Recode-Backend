@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
-from app.DB.supabase import get_supabase
+from app.db.supabase import get_supabase
 
 class ChallengeRepository:
     async def get_challenge(self, challenge_id: str) -> Optional[Dict[str, Any]]:

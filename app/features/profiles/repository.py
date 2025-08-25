@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-from app.DB.supabase import get_supabase
+from app.db.supabase import get_supabase
 from .schemas import ProfileCreate, ProfileUpdate
 
 class ProfileRepository:
