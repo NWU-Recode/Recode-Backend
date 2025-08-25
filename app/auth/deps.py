@@ -3,10 +3,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from jose import JWTError
 from typing import Any, TypedDict
-from app.DB.session import get_db
+from app.db.session import get_db
 from app.features.profiles.models import Profile
 from .jwks_cache import JWKSCache
-from app.Core.config import get_settings
+from app.core.config import get_settings
 
 settings = get_settings()
 # Ensure no trailing slash duplication when constructing certs URL

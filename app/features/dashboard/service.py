@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import List, Dict, Any
 from app.features.challenges.repository import challenge_repository
 from app.features.questions.repository import question_repository
+from .repository import dashboard_repository
 
 class DashboardService:
     async def get_dashboard(self, user_id: str) -> List[Dict[str, Any]]:
@@ -36,7 +37,7 @@ class DashboardService:
                     state = "open" if (ch.get("sequence_index") - 8) == gold_submitted + 1 else "locked"
             progress = None
             if attempt and attempt.get("status") in ("open", "submitted"):
-                # Recompute from latest question attempts for accuracy
+                # Calculate progress from latest question attempts
                 latest_q_attempts = await question_repository.list_latest_attempts_for_challenge(cid, user_id)
                 passed = sum(1 for qa in latest_q_attempts if qa.get("is_correct"))
                 progress = {"passed": passed, "total": 10}
@@ -49,5 +50,20 @@ class DashboardService:
                 "progress": progress,
             })
         return result
+    
+    async def get_summary(self) -> Dict[str, int]:
+        total_users = await dashboard_repository.count_profiles(active_only=False)
+        active_users = await dashboard_repository.count_profiles(active_only=True)
+        total_challenges = await dashboard_repository.count_challenges()
+        total_submissions = await dashboard_repository.count_challenge_attempts()
+        return {
+            "total_users": total_users,
+            "active_users": active_users,
+            "total_challenges": total_challenges,
+            "total_submissions": total_submissions,
+        }
+        
+    async def get_leaderboard(self, limit: int = 10) -> List[Dict[str, Any]]:
+        return await dashboard_repository.leaderboard(limit=limit)
 
 dashboard_service = DashboardService()

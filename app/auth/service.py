@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from fastapi import HTTPException, Response, status
 from .schemas import TokenPair
-from app.Core.config import get_settings
+from app.core.config import get_settings
 
 settings = get_settings()
 if not settings.supabase_url:

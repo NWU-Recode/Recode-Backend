@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from uuid import uuid4
 
-from app.Core.config import get_settings
+from app.core.config import get_settings
 from .schemas import (
     CodeSubmissionCreate,
     CodeSubmissionResponse,

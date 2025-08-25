@@ -11,10 +11,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-
-from app.Core.config import get_settings
-
-from app.Auth.routes import router as auth_router
+from app.core.config import get_settings
+from app.auth.routes import router as auth_router
 from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
 from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
@@ -25,6 +23,8 @@ from app.features.dashboard.endpoints import router as dashboard_router
 from app.features.lecturer.endpoints import router as lecturer_router
 from app.common.deps import get_current_user_from_cookie
 from app.common.middleware import SessionManagementMiddleware
+from app.features.dashboard.endpoints import router as dashboard_router
+from app.features.challenges.endpoints import router as challenges_router
 
 app = FastAPI(title="Recode Backend")
 
@@ -76,6 +76,7 @@ app.include_router(dashboard_router, dependencies=protected_deps)
 app.include_router(lecturer_router, dependencies=protected_deps)
 
 
+
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
 	app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -102,7 +103,7 @@ async def healthz() -> Dict[str, Any]:
 	db_latency_ms: float | None = None
 	try:
 		import time
-		from app.DB.session import engine  
+		from app.db.session import engine  
 		start = time.perf_counter()
 		with engine.connect() as conn:
 			conn.execute(text("SELECT 1"))
