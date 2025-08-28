@@ -1,6 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from uuid import UUID
+
 from app.common.deps import (
     get_current_user_from_cookie,
     require_admin_cookie,
@@ -29,9 +29,10 @@ async def read_current_profile(
     The auth dependency returns a minimal CurrentUser (id/email/role). We need to
     fetch the persisted profile row to satisfy the full ProfileSchema contract.
     """
-    # Fetch full record by local UUID (current_user.id)
+    # Fetch full record by local student number (current_user.id)
     from .service import get_profile_by_id  # local import to avoid circular at import time
-    prof = await get_profile_by_id(str(current_user.id))
+    prof = await get_profile_by_id(current_user.id)
+
     if not prof:
         # Should not normally happen because provisioning occurs in auth deps
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
@@ -43,43 +44,42 @@ async def update_current_profile(
     current_user: CurrentUser = Depends(get_current_user_from_cookie),
 ) -> ProfileSchema:
     """Authenticated user: Update their own profile (cookie auth)."""
-    updated = await update_profile(str(current_user.id), data)
+
+    # Update the profile with provided fields
+    updated = await update_profile(current_user.id, data)
+
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return ProfileSchema(**updated)
 
 @router.get("/{profile_id}", response_model=PublicProfile)
 async def read_profile(
-    profile_id: UUID,
-    current_user: CurrentUser = Depends(get_current_user_from_cookie),
+    profile_id: int,
+    current_user: CurrentUser = Depends(require_admin_cookie()),
 ) -> PublicProfile:
-    """Authenticated user: Get a public profile by ID (cookie auth)."""
-    prof = await get_profile_by_id(str(profile_id))
+    """Admin-only: Get a public profile by ID (cookie auth)."""
+    prof = await get_profile_by_id(profile_id)
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return PublicProfile(**prof)
 
 @router.put("/{profile_id}/role", response_model=ProfileSchema)
 async def update_profile_role_endpoint(
-    profile_id: UUID,
+    profile_id: int,
+
     role_data: ProfileRoleUpdate,
     current_user: CurrentUser = Depends(require_admin_cookie()),
 ) -> ProfileSchema:
     """Admin-only: Update a user's role (cookie auth)."""
-    updated = await update_profile_role(str(profile_id), role_data)
+    if current_user.id == profile_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins cannot modify their own roles."
+        )
+
+    updated = await update_profile_role(profile_id, role_data)
+
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return ProfileSchema(**updated)
-#added test endpoint
-#git problems 
-@router.get("/email/{email}", response_model=ProfileSchema)
-async def read_profile_by_email(
-    email: str,
-    current_user: CurrentUser = Depends(require_admin_cookie()),
-) -> ProfileSchema:
-    """Admin-only: Get a user's profile by email (cookie auth)."""
-    from .service import get_profile_by_email  # Ensure the service function exists
-    prof = await get_profile_by_email(email)
-    if not prof:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
-    return ProfileSchema(**prof)
+

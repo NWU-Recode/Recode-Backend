@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, Integer, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 import uuid
@@ -8,11 +8,10 @@ from app.DB.base import Base
 class Profile(Base):
     __tablename__ = "profiles"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # Supabase auth user id (UUID) with FK to auth.users for cascade cleanup
+    id = Column(Integer, primary_key=True, nullable=False)  # student_number as primary key
     supabase_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("auth.users.id", ondelete="CASCADE"),
+        # ForeignKey("auth.users.id", ondelete="CASCADE"),  # Commented out for migration - managed manually in DB
         unique=True,
         nullable=False,
         index=True,
@@ -31,5 +30,10 @@ class Profile(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    # Add constraint to ensure student number is exactly 8 digits
+    __table_args__ = (
+        CheckConstraint('id >= 10000000 AND id <= 99999999', name='check_student_number_8_digits'),
+    )
+
     def __repr__(self) -> str:
-        return f"<Profile id={self.id} email={self.email} role={self.role}>"
+        return f"<Profile id={self.id} supabase_id={self.supabase_id} email={self.email} role={self.role}>"

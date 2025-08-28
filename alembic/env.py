@@ -93,12 +93,16 @@ if config.config_file_name is not None:
 # Model metadata for autogenerate
 target_metadata = getattr(Base, "metadata", None)
 
-EXCLUDE_TABLES = set()  # all tables now managed by SQLAlchemy models
+EXCLUDE_TABLES = {"auth.users"}  # Exclude external tables managed by Supabase
 
 def include_object(object, name, type_, reflected, compare_to):
     # Skip tables explicitly excluded
     if type_ == "table" and name in EXCLUDE_TABLES:
         return False
+    # Skip foreign key constraints that reference excluded tables
+    if type_ == "foreign_key_constraint" and hasattr(object, "referred_table"):
+        if hasattr(object.referred_table, "name") and object.referred_table.name in EXCLUDE_TABLES:
+            return False
     return True
 
 def run_migrations_offline() -> None:
@@ -112,6 +116,7 @@ def run_migrations_offline() -> None:
         compare_type=True,             # detect column type changes
         compare_server_default=True,   # detect server default changes
         include_object=include_object,
+        include_schemas=False,         # Don't include any schemas other than public
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -135,6 +140,7 @@ def run_migrations_online() -> None:
                 compare_type=True,
                 compare_server_default=True,
                 include_object=include_object,
+                include_schemas=False,         # Don't include any schemas other than public
             )
             with context.begin_transaction():
                 context.run_migrations()

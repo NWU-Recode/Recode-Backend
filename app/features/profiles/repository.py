@@ -2,6 +2,9 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from app.DB.supabase import get_supabase
 from .schemas import ProfileCreate, ProfileUpdate
+import logging
+
+logger = logging.getLogger("profiles.repository")
 
 class ProfileRepository:
     async def create_profile(self, supabase_id: str, data: ProfileCreate) -> dict:
@@ -24,7 +27,7 @@ class ProfileRepository:
             raise RuntimeError("Failed to create profile record")
         return resp.data[0]
 
-    async def get_by_id(self, profile_id: str) -> Optional[dict]:
+    async def get_by_id(self, profile_id: int) -> Optional[dict]:
         client = await get_supabase()
         resp = await client.table("profiles").select("*").eq("id", profile_id).execute()
         data = getattr(resp, "data", None)
@@ -50,25 +53,43 @@ class ProfileRepository:
 
     async def list_profiles(self, offset: int = 0, limit: int = 50) -> List[dict]:
         client = await get_supabase()
-        resp = await (client.table("profiles").select("*").order("created_at", desc=True).range(offset, offset + max(limit,1) - 1).execute())
-        return resp.data or []
+        try:
+            resp = await (
+                client.table("profiles")
+                .select("*")
+                .order("created_at", desc=True)
+                .range(offset, offset + max(limit, 1) - 1)
+                .execute()
+            )
+            return resp.data or []
+        except Exception as e:
+            logger.error("Error fetching profiles: %s", str(e))
+            return []
 
-    async def update_profile(self, profile_id: str, fields: Dict[str, Any]) -> Optional[dict]:
+    async def update_profile(self, profile_id: int, fields: Dict[str, Any]) -> Optional[dict]:
         if not fields:
             return await self.get_by_id(profile_id)
         client = await get_supabase()
         resp = await client.table("profiles").update(fields).eq("id", profile_id).execute()
         return resp.data[0] if getattr(resp, "data", None) else None
 
-    async def update_last_sign_in(self, profile_id: str) -> bool:
+    async def update_last_sign_in(self, profile_id: int) -> bool:
         client = await get_supabase()
         now_iso = datetime.now(timezone.utc).isoformat()
         resp = await client.table("profiles").update({"last_sign_in": now_iso}).eq("id", profile_id).execute()
         return bool(getattr(resp, "data", None))
 
-    async def delete_profile(self, profile_id: str) -> bool:
+    async def delete_profile(self, profile_id: int) -> bool:
         client = await get_supabase()
         resp = await client.table("profiles").delete().eq("id", profile_id).execute()
         return bool(getattr(resp, "data", None) or getattr(resp, "count", None))
+
+    async def get_by_student_number(self, student_number: int) -> Optional[dict]:
+        client = await get_supabase()
+        resp = await client.table("profiles").select("*").eq("student_number", student_number).execute()
+        data = getattr(resp, "data", None)
+        if not data:
+            return None
+        return data[0] if isinstance(data, list) else data
 
 profile_repository = ProfileRepository()
