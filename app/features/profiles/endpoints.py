@@ -70,16 +70,4 @@ async def update_profile_role_endpoint(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return ProfileSchema(**updated)
-#added test endpoint
-#git problems 
-@router.get("/email/{email}", response_model=ProfileSchema)
-async def read_profile_by_email(
-    email: str,
-    current_user: CurrentUser = Depends(require_admin_cookie()),
-) -> ProfileSchema:
-    """Admin-only: Get a user's profile by email (cookie auth)."""
-    from .service import get_profile_by_email  # Ensure the service function exists
-    prof = await get_profile_by_email(email)
-    if not prof:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
-    return ProfileSchema(**prof)
+
