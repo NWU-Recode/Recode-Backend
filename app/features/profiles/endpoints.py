@@ -70,7 +70,7 @@ async def update_profile_role_endpoint(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return ProfileSchema(**updated)
-
+#added test endpoint
 @router.get("/email/{email}", response_model=ProfileSchema)
 async def read_profile_by_email(
     email: str,
