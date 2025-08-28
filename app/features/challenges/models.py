@@ -18,7 +18,7 @@ class Challenge(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    lecturer_creator = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    lecturer_creator = Column(Integer, ForeignKey("profiles.id"), nullable=False)  # Changed to Integer to match profiles.id
     linked_module = Column(String(255), nullable=True)
     duration = Column(Integer, nullable=True)  # in minutes
     tier = Column(Enum(ChallengeTier), nullable=False, default=ChallengeTier.plain, index=True)

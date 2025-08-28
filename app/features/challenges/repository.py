@@ -14,13 +14,13 @@ class ChallengeRepository:
         resp = client.table("questions").select("*").eq("challenge_id", challenge_id).execute()
         return resp.data or []
 
-    async def get_open_attempt(self, challenge_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+    async def get_open_attempt(self, challenge_id: str, student_number: int) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
         resp = (
             client.table("challenge_attempts")
             .select("*")
             .eq("challenge_id", challenge_id)
-            .eq("user_id", user_id)
+            .eq("user_id", student_number)  # Updated to use student_number as user_id
             .eq("status", "open")
             .limit(1)
             .execute()
@@ -29,23 +29,23 @@ class ChallengeRepository:
             return resp.data[0]
         return None
 
-    async def start_attempt(self, challenge_id: str, user_id: str) -> Dict[str, Any]:
+    async def start_attempt(self, challenge_id: str, student_number: int) -> Dict[str, Any]:
         client = await get_supabase()
         resp = client.table("challenge_attempts").insert({
             "challenge_id": challenge_id,
-            "user_id": user_id,
+            "user_id": student_number,  # Updated to use student_number as user_id
             "status": "open",
         }).execute()
         if not resp.data:
             raise RuntimeError("Failed to start challenge attempt")
         return resp.data[0]
 
-    async def create_or_get_open_attempt(self, challenge_id: str, user_id: str) -> Dict[str, Any]:
+    async def create_or_get_open_attempt(self, challenge_id: str, student_number: int) -> Dict[str, Any]:
         """Return an open attempt creating + snapshotting + deadlines if needed.
 
         Deadline is 7 days from first start. Expire if exceeded.
         """
-        existing = await self.get_open_attempt(challenge_id, user_id)
+        existing = await self.get_open_attempt(challenge_id, student_number)
         now = datetime.now(timezone.utc)
         client = await get_supabase()
         if existing:
@@ -67,7 +67,7 @@ class ChallengeRepository:
             deadline_at = (now + timedelta(days=7)).isoformat()
             resp = client.table("challenge_attempts").insert({
                 "challenge_id": challenge_id,
-                "user_id": user_id,
+                "user_id": student_number,  # Updated to use student_number as user_id
                 "status": "open",
                 "started_at": started_at,
                 "deadline_at": deadline_at,
@@ -95,9 +95,9 @@ class ChallengeRepository:
         resp = client.table("challenges").select("*").order("sequence_index").execute()
         return resp.data or []
 
-    async def list_user_attempts(self, user_id: str) -> List[Dict[str, Any]]:
+    async def list_user_attempts(self, student_number: int) -> List[Dict[str, Any]]:
         client = await get_supabase()
-        resp = client.table("challenge_attempts").select("*").eq("user_id", user_id).execute()
+        resp = client.table("challenge_attempts").select("*").eq("user_id", student_number).execute()  # Updated to use student_number as user_id
         return resp.data or []
 
     async def _build_snapshot(self, challenge_id: str) -> List[Dict[str, Any]]:
@@ -144,14 +144,14 @@ class ChallengeRepository:
         return resp.data[0]
 
     # --- Milestone helpers (plain challenge progress) ---
-    async def count_plain_completed(self, user_id: str) -> int:
+    async def count_plain_completed(self, student_number: int) -> int:
         """Return number of submitted plain (weekly) challenges for user."""
         client = await get_supabase()
         # tier stored as enum -> cast to text compare
         resp = (
             client.table("challenge_attempts")
             .select("id, challenge:challenges(tier)")
-            .eq("user_id", user_id)
+            .eq("user_id", student_number)  # Updated to use student_number as user_id
             .eq("status", "submitted")
             .execute()
         )

@@ -24,7 +24,7 @@ async def register(payload: RegisterRequest):
 async def login(payload: LoginRequest, resp: Response):
     """Authenticate user with JSON body (email, password)."""
     tokens = await supabase_password_grant(payload.email, payload.password)
-    set_auth_cookies(resp, tokens)
+    set_auth_cookies(resp, tokens)  # Set HttpOnly cookies for access and refresh tokens
     return {
         "detail": "Logged in",
         "access_token": tokens.access_token,
@@ -38,7 +38,7 @@ async def refresh(request: Request, resp: Response, refresh_token: str | None = 
     if not token:
         return {"detail": "No refresh token"}
     tokens = await supabase_refresh(token)
-    set_auth_cookies(resp, tokens)
+    set_auth_cookies(resp, tokens)  # Update cookies with new tokens
     return {
         "detail": "Refreshed",
         "access_token": tokens.access_token,
@@ -48,7 +48,7 @@ async def refresh(request: Request, resp: Response, refresh_token: str | None = 
 @router.post("/logout", response_model=None)
 async def logout(resp: Response):
     # Optionally call services.supabase_revoke(refresh_cookie) if wired.
-    clear_auth_cookies(resp)
+    clear_auth_cookies(resp)  # Clear HttpOnly cookies for access and refresh tokens
     return {"detail": "Logged out"}
 
 

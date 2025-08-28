@@ -11,6 +11,7 @@ from .schemas import (
     LanguageInfo,
     Judge0Status,
     Judge0SubmissionResponse,
+    QuickCodeSubmission,
 )
 from .service import judge0_service
 from app.features.submissions.service import submission_service
@@ -73,16 +74,10 @@ async def execute_code_sync(submission: CodeSubmissionCreate):
         raise HTTPException(status_code=500, detail="Execution timeout") if isinstance(e, TimeoutError) else HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
 
 @public_router.post("/execute/stdout", summary="Quick execute (stdout only)")
-async def execute_stdout_only(submission: CodeSubmissionCreate):
-    """Execute code (no expected_output, not persisted) and return only stdout."""
+async def execute_stdout_only(submission: QuickCodeSubmission):
+    """Execute code (not persisted) and return only stdout."""
     try:
-        temp = CodeSubmissionCreate(
-            source_code=submission.source_code,
-            language_id=submission.language_id,
-            stdin=submission.stdin,
-            expected_output=None  # ignore any provided expected output
-        )
-        result = await judge0_service.execute_code(temp)  # type: ignore
+        result = await judge0_service.execute_quick_code(submission)  # type: ignore
         return {"stdout": result.stdout}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to execute: {str(e)}")
@@ -98,26 +93,6 @@ async def execute_batch(submissions: List[CodeSubmissionCreate]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed batch execution: {str(e)}")
 
-@public_router.post("/test", response_model=dict)
-async def test_code_execution():
-    """Test endpoint with a simple Hello World program"""
-    try:
-        # Simple Python Hello World test
-        test_submission = CodeSubmissionCreate(
-            source_code='print("Hello, World!")',
-            language_id=71  # Python 3
-        )
-        result = await judge0_service.execute_code(test_submission)  # type: ignore
-        return {
-            "message": "Test execution completed",
-            "result": result,
-            "success": result.success
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Test execution failed: {str(e)}")
-
-# PROTECTED ENDPOINTS (Authentication required)
-@protected_router.post("/submit/full", response_model=CodeSubmissionResponse, summary="(Auth) Submit & persist")
 # PROTECTED ENDPOINTS (Authentication required)
 @protected_router.post("/submit/full", response_model=CodeSubmissionResponse, summary="(Auth) Submit & persist")
 async def submit_code_full(submission: CodeSubmissionCreate, current_user: CurrentUser = Depends(get_current_user)):

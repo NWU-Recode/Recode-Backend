@@ -14,7 +14,8 @@ from .schemas import (
     Judge0ExecutionResult,
     CodeExecutionResult,
     LanguageInfo,
-    Judge0Status
+    Judge0Status,
+    QuickCodeSubmission
 )
 from app.features.submissions.schemas import SubmissionCreate
 from app.features.submissions.service import submission_service
@@ -95,8 +96,7 @@ class Judge0Service:
         judge0_request = Judge0SubmissionRequest(
             source_code=submission.source_code,
             language_id=submission.language_id,
-            stdin=submission.stdin,
-            expected_output=submission.expected_output
+            stdin=submission.stdin
         )
         
         async with httpx.AsyncClient() as client:
@@ -127,7 +127,7 @@ class Judge0Service:
             source_code=submission.source_code,
             language_id=submission.language_id,
             stdin=submission.stdin,
-            expected_output=submission.expected_output,
+            expected_output=submission.expected_output if submission.expected_output else None,
         )
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -235,20 +235,27 @@ class Judge0Service:
         submission: CodeSubmissionCreate,
         timeout_seconds: int = 45,
         poll_interval: float = 1.0,
-    ) -> CodeExecutionResult:
-        """Submit code, poll until finished, return normalized execution result.
+    ) -> str:
+        """Submit code, poll until finished, and return only the stdout.
 
-        No persistence; callers decide whether to store submission/result.
+        This method does not require expected_output and focuses solely on the code's output.
         """
         token = (await self.submit_code(submission)).token
         start = time.time()
-        while time.time() - start < timeout_seconds:
-            res = await self.get_submission_result(token)
-            status_id = res.status.get("id") if res.status else None
-            if status_id not in [1, 2]:  # 1=In Queue, 2=Processing per Judge0
-                return self._to_code_execution_result(res, submission.expected_output, submission.language_id)
-            await asyncio.sleep(poll_interval)
-        raise TimeoutError("Judge0 execution timed out")
+        async with httpx.AsyncClient() as client:
+            while True:
+                response = await client.get(
+                    f"{self.base_url}/submissions/{token}",
+                    headers=self.headers
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    if result["status"]["id"] in [1, 2]:  # In Queue or Processing
+                        await asyncio.sleep(1)
+                        continue
+                    return result.get("stdout")
+                else:
+                    raise Exception(f"Failed to fetch submission result: {response.status_code} - {response.text}")
 
     async def execute_with_token(
         self,
@@ -358,5 +365,35 @@ class Judge0Service:
         if pending:
             raise TimeoutError("Batch execution timed out")
         return [(tok, latest[tok]) for tok in tokens]
+
+    async def execute_quick_code(self, submission: QuickCodeSubmission) -> CodeExecutionResult:
+        judge0_response = await self.submit_code(submission)
+        token = judge0_response.token
+
+        async with httpx.AsyncClient() as client:
+            while True:
+                response = await client.get(
+                    f"{self.base_url}/submissions/{token}",
+                    headers=self.headers
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    if result["status"]["id"] in [1, 2]:  # In Queue or Processing
+                        await asyncio.sleep(1)
+                        continue
+                    return CodeExecutionResult(
+                        stdout=result.get("stdout"),
+                        stderr=result.get("stderr"),
+                        compile_output=result.get("compile_output"),
+                        execution_time=result.get("time"),
+                        memory_used=result.get("memory"),
+                        status_id=result["status"]["id"],
+                        status_description=result["status"]["description"],
+                        language_id=submission.language_id,
+                        success=result["status"]["id"] == 3,
+                        created_at=datetime.utcnow()
+                    )
+                else:
+                    raise Exception(f"Failed to fetch submission result: {response.status_code} - {response.text}")
 
 judge0_service = Judge0Service()
