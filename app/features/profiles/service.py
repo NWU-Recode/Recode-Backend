@@ -26,18 +26,21 @@ async def get_profile_by_supabase_id(supabase_id: str) -> Optional[Dict[str, Any
 async def get_profile_by_email(email: str) -> Optional[Dict[str, Any]]:
     return await profile_repository.get_by_email(email)
 
-async def get_profile_by_id(profile_id: str) -> Optional[Dict[str, Any]]:
+async def get_profile_by_id(profile_id: int) -> Optional[Dict[str, Any]]:
     return await profile_repository.get_by_id(profile_id)
 
-async def update_profile(profile_id: str, data: ProfileUpdate) -> Optional[Dict[str, Any]]:
+async def update_profile(profile_id: int, data: ProfileUpdate) -> Optional[Dict[str, Any]]:
     fields = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
     return await profile_repository.update_profile(profile_id, fields)
 
-async def update_profile_role(profile_id: str, role_data: ProfileRoleUpdate) -> Optional[Dict[str, Any]]:
+async def update_profile_role(profile_id: int, role_data: ProfileRoleUpdate) -> Optional[Dict[str, Any]]:
     return await profile_repository.update_profile(profile_id, {"role": role_data.role})
 
-async def update_profile_last_signin(profile_id: str) -> bool:
+async def update_profile_last_signin(profile_id: int) -> bool:
     return await profile_repository.update_last_sign_in(profile_id)
 
-async def delete_profile(profile_id: str) -> bool:
+async def delete_profile(profile_id: int) -> bool:
     return await profile_repository.delete_profile(profile_id)
+
+async def get_profile_by_student_number(student_number: int) -> Optional[Dict[str, Any]]:
+    return await profile_repository.get_by_student_number(student_number)

@@ -23,7 +23,7 @@ security = HTTPBearer(auto_error=True)
 
 class CurrentUser(BaseModel):
     """Minimal user identity shared across endpoints."""
-    id: UUID
+    id: int  #student number
     email: EmailStr
     role: str
 
@@ -102,28 +102,31 @@ async def get_current_user_from_cookie(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: missing subject")
 
-    # Ensure local provisioning (idempotent)
-    db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
-    typed = await get_profile_by_supabase_id(user_id)
-    role = (typed.get("role") if typed else db_user.get("role")) or "student"
+    try:
+        # Ensure local provisioning (idempotent)
+        db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
+        typed = await get_profile_by_supabase_id(user_id)
+        role = (typed.get("role") if typed else db_user.get("role")) or "student"
 
-    current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
-    # Cache for downstream dependencies / endpoints
-    request.state.current_user = current  # type: ignore[attr-defined]
+        current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
+        # Cache for downstream dependencies / endpoints
+        request.state.current_user = current  # type: ignore[attr-defined]
 
-    request_id = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
-    if request_id:
-        request.state.request_id = request_id
-    logger.info(
-        "cookie_auth_resolved user_id=%s email=%s role=%s request_id=%s path=%s",
-        current.id,
-        current.email,
-        current.role,
-        request_id,
-        request.url.path,
-    )
-    return current
-
+        request_id = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
+        if request_id:
+            request.state.request_id = request_id
+        logger.info(
+            "cookie_auth_resolved user_id=%s email=%s role=%s request_id=%s path=%s",
+            current.id,
+            current.email,
+            current.role,
+            request_id,
+            request.url.path,
+        )
+        return current
+    except Exception as e:
+        logger.error("Error resolving user from cookie: %s", str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resolve user")
 
 
 async def get_current_user_with_refresh(
@@ -207,4 +210,40 @@ def require_admin(use_cookie: bool = False) -> Callable:
 
 # Convenience cookie-based admin dependency
 def require_admin_cookie() -> Callable:
-    return require_admin(use_cookie=True)
+    from app.common.deps import get_current_user_from_cookie  # Lazy import to avoid circular dependency
+
+    async def dependency(request: Request):
+        user = await get_current_user_from_cookie(request)  # Await the async function
+        if user.role != "admin":
+            raise HTTPException(status_code=403, detail="Not authorized as admin")
+        return user
+
+    return dependency
+
+def require_lecturer(use_cookie: bool = False) -> Callable:
+    return require_role("lecturer", use_cookie=use_cookie)
+
+# Convenience cookie-based lecturer dependency
+def require_lecturer_cookie() -> Callable:
+    from app.common.deps import get_current_user_from_cookie  # Lazy import to avoid circular dependency
+
+    async def dependency(request: Request):
+        user = await get_current_user_from_cookie(request)  # Await the async function
+        if user.role != "lecturer":
+            raise HTTPException(status_code=403, detail="Not authorized as lecturer")
+        return user
+
+    return dependency
+
+def require_admin_or_lecturer_cookie() -> Callable:
+    from app.common.deps import get_current_user_from_cookie  # Lazy import to avoid circular dependency
+
+    async def dependency(request: Request):
+        user = await get_current_user_from_cookie(request)  # Await the async function
+        if user.role == "admin":
+            return user  # Admin bypasses all restrictions
+        if user.role == "lecturer":
+            return user  # Lecturer access
+        raise HTTPException(status_code=403, detail="Not authorized as admin or lecturer")
+
+    return dependency
