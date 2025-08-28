@@ -4,12 +4,15 @@ from app.features.profiles.repository import profile_repository as user_reposito
 from app.features.challenges.repository import challenge_repository
 from app.features.questions.repository import question_repository
 from app.features.challenges.scoring import AttemptScore, Tier, recompute_semester_mark, summarize, determine_milestones
+from app.features.lecturer.schemas import StudentProgressResponse, ChallengeResponse, ModuleModel, AnalyticsResponse
+
+# Ensure all methods return the appropriate schemas
 
 class LecturerService:
-    async def list_students_with_progress(self) -> List[Dict[str, Any]]:
+    async def list_students_with_progress(self) -> List[StudentProgressResponse]:
         users = await user_repository.list_users(limit=500)
         students = [u for u in users if (u.get("role") or "student") == "student"]
-        results: List[Dict[str, Any]] = []
+        results: List[StudentProgressResponse] = []
         # Preload plain attempts per student (naive per student for MVP)
         total_plain_planned = await challenge_repository.total_plain_planned()
         for stu in students:
@@ -53,11 +56,15 @@ class LecturerService:
                 emerald_correct=emerald_correct and unlocks.emerald,
                 diamond_correct=diamond_correct and unlocks.diamond,
             )
-            results.append({
-                "id": uid,
-                "email": stu.get("email"),
-                **summarize(agg),
-            })
+            results.append(StudentProgressResponse(
+                student_id=uid,
+                email=stu.get("email"),
+                plain_pct=agg.plain_pct,
+                ruby_correct=int(ruby_correct),
+                emerald_correct=int(emerald_correct),
+                diamond_correct=int(diamond_correct),
+                blended_pct=agg.blended_pct,
+            ))
         return results
 
 lecturer_service = LecturerService()
