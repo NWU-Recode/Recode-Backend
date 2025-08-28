@@ -89,13 +89,14 @@ async def get_current_user_from_cookie(
 ) -> CurrentUser:
     """Verify a browser cookie (or bearer) token and return typed CurrentUser.
 
-    This dependency is intended for use on protected paths where the frontend
-    stores the access token as a cookie. Use in endpoints like:
-
-        @router.get(...)
-        async def protected(endpoint_user: CurrentUser = Depends(get_current_user_from_cookie)):
-            ...
+    Optimizations:
+      * Caches the resolved CurrentUser on request.state.current_user
+      * Returns cached user if already resolved earlier in the dependency chain
     """
+    cached: CurrentUser | None = getattr(request.state, "current_user", None)
+    if cached is not None:
+        return cached
+
     user_id = claims.get("sub")
     email = claims.get("email") or (claims.get("user_metadata") or {}).get("email") or ""
     if not user_id:
@@ -104,11 +105,11 @@ async def get_current_user_from_cookie(
     # Ensure local provisioning (idempotent)
     db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
     typed = await get_profile_by_supabase_id(user_id)
-    
     role = (typed.get("role") if typed else db_user.get("role")) or "student"
 
-
     current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
+    # Cache for downstream dependencies / endpoints
+    request.state.current_user = current  # type: ignore[attr-defined]
 
     request_id = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
     if request_id:
@@ -179,23 +180,31 @@ async def get_current_user_with_refresh(
     )
     return current
 
-def require_role(*roles: str) -> Callable:
+def require_role(*roles: str, use_cookie: bool = False) -> Callable:
     """Factory returning dependency enforcing that user has one of the roles.
 
-    Admin roles always pass. Empty roles -> no restriction (returns current user).
+    Args:
+      roles: Allowed roles (case-insensitive). Empty -> no restriction.
+      use_cookie: If True, base resolution on cookie workflow; else bearer header.
     """
-
     normalized = {r.lower() for r in roles if r}
 
-    async def _checker(current: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        if not normalized:  # no specific roles required
+    base_dep = get_current_user_from_cookie if use_cookie else get_current_user
+
+    async def _checker(current: CurrentUser = Depends(base_dep)) -> CurrentUser:
+        if not normalized:
             return current
-        if current.role.lower() in normalized or current.role.lower() in _admin_roles():
+        role_l = current.role.lower()
+        if role_l in normalized or role_l in _admin_roles():
             return current
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role")
 
     return _checker
 
 
-def require_admin() -> Callable:
-    return require_role("admin")
+def require_admin(use_cookie: bool = False) -> Callable:
+    return require_role("admin", use_cookie=use_cookie)
+
+# Convenience cookie-based admin dependency
+def require_admin_cookie() -> Callable:
+    return require_admin(use_cookie=True)
