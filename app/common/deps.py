@@ -129,6 +129,7 @@ async def get_current_user_from_cookie(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resolve user")
 
 
+
 async def get_current_user_with_refresh(
     request: Request,
     response: Response,
@@ -247,3 +248,4 @@ def require_admin_or_lecturer_cookie() -> Callable:
         raise HTTPException(status_code=403, detail="Not authorized as admin or lecturer")
 
     return dependency
+

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+
 from app.common.deps import (
     get_current_user_from_cookie,
     require_admin_cookie,
@@ -31,6 +32,7 @@ async def read_current_profile(
     # Fetch full record by local student number (current_user.id)
     from .service import get_profile_by_id  # local import to avoid circular at import time
     prof = await get_profile_by_id(current_user.id)
+
     if not prof:
         # Should not normally happen because provisioning occurs in auth deps
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
@@ -42,8 +44,10 @@ async def update_current_profile(
     current_user: CurrentUser = Depends(get_current_user_from_cookie),
 ) -> ProfileSchema:
     """Authenticated user: Update their own profile (cookie auth)."""
+
     # Update the profile with provided fields
     updated = await update_profile(current_user.id, data)
+
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return ProfileSchema(**updated)
@@ -62,6 +66,7 @@ async def read_profile(
 @router.put("/{profile_id}/role", response_model=ProfileSchema)
 async def update_profile_role_endpoint(
     profile_id: int,
+
     role_data: ProfileRoleUpdate,
     current_user: CurrentUser = Depends(require_admin_cookie()),
 ) -> ProfileSchema:
@@ -73,6 +78,7 @@ async def update_profile_role_endpoint(
         )
 
     updated = await update_profile_role(profile_id, role_data)
+
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return ProfileSchema(**updated)
