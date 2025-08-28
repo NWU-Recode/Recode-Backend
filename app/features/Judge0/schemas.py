@@ -10,6 +10,11 @@ class CodeSubmissionCreate(BaseModel):
     stdin: Optional[str] = None
     expected_output: Optional[str] = None
 
+class QuickCodeSubmission(BaseModel):
+    source_code: str
+    language_id: int
+    stdin: Optional[str] = None
+
 class CodeSubmissionResponse(BaseModel):
     id: Optional[UUID] = None
     user_id: Optional[UUID] = None

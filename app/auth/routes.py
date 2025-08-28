@@ -22,15 +22,14 @@ async def register(payload: RegisterRequest):
 
 @router.post("/login", status_code=status.HTTP_200_OK)
 async def login(payload: LoginRequest, resp: Response):
-    print(">>> ROUTE sees supabase_password_grant:",
-      supabase_password_grant,
-      "| module:", getattr(supabase_password_grant, "__module__", "?"),
-      "| file:", getattr(getattr(supabase_password_grant, "__code__", None), "co_filename", "?"))
-
     """Authenticate user with JSON body (email, password)."""
     tokens = await supabase_password_grant(payload.email, payload.password)
-    set_auth_cookies(resp, tokens)
-    return {"detail": "Logged in", "access_token": tokens.access_token}  # Include token in response for dev
+    set_auth_cookies(resp, tokens)  # Set HttpOnly cookies for access and refresh tokens
+    return {
+        "detail": "Logged in",
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token  # Include refresh token in response
+    }
 
 @router.post("/refresh", response_model=None)
 async def refresh(request: Request, resp: Response, refresh_token: str | None = None):
@@ -39,13 +38,17 @@ async def refresh(request: Request, resp: Response, refresh_token: str | None = 
     if not token:
         return {"detail": "No refresh token"}
     tokens = await supabase_refresh(token)
-    set_auth_cookies(resp, tokens)
-    return {"detail": "Refreshed"}
+    set_auth_cookies(resp, tokens)  # Update cookies with new tokens
+    return {
+        "detail": "Refreshed",
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token  # Include refresh token in response
+    }
 
 @router.post("/logout", response_model=None)
 async def logout(resp: Response):
     # Optionally call services.supabase_revoke(refresh_cookie) if wired.
-    clear_auth_cookies(resp)
+    clear_auth_cookies(resp)  # Clear HttpOnly cookies for access and refresh tokens
     return {"detail": "Logged out"}
 
 

@@ -9,7 +9,7 @@ class QuestionAttempt(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     question_id = Column(UUID(as_uuid=True), ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
     challenge_id = Column(UUID(as_uuid=True), ForeignKey("challenges.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False)  # Changed to Integer to match profiles.id
     judge0_token = Column(String(255), nullable=True)
     source_code = Column(Text, nullable=False)
     stdout = Column(Text, nullable=True)
@@ -30,7 +30,7 @@ class ChallengeAttempt(Base):
     __tablename__ = "challenge_attempts"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     challenge_id = Column(UUID(as_uuid=True), ForeignKey("challenges.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False)  # Changed to Integer to match profiles.id
     score = Column(Integer, nullable=False, default=0)
     total_correct = Column(Integer, nullable=False, default=0)
     completed_at = Column(DateTime(timezone=True), nullable=True)
