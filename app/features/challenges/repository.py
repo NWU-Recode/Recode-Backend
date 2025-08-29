@@ -101,22 +101,24 @@ class ChallengeRepository:
         return resp.data or []
 
     async def _build_snapshot(self, challenge_id: str) -> List[Dict[str, Any]]:
-        """Fetch exactly 10 questions and return frozen snapshot list.
+        """Fetch questions and return a frozen snapshot list.
 
-        Raises if not exactly 10.
+        MVP policy: require at least 5 questions, snapshot the first 5
+        ordered by id to align with weekly Common challenge design.
         """
         questions = await self.get_challenge_questions(challenge_id)
-        if len(questions) != 10:
-            raise ValueError("challenge_not_configured: needs 10 questions")
+        if len(questions) < 5:
+            raise ValueError("challenge_not_configured: needs at least 5 questions")
+        selected = sorted(questions, key=lambda r: str(r.get("id")))[:5]
         snapshot: List[Dict[str, Any]] = []
-        for idx, q in enumerate(sorted(questions, key=lambda r: str(r.get("id")))):
+        for idx, q in enumerate(selected):
             snapshot.append({
                 "question_id": str(q["id"]),
                 "expected_output": (q.get("expected_output") or "").strip(),
                 "language_id": q.get("language_id"),
                 "max_time_ms": q.get("max_time_ms"),
                 "max_memory_kb": q.get("max_memory_kb"),
-                "points": 1,
+                "points": q.get("points", 1),
                 "order_index": idx,
                 "version": 1,
             })

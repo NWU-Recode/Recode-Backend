@@ -110,4 +110,29 @@ class QuestionRepository:
         )
         return resp.data or []
 
+    # --- Creation helpers for orchestration ---
+    async def create_question(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a question row and return it."""
+        client = await get_supabase()
+        resp = client.table("questions").insert(payload).execute()
+        if not resp.data:
+            raise RuntimeError("Failed to create question")
+        return resp.data[0]
+
+    async def insert_tests(self, question_id: str, tests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        client = await get_supabase()
+        rows = [
+            {
+                "question_id": question_id,
+                "input": t.get("input"),
+                "expected": t.get("expected"),
+                "visibility": t.get("visibility", "public"),
+            }
+            for t in tests
+        ]
+        if not rows:
+            return []
+        resp = client.table("question_tests").insert(rows).execute()
+        return resp.data or []
+
 question_repository = QuestionRepository()
