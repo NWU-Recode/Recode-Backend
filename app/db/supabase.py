@@ -19,7 +19,9 @@ async def get_supabase() -> AsyncClient:
         return _client
     async with _lock:
         if _client is None:
-            _client = await create_async_client(_settings.supabase_url, _settings.supabase_key)
+            # Prefer service role for backend writes; fallback to anon if missing
+            key = _settings.supabase_service_role_key or _settings.supabase_key
+            _client = await create_async_client(_settings.supabase_url, key)
     return _client
 
 # Backwards-compatible alias

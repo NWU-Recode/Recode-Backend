@@ -13,7 +13,15 @@ def _slugify(s: str) -> str:
 
 class TopicService:
     @staticmethod
-    async def create_from_slides(slides_url: str, week: int, slide_texts: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def create_from_slides(
+        slides_url: str,
+        week: int,
+        slide_texts: Optional[List[str]] = None,
+        slides_key: Optional[str] = None,
+        detected_topic: Optional[str] = None,
+        detected_subtopics: Optional[List[str]] = None,
+        slide_extraction_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Create or return a topic derived from slides for a given week.
 
         - Slug format: w{week}-{topic_key}
@@ -35,7 +43,19 @@ class TopicService:
         if existing:
             return existing
         title = primary_key.replace("-", " ").title()
-        return await TopicRepository.create(week=week, slug=slug, title=title, subtopics=subtopics)
+        # Use detected_* overrides if provided
+        det_topic = detected_topic or primary_key
+        det_subs = detected_subtopics or subtopics
+        return await TopicRepository.create(
+            week=week,
+            slug=slug,
+            title=title,
+            subtopics=subtopics,
+            slides_key=slides_key,
+            detected_topic=det_topic,
+            detected_subtopics=det_subs,
+            slide_extraction_id=slide_extraction_id,
+        )
 
 
 # Backwards-compatible entry point used by endpoints

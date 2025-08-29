@@ -27,8 +27,31 @@ class WeeksOrchestrator:
         self.force = force
 
     async def _ensure_topic(self) -> Dict[str, Any]:
-        # For MVP we don't fetch actual slides; we derive topic key from URL
-        return await TopicService.create_from_slides(self.slides_url, self.week)
+        # If slides_url points to Supabase storage, try fetching and extracting text
+        slide_texts: Optional[List[str]] = None
+        try:
+            if isinstance(self.slides_url, str) and self.slides_url.startswith("supabase://"):
+                # Format: supabase://<bucket>/<object_key>
+                _, _, rest = self.slides_url.partition("supabase://")
+                bucket, _, object_key = rest.partition("/")
+                if bucket and object_key:
+                    client = await get_supabase()
+                    downloader = client.storage.from_(bucket).download(object_key)
+                    data = await downloader if hasattr(downloader, "__await__") else downloader
+                    if isinstance(data, dict) and "data" in data:
+                        data = data["data"]
+                    if isinstance(data, (bytes, bytearray)):
+                        from io import BytesIO
+                        from app.features.questions.slide_extraction.pptx_extraction import extract_pptx_text
+                        try:
+                            slides_map = extract_pptx_text(BytesIO(data))
+                            # Flatten to list of strings for NLP
+                            slide_texts = [line for _, lines in sorted(slides_map.items()) for line in lines]
+                        except Exception:
+                            slide_texts = None
+        except Exception:
+            slide_texts = None
+        return await TopicService.create_from_slides(self.slides_url, self.week, slide_texts=slide_texts)
 
     async def _create_challenge(self, kind: str, topic: Dict[str, Any]) -> Dict[str, Any]:
         client = await get_supabase()
@@ -60,7 +83,7 @@ class WeeksOrchestrator:
             "tier": "plain" if kind == "common" else kind,
             "topic_id": topic.get("id"),
         }
-        resp = client.table("challenges").insert(payload).execute()
+        resp = await client.table("challenges").insert(payload).execute()
         if not resp.data:
             raise RuntimeError(f"Failed to create challenge kind={kind}")
         return resp.data[0]
@@ -113,7 +136,7 @@ class WeeksOrchestrator:
                 # Mark valid if column exists; ignore if not
                 try:
                     client = await get_supabase()
-                    client.table("questions").update({"valid": True}).eq("id", q["id"]).execute()
+                    await client.table("questions").update({"valid": True}).eq("id", q["id"]).execute()
                 except Exception:
                     pass
         return q
