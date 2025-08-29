@@ -17,6 +17,7 @@ class SlideExtractionRepository:
         try:
             record = SlideExtraction(
                 filename=data.filename,
+                slides_key=getattr(data, "slides_key", None),
                 slides=data.slides,
                 created_at=data.created_at if hasattr(data, "created_at") else datetime.now(timezone.utc)
             )
