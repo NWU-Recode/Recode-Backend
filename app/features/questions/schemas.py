@@ -199,3 +199,27 @@ class QuestionHintUpdateResponse(BaseModel):
     text: str
     tier: Optional[str]
     updated_at: datetime
+
+class QuestionSchema(BaseModel):
+    id: int
+    challenge_id: int
+    text: str
+    difficulty: str
+    tier: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class QuestionTestSchema(BaseModel):
+    id: int
+    question_id: int
+    input: str
+    output: str
+    visibility: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
