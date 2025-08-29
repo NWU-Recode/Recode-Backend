@@ -19,6 +19,7 @@ from app.common.quota import enforce_source_stdin, QuotaError
 from app.features.submissions.service import submission_service
 from app.features.submissions.schemas import SubmissionCreate
 import asyncio, time
+from app.DB.session import get_db
 
 class QuestionService:
     # ---- Helpers ----
@@ -390,5 +391,25 @@ class QuestionService:
                     token=existing.get("judge0_token")
                 ))
         return ChallengeTilesResponse(challenge_id=challenge_id, items=items)
+
+class QuestionsService:
+    def __init__(self, db):
+        self.db = db
+
+    def create_question(self, question_data):
+        # Logic to create a question
+        pass
+
+    def get_question(self, question_id: int):
+        # Logic to retrieve a question
+        pass
+
+    def update_question(self, question_id: int, question_data):
+        # Logic to update a question
+        pass
+
+    def delete_question(self, question_id: int):
+        # Logic to delete a question
+        pass
 
 question_service = QuestionService()

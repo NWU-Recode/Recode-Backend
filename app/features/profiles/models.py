@@ -1,9 +1,17 @@
 from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, Integer, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
+from sqlalchemy import Enum
 import uuid
+import enum
+from datetime import datetime
 
 from app.DB.base import Base
+
+class UserRole(enum.Enum):
+    admin = "admin"
+    lecturer = "lecturer"
+    student = "student"
 
 class Profile(Base):
     __tablename__ = "profiles"
@@ -21,7 +29,7 @@ class Profile(Base):
     avatar_url = Column(String(500), nullable=True)
     phone = Column(String(50), nullable=True)
     bio = Column(Text, nullable=True)
-    role = Column(String(50), nullable=False, server_default="student", index=True)
+    role = Column(Enum(UserRole), nullable=False)
     is_active = Column(Boolean, nullable=False, server_default="true")
     is_superuser = Column(Boolean, nullable=False, server_default="false")
     email_verified = Column(Boolean, nullable=False, server_default="false")
@@ -37,3 +45,12 @@ class Profile(Base):
 
     def __repr__(self) -> str:
         return f"<Profile id={self.id} supabase_id={self.supabase_id} email={self.email} role={self.role}>"
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False)
+    role = Column(Enum(UserRole), nullable=False)
+    display_name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

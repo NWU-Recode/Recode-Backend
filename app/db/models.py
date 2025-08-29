@@ -4,10 +4,13 @@ from app.DB.base import Base
 # Import all feature models - User first (referenced by other models)
 from app.features.profiles.models import Profile  
 from app.features.judge0.models import CodeSubmission, CodeResult
-from app.features.slide_extraction.models import SlideExtraction
+from app.features.questions.slide_extraction.models import SlideExtraction
 from app.features.challenges.models import Challenge
-from app.features.questions.models import Question
-from app.features.submissions.models import QuestionAttempt, ChallengeAttempt
+from app.features.questions.models import Question, QuestionTest
+from app.features.submissions.models import Submission
+from app.features.badges.models import BadgeAward
+from app.features.elo.models import EloHistory
+from app.features.topics.models import Topic
 
 # This ensures all models are registered with SQLAlchemy
 __all__ = [
@@ -18,6 +21,9 @@ __all__ = [
 	"SlideExtraction",
 	"Challenge",
 	"Question",
-	"QuestionAttempt",
-	"ChallengeAttempt",
+	"QuestionTest",
+	"Submission",
+	"BadgeAward",
+	"EloHistory",
+    "Topic",
 ]

@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List, Dict, Any
 from app.features.profiles.repository import profile_repository as user_repository
 from app.features.challenges.repository import challenge_repository
-from app.features.questions.repository import question_repository
+from app.features.topic_detections.repository import question_repository
 from app.features.challenges.scoring import AttemptScore, Tier, recompute_semester_mark, summarize, determine_milestones
 from app.features.lecturer.schemas import StudentProgressResponse, ChallengeResponse, ModuleModel, AnalyticsResponse
 

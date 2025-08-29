@@ -55,3 +55,25 @@ class GetChallengeAttemptResponse(BaseModel):
     submitted_at: Optional[datetime] = None
     snapshot_question_ids: List[UUID]
     questions: List[ChallengeAttemptQuestionStatus]
+
+class ChallengeSchema(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    kind: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+from __future__ import annotations
+
+from pydantic import BaseModel
+from datetime import datetime
+
+
+class WeekSchema(BaseModel):
+    start_date: datetime
+    end_date: datetime
+

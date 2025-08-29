@@ -65,3 +65,14 @@ class PublicProfile(BaseModel):
 
     class Config:
         from_attributes = True
+
+class UserSchema(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True

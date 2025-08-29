@@ -6,7 +6,7 @@ from app.DB.supabase import get_supabase
 class QuestionRepository:
     async def get_question(self, question_id: str) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
-        resp = client.table("questions").select("*").eq("id", question_id).single().execute()
+        resp = await client.table("questions").select("*").eq("id", question_id).single().execute()
         return resp.data or None
 
     async def upsert_attempt(self, attempt: Dict[str, Any]) -> Dict[str, Any]:
@@ -14,20 +14,20 @@ class QuestionRepository:
         # If id provided treat as update, else insert
         if attempt.get("id"):
             aid = attempt.pop("id")
-            resp = client.table("question_attempts").update(attempt).eq("id", aid).execute()
+            resp = await client.table("question_attempts").update(attempt).eq("id", aid).execute()
         else:
-            resp = client.table("question_attempts").insert(attempt).execute()
+            resp = await client.table("question_attempts").insert(attempt).execute()
         if not resp.data:
             raise RuntimeError("Failed to persist question attempt")
         return resp.data[0]
 
     async def mark_previous_not_latest(self, question_id: str, user_id: str):
         client = await get_supabase()
-        client.table("question_attempts").update({"latest": False}).eq("question_id", question_id).eq("user_id", user_id).eq("latest", True).execute()
+        await client.table("question_attempts").update({"latest": False}).eq("question_id", question_id).eq("user_id", user_id).eq("latest", True).execute()
 
     async def get_existing_attempt(self, question_id: str, user_id: str) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
-        resp = (
+        resp = await (
             client.table("question_attempts")
             .select("*")
             .eq("question_id", question_id)
@@ -42,7 +42,7 @@ class QuestionRepository:
 
     async def find_by_code_hash(self, question_id: str, user_id: str, code_hash: str) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
-        resp = (
+        resp = await (
             client.table("question_attempts")
             .select("*")
             .eq("question_id", question_id)
@@ -59,7 +59,7 @@ class QuestionRepository:
     async def find_by_idempotency_key(self, question_id: str, user_id: str, idempotency_key: str) -> Optional[Dict[str, Any]]:
         """Return existing attempt matching idempotency key (latest semantics implicit via unique constraint)."""
         client = await get_supabase()
-        resp = (
+        resp = await (
             client.table("question_attempts")
             .select("*")
             .eq("question_id", question_id)
@@ -74,7 +74,7 @@ class QuestionRepository:
 
     async def find_by_token(self, question_id: str, user_id: str, token: str) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
-        resp = (
+        resp = await (
             client.table("question_attempts")
             .select("*")
             .eq("question_id", question_id)
@@ -89,7 +89,7 @@ class QuestionRepository:
 
     async def list_attempts_for_challenge(self, challenge_id: str, user_id: str) -> List[Dict[str, Any]]:
         client = await get_supabase()
-        resp = (
+        resp = await (
             client.table("question_attempts")
             .select("*")
             .eq("user_id", user_id)
@@ -100,7 +100,7 @@ class QuestionRepository:
 
     async def list_latest_attempts_for_challenge(self, challenge_id: str, user_id: str) -> List[Dict[str, Any]]:
         client = await get_supabase()
-        resp = (
+        resp = await (
             client.table("question_attempts")
             .select("*")
             .eq("user_id", user_id)
@@ -108,6 +108,31 @@ class QuestionRepository:
             .eq("latest", True)
             .execute()
         )
+        return resp.data or []
+
+    # --- Creation helpers for orchestration ---
+    async def create_question(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a question row and return it."""
+        client = await get_supabase()
+        resp = await client.table("questions").insert(payload).execute()
+        if not resp.data:
+            raise RuntimeError("Failed to create question")
+        return resp.data[0]
+
+    async def insert_tests(self, question_id: str, tests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        client = await get_supabase()
+        rows = [
+            {
+                "question_id": question_id,
+                "input": t.get("input"),
+                "expected": t.get("expected"),
+                "visibility": t.get("visibility", "public"),
+            }
+            for t in tests
+        ]
+        if not rows:
+            return []
+        resp = await client.table("question_tests").insert(rows).execute()
         return resp.data or []
 
 question_repository = QuestionRepository()
