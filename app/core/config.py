@@ -24,6 +24,13 @@ class Settings:
         self.judge0_api_url = os.getenv("JUDGE0_BASE_URL", "")
         self.judge0_api_key = os.getenv("JUDGE0_KEY", "")
         self.judge0_host = os.getenv("JUDGE0_HOST", "")
+        # Hugging Face / AI generation
+        self.hf_api_token = os.getenv("HUGGINGFACE_API_TOKEN", "")
+        self.hf_model_id = os.getenv("HF_MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
+        try:
+            self.hf_timeout_ms = int(os.getenv("HF_TIMEOUT_MS", "30000"))
+        except Exception:
+            self.hf_timeout_ms = 30000
         self.app_name = "Recode Backend"
         self.debug = os.getenv("DEBUG", "False").lower() == "true"
         self.dev_auto_confirm = os.getenv("DEV_AUTO_CONFIRM", "false").lower() == "true"

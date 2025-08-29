@@ -15,9 +15,9 @@ from .schemas import (
 )
 from .service import judge0_service
 from app.features.submissions.service import submission_service
-from app.features.questions.repository import question_repository
+from app.features.topic_detections.repository import question_repository
 from app.features.challenges.repository import challenge_repository
-from app.features.questions.service import question_service
+from app.features.topic_detections.service import question_service
 from app.features.submissions.schemas import SubmissionCreate
 
 # Public router (no authentication required)
@@ -67,11 +67,18 @@ async def submit_code_wait(submission: CodeSubmissionCreate):
 
 @public_router.post("/execute", response_model=CodeExecutionResult)
 async def execute_code_sync(submission: CodeSubmissionCreate):
-    """Legacy execute endpoint (polling). Prefer /submit/wait if immediate result acceptable."""
+    """Execute and return a normalized result (no persistence).
+
+    Uses Judge0 wait=true internally to avoid returning plain stdout strings.
+    """
     try:
-        return await judge0_service.execute_code(submission)
+        # Single-call wait then normalize to CodeExecutionResult
+        waited = await judge0_service.submit_code_wait(submission)
+        return judge0_service._to_code_execution_result(waited, submission.expected_output, submission.language_id)  # type: ignore
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Execution timeout")
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Execution timeout") if isinstance(e, TimeoutError) else HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
 
 @public_router.post("/execute/stdout", summary="Quick execute (stdout only)")
 async def execute_stdout_only(submission: QuickCodeSubmission):

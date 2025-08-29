@@ -135,7 +135,8 @@ class Judge0Service:
                 headers=self.headers,
                 json=judge0_request.model_dump(exclude_none=True),
             )
-        if response.status_code != 201:
+        # Judge0 may return 200 or 201 for wait=true responses
+        if response.status_code not in (200, 201):
             raise Exception(f"Failed waited submit: {response.status_code} {response.text[:200]}")
         data = response.json()
         # Ensure token present (Judge0 returns it even with fields subset if included)
