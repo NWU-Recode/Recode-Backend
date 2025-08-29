@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Text, Integer, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, Text, Integer, DateTime, ForeignKey, Enum, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -27,6 +27,7 @@ class Question(Base):
     max_time_ms = Column(Integer, nullable=True)
     max_memory_kb = Column(Integer, nullable=True)
     tier = Column(Enum(QuestionTier), nullable=False, server_default="bronze")
+    valid = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

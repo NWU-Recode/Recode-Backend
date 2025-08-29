@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import text
 
 
 # revision identifiers, used by Alembic.
@@ -19,31 +20,46 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Fully idempotent creation using IF NOT EXISTS guards
     bind = op.get_bind()
-    visibility_enum = sa.Enum('public', 'hidden', name='questiontestvisibility')
-    visibility_enum.create(bind, checkfirst=True)
-
-    op.create_table(
-        'question_tests',
-        sa.Column('id', sa.UUID(), primary_key=True, nullable=False),
-        sa.Column('question_id', sa.UUID(), sa.ForeignKey('questions.id', ondelete='CASCADE'), nullable=False, index=True),
-        sa.Column('input', sa.Text(), nullable=False),
-        sa.Column('expected', sa.Text(), nullable=False),
-        sa.Column('visibility', visibility_enum, nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    )
-    with op.batch_alter_table('question_tests') as batch_op:
-        batch_op.create_index(batch_op.f('ix_question_tests_question_id'), ['question_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_question_tests_visibility'), ['visibility'], unique=False)
+    bind.execute(text(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'question_tests'
+          ) THEN
+            CREATE TABLE public.question_tests (
+              id uuid PRIMARY KEY,
+              question_id uuid NOT NULL REFERENCES public.questions(id) ON DELETE CASCADE,
+              input text NOT NULL,
+              expected text NOT NULL,
+              visibility text NOT NULL,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              CONSTRAINT ck_question_tests_visibility CHECK (visibility IN ('public','hidden'))
+            );
+          END IF;
+        END
+        $$;
+        """
+    ))
+    bind.execute(text("CREATE INDEX IF NOT EXISTS ix_question_tests_question_id ON public.question_tests (question_id)"))
+    bind.execute(text("CREATE INDEX IF NOT EXISTS ix_question_tests_visibility ON public.question_tests (visibility)"))
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('question_tests') as batch_op:
-        batch_op.drop_index(batch_op.f('ix_question_tests_visibility'))
-        batch_op.drop_index(batch_op.f('ix_question_tests_question_id'))
-    op.drop_table('question_tests')
-
     bind = op.get_bind()
-    visibility_enum = sa.Enum('public', 'hidden', name='questiontestvisibility')
-    visibility_enum.drop(bind, checkfirst=True)
-
+    # Drop indexes and table if present
+    try:
+        bind.execute(text("DROP INDEX IF EXISTS public.ix_question_tests_visibility"))
+    except Exception:
+        pass
+    try:
+        bind.execute(text("DROP INDEX IF EXISTS public.ix_question_tests_question_id"))
+    except Exception:
+        pass
+    try:
+        bind.execute(text("DROP TABLE IF EXISTS public.question_tests"))
+    except Exception:
+        pass

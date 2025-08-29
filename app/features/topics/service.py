@@ -1,65 +1,43 @@
+from __future__ import annotations
+
+from typing import Dict, Any, Optional, List
+import re
+
 from app.features.topics.repository import TopicRepository
-from app.features.topics.schemas import TopicSchema  # type: ignore
-from app.features.questions.schemas import QuestionSchema  # type: ignore
+from app.adapters.nlp_spacy import extract_primary_topic
+
+
+def _slugify(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
 
 class TopicService:
     @staticmethod
-    def create_from_slides(db, slides_url: str, week: int):
-        """Create a topic from a slides URL using a simple heuristic.
+    async def create_from_slides(slides_url: str, week: int, slide_texts: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Create or return a topic derived from slides for a given week.
 
-        Derives a slug from the filename and persists via repository.
+        - Slug format: w{week}-{topic_key}
+        - Title from primary topic key (Title Case)
+        - Subtopics saved when provided or derivable
         """
-        import re
-        base = slides_url.strip().split("/")[-1] or "Topic"
+        base = slides_url.strip().split("/")[-1] or "topic"
         base = re.sub(r"\.[A-Za-z0-9]+$", "", base)
-        primary_topic = base.replace("_", " ").replace("-", " ").title() or "Topic"
-        slug = f"w{week:02d}-{re.sub(r'[^a-z0-9]+', '-', base.lower()).strip('-') or 'topic'}"
-        return TopicRepository.create(db, week=week, slug=slug, title=primary_topic)
+        primary_key = _slugify(base) or "topic"
+        # Prefer basic NLP extraction if texts are present
+        if slide_texts:
+            key, subs = extract_primary_topic(slide_texts)
+            primary_key = key or primary_key
+            subtopics = subs
+        else:
+            subtopics = []
+        slug = f"w{week:02d}-{primary_key}"
+        existing = await TopicRepository.get_by_slug(slug)
+        if existing:
+            return existing
+        title = primary_key.replace("-", " ").title()
+        return await TopicRepository.create(week=week, slug=slug, title=title, subtopics=subtopics)
 
-class TopicsService:
-    def __init__(self, db):
-        self.db = db
 
-    def create_topic(self, topic_data: TopicSchema):
-        # Logic to create a topic
-        pass
-
-    def get_topic(self, topic_id: int):
-        # Logic to retrieve a topic
-        pass
-
-    def update_topic(self, topic_id: int, topic_data: TopicSchema):
-        # Logic to update a topic
-        pass
-
-    def delete_topic(self, topic_id: int):
-        # Logic to delete a topic
-        pass
-
-    def create_from_slides(self, slide_data: list):
-        """
-        Create topics and questions from slide data.
-        :param slide_data: List of slide content.
-        """
-        topics = []
-        for slide in slide_data:
-            # Extract topic title and questions from slide
-            topic_title = slide.get("title")
-            questions = slide.get("questions", [])
-
-            # Create topic
-            topic = TopicSchema(name=topic_title, description="Generated from slides")  # type: ignore
-            # Persist via repository when models are available
-
-            # Create questions for the topic
-            for question_data in questions:
-                question = QuestionSchema(  # type: ignore
-                    challenge_id=topic.id,
-                    text=question_data.get("text"),
-                    difficulty=question_data.get("difficulty"),
-                    tier=question_data.get("tier"),
-                )
-                # Persist via repository when models are available
-
-            topics.append(topic)
-        return topics
+# Backwards-compatible entry point used by endpoints
+async def create_from_slides(db, slides_url: str, week: int):  # noqa: ARG001 (db unused)
+    return await TopicService.create_from_slides(slides_url, week)

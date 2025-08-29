@@ -10,6 +10,7 @@ from app.features.questions.models import Question, QuestionTest
 from app.features.submissions.models import Submission
 from app.features.badges.models import BadgeAward
 from app.features.elo.models import EloHistory
+from app.features.topics.models import Topic
 
 # This ensures all models are registered with SQLAlchemy
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
 	"Submission",
 	"BadgeAward",
 	"EloHistory",
+    "Topic",
 ]

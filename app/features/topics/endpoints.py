@@ -1,14 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from app.db.session import get_db
+from fastapi import APIRouter, HTTPException
 from app.features.topics.schemas import TopicCreate, TopicResponse
-from app.features.topics.service import TopicService
+from app.features.topics.service import create_from_slides
 
 router = APIRouter()
 
 @router.post("/topics/", response_model=TopicResponse)
-def create_topic(topic: TopicCreate, db: Session = Depends(get_db)):
+async def create_topic(topic: TopicCreate):
     try:
-        return TopicService.create_from_slides(db, slides_url=topic.slides_url, week=topic.week)
+        return await create_from_slides(None, slides_url=topic.slides_url, week=topic.week)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
