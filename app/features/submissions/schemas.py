@@ -41,3 +41,15 @@ class SubmissionResultCreate(BaseModel):
 class LanguageStat(BaseModel):
     language_id: int
     submission_count: int
+
+class SubmissionSchema(BaseModel):
+    id: int
+    user_id: int
+    question_id: int
+    status: str
+    score: Optional[float]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
