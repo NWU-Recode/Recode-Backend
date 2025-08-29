@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import List, Dict, Any
 from app.features.challenges.repository import challenge_repository
-from app.features.questions.repository import question_repository
+from app.features.topic_detections.repository import question_repository
 
 class DashboardService:
     async def get_dashboard(self, user_id: str) -> List[Dict[str, Any]]:

@@ -5,6 +5,7 @@ from app.common.deps import (
     get_current_user_from_cookie,
     require_admin_cookie,
     get_current_user_with_refresh,
+    require_admin_or_lecturer_cookie,
     CurrentUser,
 )
 from typing import Callable
@@ -14,8 +15,8 @@ from .service import list_profiles, get_profile_by_id, update_profile, update_pr
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 @router.get("/", response_model=list[ProfileSchema])
-async def read_profiles(current_user: CurrentUser = Depends(require_admin_cookie())) -> list[ProfileSchema]:
-    """Admin-only: List all profiles (cookie auth)."""
+async def read_profiles(current_user: CurrentUser = Depends(require_admin_or_lecturer_cookie())) -> list[ProfileSchema]:
+    """Lecturer or Admin: List all profiles (cookie auth)."""
     profiles = await list_profiles()
     return [ProfileSchema(**profile) for profile in profiles]
 
@@ -55,9 +56,9 @@ async def update_current_profile(
 @router.get("/{profile_id}", response_model=PublicProfile)
 async def read_profile(
     profile_id: int,
-    current_user: CurrentUser = Depends(require_admin_cookie()),
+    current_user: CurrentUser = Depends(require_admin_or_lecturer_cookie()),
 ) -> PublicProfile:
-    """Admin-only: Get a public profile by ID (cookie auth)."""
+    """Lecturer or Admin: Get a public profile by ID (cookie auth)."""
     prof = await get_profile_by_id(profile_id)
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")

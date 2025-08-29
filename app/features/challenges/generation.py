@@ -1,10 +1,6 @@
-"""Weeks orchestration service (MVP).
-
-Generates Topic + Challenges + Questions from slides metadata and templates,
-persists to Supabase, and validates reference solutions via Judge0.
-"""
-
 from __future__ import annotations
+
+"""Challenge generation service (moved from weeks)."""
 
 from typing import Dict, Any, List, Optional, Tuple
 import re
@@ -21,7 +17,7 @@ def _slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
-class WeeksOrchestrator:
+class ChallengeGenerator:
     def __init__(self, week: int, slides_url: str, force: bool = False):
         self.week = week
         self.slides_url = slides_url
@@ -59,21 +55,20 @@ class WeeksOrchestrator:
         topic_slug = topic.get("slug", f"w{self.week:02d}-topic")
         if kind == "common":
             slug = f"{topic_slug}-common"
-            title = f"Week {self.week} – {topic.get('title', 'Topic')} (Common)"
+            title = f"Week {self.week} - {topic.get('title', 'Topic')} (Common)"
         elif kind == "ruby":
             slug = f"w{self.week:02d}-ruby"
-            title = f"Week {self.week} – Ruby"
+            title = f"Week {self.week} - Ruby"
         elif kind == "platinum":
             slug = f"w{self.week:02d}-platinum"
-            title = f"Week {self.week} – Platinum"
+            title = f"Week {self.week} - Platinum"
         elif kind == "diamond":
             slug = "diamond-final"
-            title = "Diamond – Final Capstone"
+            title = "Diamond - Final Capstone"
         else:
             slug = f"w{self.week:02d}-{kind}"
-            title = f"Week {self.week} – {kind.title()}"
+            title = f"Week {self.week} - {kind.title()}"
 
-        # See available columns from Supabase; keep to safe columns
         payload = {
             "title": title,
             "description": f"Auto-generated challenge ({kind}) for {topic.get('title','Topic')}.",
@@ -97,10 +92,10 @@ class WeeksOrchestrator:
         mapping = {"ruby": ("ruby", 40), "platinum": ("platinum", 60), "diamond": ("diamond", 100)}
         return mapping.get(kind, ("bronze", 10))
 
-    async def _create_question_from_template(self, challenge_id: str, tier: str, points: int) -> Dict[str, Any]:
-        # Prefer AI-generated spec (Mistral via Hugging Face) with fallback to static template
+    async def _create_question(self, challenge_id: str, tier: str, points: int, kind: str) -> Dict[str, Any]:
+        # Prefer AI-generated spec; fallback to static template
         try:
-            tpl = await generate_question_spec(slide_texts=None, week=self.week, topic=None, kind="common", tier=tier)
+            tpl = await generate_question_spec(slide_texts=None, week=self.week, topic=None, kind=kind, tier=tier)
         except Exception:
             tpl = template_reverse_string()
         language_id = tpl.get("language_id", 28)
@@ -121,10 +116,8 @@ class WeeksOrchestrator:
             "tier": tier,
         }
         q = await question_repository.create_question(payload)
-        # Insert tests rows
         await question_repository.insert_tests(str(q["id"]), tests)
 
-        # Validate reference solution against all tests
         if reference_solution and tests:
             items = [
                 {
@@ -138,7 +131,6 @@ class WeeksOrchestrator:
             results = await run_many(items)
             all_pass = all(r.get("success") for r in results)
             if all_pass:
-                # Mark valid if column exists; ignore if not
                 try:
                     client = await get_supabase()
                     await client.table("questions").update({"valid": True}).eq("id", q["id"]).execute()
@@ -152,23 +144,22 @@ class WeeksOrchestrator:
 
         # Common (always)
         common = await self._create_challenge("common", topic)
-        # Create 5 questions for common
         for tier, pts in self._make_common_specs():
-            await self._create_question_from_template(str(common["id"]), tier=tier, points=pts)
+            await self._create_question(str(common["id"]), tier=tier, points=pts, kind="common")
         created["common"] = {"challenge_id": str(common["id"]) }
 
         # Ruby every 2nd week
         if self.week % 2 == 0:
             ruby = await self._create_challenge("ruby", topic)
             t, pts = self._make_single_spec("ruby")
-            await self._create_question_from_template(str(ruby["id"]), tier=t, points=pts)
+            await self._create_question(str(ruby["id"]), tier=t, points=pts, kind="ruby")
             created["ruby"] = {"challenge_id": str(ruby["id"]) }
 
         # Platinum every 4th week
         if self.week % 4 == 0:
             plat = await self._create_challenge("platinum", topic)
             t, pts = self._make_single_spec("platinum")
-            await self._create_question_from_template(str(plat["id"]), tier=t, points=pts)
+            await self._create_question(str(plat["id"]), tier=t, points=pts, kind="platinum")
             created["platinum"] = {"challenge_id": str(plat["id"]) }
 
         return {
@@ -179,6 +170,6 @@ class WeeksOrchestrator:
         }
 
 
-# Simple facade preserved for potential importers
-async def generate_week(week_number: int, slides_url: str, force: bool = False) -> Dict[str, Any]:
-    return await WeeksOrchestrator(week=week_number, slides_url=slides_url, force=force).generate()
+async def generate_week_challenges(week_number: int, slides_url: str, force: bool = False) -> Dict[str, Any]:
+    return await ChallengeGenerator(week=week_number, slides_url=slides_url, force=force).generate()
+
