@@ -18,9 +18,9 @@ from app.Auth.routes import router as auth_router
 from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
 from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
-from app.features.questions.endpoints import router as questions_router
+from app.features.topic_detections.slide_extraction.endpoints import router as questions_router
 from app.features.challenges.endpoints import router as challenges_router
-from app.features.questions.slide_extraction.endpoints import router as slide_extraction_router
+from app.features.topic_detections.slide_extraction.endpoints import router as slide_extraction_router
 from app.features.slides.endpoints import router as slides_router
 from app.features.dashboard.endpoints import router as dashboard_router
 from app.features.lecturer.endpoints import router as lecturer_router
@@ -29,12 +29,14 @@ from app.common.middleware import SessionManagementMiddleware
 
 app = FastAPI(title="Recode Backend")
 
-# CORS (dev friendly, tighten for prod)
-_FRONTEND_ORIGINS = [
-	"http://localhost:5173",  # Vite
-]
-if (frontend_env := os.getenv("FRONTEND_ORIGIN")):
-	_FRONTEND_ORIGINS.append(frontend_env.rstrip("/"))
+def _split_env_csv(name: str, default: str = ""):
+    raw = os.getenv(name, default)
+    return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
+_FRONTEND_ORIGINS = _split_env_csv(
+    "ALLOW_ORIGINS",
+    "http://localhost:5173",
+)
 
 app.add_middleware(
 	CORSMiddleware,

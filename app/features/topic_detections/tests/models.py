@@ -20,18 +20,7 @@ class QuestionTest(Base):
     visibility = Column(Enum(QuestionTestVisibility), nullable=False, index=True)
 
     question = relationship("Question", back_populates="tests")
-Rules
 
-Season format: YYYYS1 (Jan–Jun) or YYYYS2 (Jul–Dec) — adjust if your uni defines semesters differently.
-
-Week numbering: w01…w12, derived from a configured semester_start_date.
-
-Path: slides/{season}/w{week}/{topic_slug}/{ts}-{uuid}-{original_filename}
-
-Timezone: Africa/Johannesburg.
-
-Python (FastAPI backend, supabase-py v2)
-# app/adapters/supabase_client.py
 import os
 from supabase import create_client, Client
 
