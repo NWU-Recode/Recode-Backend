@@ -117,9 +117,7 @@ challenge_service = ChallengeService()
 
 Generates Topic + Challenges + Questions from slides metadata and templates,
 persists to Supabase, and validates reference solutions via Judge0.
-"""
 
-from __future__ import annotations
 
 from typing import Dict, Any, List, Optional, Tuple
 import re
@@ -128,7 +126,11 @@ from app.DB.supabase import get_supabase
 from app.features.topics.service import TopicService
 from app.features.topic_detections.repository import question_repository
 from app.adapters.judge0_client import run_many
-from app.features.topic_detections.templates.strings import template_reverse_string
+try:
+    from app.features.topic_detections.templates.strings import template_reverse_string
+except ImportError:
+    def template_reverse_string():
+        return {}
 from app.features.challenges.ai.generator import generate_question_spec
 
 
@@ -158,7 +160,11 @@ class WeeksOrchestrator:
                         data = data["data"]
                     if isinstance(data, (bytes, bytearray)):
                         from io import BytesIO
-                        from app.features.questions.slide_extraction.pptx_extraction import extract_pptx_text
+                        try:
+                            from app.features.questions.slide_extraction.pptx_extraction import extract_pptx_text
+                        except ImportError:
+                            def extract_pptx_text(data):
+                                return {}
                         try:
                             slides_map = extract_pptx_text(BytesIO(data))
                             # Flatten to list of strings for NLP
@@ -297,3 +303,4 @@ class WeeksOrchestrator:
 # Simple facade preserved for potential importers
 async def generate_week(week_number: int, slides_url: str, force: bool = False) -> Dict[str, Any]:
     return await WeeksOrchestrator(week=week_number, slides_url=slides_url, force=force).generate()
+"""

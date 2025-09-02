@@ -66,8 +66,7 @@ class ChallengeSchema(BaseModel):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
-from __future__ import annotations
+        from_attributes = True
 
 from pydantic import BaseModel
 from datetime import datetime

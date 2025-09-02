@@ -30,7 +30,7 @@ class ProfileUpdate(BaseModel):
         return v
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ProfileRoleUpdate(BaseModel):
     role: str
@@ -75,4 +75,4 @@ class UserSchema(BaseModel):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
