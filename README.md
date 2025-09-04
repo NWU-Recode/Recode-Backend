@@ -4,6 +4,7 @@
 
 Recode is a revolutionary educational platform that leverages natural language processing to convert traditional lecture materials into engaging, interactive coding challenges. Built with FastAPI and powered by Supabase, this backend service provides the foundation for a gamified learning experience that adapts to each student's progress.
 
+
 ## 🎯 Project Overview
 
 Recode addresses the challenge of making computer science education more interactive and engaging by:
