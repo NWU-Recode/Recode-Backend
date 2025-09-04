@@ -11,13 +11,19 @@ from .service import (
 )
 from .deps import get_current_user
 from app.features.profiles.models import Profile  
+from app.features.profiles.service import ensure_profile_provisioned
+from app.DB.supabase import get_supabase
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest):
-    # Sign up with Supabase; email confirm may be required depending on project settings
-    await supabase_sign_up(payload.email, payload.password, payload.full_name)
+    # Frontend now sends metadata (student_number, full_name, phone) directly via Supabase client.
+    # This backend endpoint becomes optional; we simply proxy minimal data (full_name) if called.
+    meta = {"full_name": payload.full_name} if payload.full_name else {}
+    if payload.student_number is not None:
+        meta["student_number"] = payload.student_number
+    await supabase_sign_up(payload.email, payload.password, payload.full_name, extra_meta=meta)
     return {"detail": "Registration successful. Check your email to confirm your account."}
 
 @router.post("/login", status_code=status.HTTP_200_OK)
@@ -89,3 +95,5 @@ async def me(user: Profile = Depends(get_current_user)):
         full_name=getattr(user, "full_name", None),
         avatar_url=getattr(user, "avatar_url", None),
     )
+
+ # Removed student-number binding endpoint; handled by DB trigger reading auth metadata.

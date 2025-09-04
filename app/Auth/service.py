@@ -48,10 +48,13 @@ def _form_headers(admin: bool = False) -> dict:
     # Dedicated form headers
     return {**_base_headers(admin), "Content-Type": "application/x-www-form-urlencoded"}
 
-async def supabase_sign_up(email: str, password: str, full_name: str | None = None) -> dict:
+async def supabase_sign_up(email: str, password: str, full_name: str | None = None, extra_meta: dict | None = None) -> dict:
     payload = {"email": email.lower(), "password": password}
-    if full_name:
-        payload["data"] = {"full_name": full_name}  # appears as user_metadata
+    meta: dict[str, object] = extra_meta.copy() if extra_meta else {}
+    if full_name and "full_name" not in meta:
+        meta["full_name"] = full_name
+    if meta:
+        payload["data"] = meta  # becomes raw_user_meta_data
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(
             f"{AUTH_BASE}/signup",

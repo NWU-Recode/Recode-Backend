@@ -42,5 +42,3 @@ async def update_profile_last_signin(profile_id: int) -> bool:
 async def delete_profile(profile_id: int) -> bool:
     return await profile_repository.delete_profile(profile_id)
 
-async def get_profile_by_student_number(student_number: int) -> Optional[Dict[str, Any]]:
-    return await profile_repository.get_by_student_number(student_number)

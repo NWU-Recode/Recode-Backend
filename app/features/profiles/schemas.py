@@ -13,6 +13,7 @@ class ProfileBase(BaseModel):
 
 class ProfileCreate(ProfileBase):
     password: str
+    student_number: int | None = None  # Provided at separate step; required for creation
 
 from pydantic import BaseModel, EmailStr, validator
 
