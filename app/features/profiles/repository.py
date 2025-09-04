@@ -9,9 +9,13 @@ logger = logging.getLogger("profiles.repository")
 class ProfileRepository:
     async def create_profile(self, supabase_id: str, data: ProfileCreate) -> dict:
         client = await get_supabase()
+        # Basic validation (defense in depth – pydantic already validated)
+        if not (10000000 <= data.student_number <= 99999999):
+            raise ValueError("student_number must be 8 digits")
         record = {
+            "id": data.student_number,  # explicit PK
             "supabase_id": supabase_id,
-            "email": data.email,
+            "email": data.email.lower(),
             "full_name": data.full_name,
             "avatar_url": getattr(data, "avatar_url", None),
             "phone": getattr(data, "phone", None),

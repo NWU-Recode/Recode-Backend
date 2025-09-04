@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import sys
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, FileResponse
@@ -13,6 +15,25 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.Core.config import get_settings
+
+# Configure logging early
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+    ]
+)
+
+# Set specific logger levels
+logging.getLogger("app.features.challenges.generation").setLevel(logging.DEBUG)
+logging.getLogger("app.features.topics").setLevel(logging.INFO)
+logging.getLogger("app.features.questions").setLevel(logging.INFO)
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+
+logger = logging.getLogger(__name__)
+logger.info("Starting Recode Backend application")
 
 from app.Auth.routes import router as auth_router
 from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
@@ -52,15 +73,15 @@ app.add_middleware(SessionManagementMiddleware, auto_refresh=True)
 # Middleware: capture / propagate / generate X-Request-Id consistently
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):  # type: ignore[override]
-	import uuid, logging
+	import uuid
 	incoming = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
 	req_id = incoming or str(uuid.uuid4())
 	request.state.request_id = req_id
-	logger = logging.getLogger("request")
-	logger.info("request.start", extra={"request_id": req_id, "path": request.url.path, "method": request.method})
+	req_logger = logging.getLogger("request")
+	req_logger.info("request.start", extra={"request_id": req_id, "path": request.url.path, "method": request.method})
 	response = await call_next(request)
 	response.headers["X-Request-Id"] = req_id
-	logger.info("request.end", extra={"request_id": req_id, "path": request.url.path, "status_code": response.status_code})
+	req_logger.info("request.end", extra={"request_id": req_id, "path": request.url.path, "status_code": response.status_code})
 	return response
 _START_TIME = datetime.now(timezone.utc)
 _settings = get_settings()

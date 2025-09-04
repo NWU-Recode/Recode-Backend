@@ -13,6 +13,7 @@ class ProfileBase(BaseModel):
 
 class ProfileCreate(ProfileBase):
     password: str
+    student_number: int  # required explicit primary key
 
 from pydantic import BaseModel, EmailStr, validator
 

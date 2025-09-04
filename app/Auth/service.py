@@ -48,10 +48,17 @@ def _form_headers(admin: bool = False) -> dict:
     # Dedicated form headers
     return {**_base_headers(admin), "Content-Type": "application/x-www-form-urlencoded"}
 
-async def supabase_sign_up(email: str, password: str, full_name: str | None = None) -> dict:
+async def supabase_sign_up(email: str, password: str, full_name: str | None = None, student_number: int | None = None) -> dict:
     payload = {"email": email.lower(), "password": password}
+    user_meta: dict[str, object] = {}
     if full_name:
-        payload["data"] = {"full_name": full_name}  # appears as user_metadata
+        user_meta["full_name"] = full_name
+    if student_number is not None:
+        if not (10000000 <= student_number <= 99999999):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "student_number must be 8 digits")
+        user_meta["student_number"] = student_number
+    if user_meta:
+        payload["data"] = user_meta  # appears as user_metadata
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(
             f"{AUTH_BASE}/signup",
