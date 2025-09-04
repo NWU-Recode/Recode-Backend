@@ -14,7 +14,7 @@ from app.features.judge0.schemas import CodeSubmissionCreate
 from app.features.judge0.service import judge0_service
 from app.features.challenges.repository import challenge_repository
 from app.DB.supabase import get_supabase
-from app.features.questions.grading import map_app_status
+from app.features.topic_detections.grading import map_app_status
 from app.common.quota import enforce_source_stdin, QuotaError
 from app.features.submissions.service import submission_service
 from app.features.submissions.schemas import SubmissionCreate

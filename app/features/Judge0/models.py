@@ -8,6 +8,7 @@ from app.DB.base import Base
 class CodeSubmission(Base):
     #Code submissions table
     __tablename__ = "code_submissions"
+    __table_args__ = {"extend_existing": True}
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)  # Changed to Integer to match profiles.id
@@ -29,6 +30,7 @@ class CodeSubmission(Base):
 class CodeResult(Base):
     """Code execution results table"""
     __tablename__ = "code_results"
+    __table_args__ = {"extend_existing": True}
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     submission_id = Column(UUID(as_uuid=True), ForeignKey("code_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
