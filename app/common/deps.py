@@ -61,7 +61,10 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User email missing in token")
 
     # Ensure local provisioning (idempotent)
-    db_user = await ensure_user_provisioned(sup_user.id, email, (sup_user.user_metadata or {}).get("full_name"))
+    student_number = (sup_user.user_metadata or {}).get("student_number")
+    if student_number is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="student_number missing in user metadata; register with student_number")
+    db_user = await ensure_user_provisioned(sup_user.id, email, (sup_user.user_metadata or {}).get("full_name"), student_number)
     # Re-fetch typed (optional improvement) or build minimal identity
     typed = await get_profile_by_supabase_id(sup_user.id)
     role = (typed.get("role") if typed else db_user.get("role")) or "student"
@@ -104,7 +107,10 @@ async def get_current_user_from_cookie(
 
     try:
         # Ensure local provisioning (idempotent)
-        db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
+        student_number = (claims.get("user_metadata") or {}).get("student_number")
+        if student_number is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="student_number missing in user metadata; register with student_number")
+        db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"), student_number)
         typed = await get_profile_by_supabase_id(user_id)
         role = (typed.get("role") if typed else db_user.get("role")) or "student"
 
@@ -165,7 +171,10 @@ async def get_current_user_with_refresh(
             logger.warning(f"Failed to auto-refresh token for user {user_id}: {e}")
 
     # Ensure local provisioning (idempotent)
-    db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
+    student_number = (claims.get("user_metadata") or {}).get("student_number")
+    if student_number is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="student_number missing in user metadata; register with student_number")
+    db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"), student_number)
     typed = await get_profile_by_supabase_id(user_id)
     role = (typed.get("role") if typed else db_user.get("role")) or "student"
 

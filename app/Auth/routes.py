@@ -16,8 +16,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest):
-    # Sign up with Supabase; email confirm may be required depending on project settings
-    await supabase_sign_up(payload.email, payload.password, payload.full_name)
+    await supabase_sign_up(payload.email, payload.password, payload.full_name, payload.student_number)
     return {"detail": "Registration successful. Check your email to confirm your account."}
 
 @router.post("/login", status_code=status.HTTP_200_OK)

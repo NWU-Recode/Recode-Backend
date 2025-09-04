@@ -2,7 +2,7 @@ from typing import Optional, List, Dict, Any
 from .repository import profile_repository
 from .schemas import ProfileCreate, ProfileUpdate, ProfileRoleUpdate, Profile
 
-async def ensure_profile_provisioned(supabase_id: str, email: str, full_name: Optional[str] = None) -> Dict[str, Any]:
+async def ensure_profile_provisioned(supabase_id: str, email: str, full_name: Optional[str] = None, student_number: Optional[int] = None) -> Dict[str, Any]:
     prof = await profile_repository.get_by_supabase_id(supabase_id)
     if prof:
         return prof
@@ -11,7 +11,9 @@ async def ensure_profile_provisioned(supabase_id: str, email: str, full_name: Op
         if not existing_email.get("supabase_id"):
             await profile_repository.update_profile(existing_email["id"], {"supabase_id": supabase_id})
         return existing_email
-    pc = ProfileCreate(email=email, password="", full_name=full_name)
+    if student_number is None:
+        raise ValueError("student_number required for new profile provisioning")
+    pc = ProfileCreate(email=email, password="", full_name=full_name, student_number=student_number)
     return await profile_repository.create_profile(supabase_id, pc)
 
 async def list_profiles(offset: int = 0, limit: int = 50) -> List[Dict[str, Any]]:
