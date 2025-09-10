@@ -30,6 +30,9 @@ class Judge0Service:
                 "X-RapidAPI-Key": self.settings.judge0_api_key,
                 "X-RapidAPI-Host": self.settings.judge0_host,
             })
+        # Simple in-memory caches for static metadata endpoints
+        from app.common import cache as _cache
+        self._cache = _cache
 
     @staticmethod
     def _compute_success(status_id: int | None, stdout: str | None, expected_output: str | None) -> bool:
@@ -56,7 +59,13 @@ class Judge0Service:
         return actual == expected
     
     async def get_languages(self) -> List[LanguageInfo]:
-        async with httpx.AsyncClient() as client:
+        key = "judge0:languages"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
                 f"{self.base_url}/languages",
                 headers=self.headers
@@ -66,7 +75,9 @@ class Judge0Service:
                     languages_data = response.json()
                 except Exception as e:
                     raise Exception(f"Failed to parse languages JSON: {e} body={response.text[:200]}")
-                return [LanguageInfo(id=lang.get("id"), name=lang.get("name")) for lang in languages_data]
+                value = [LanguageInfo(id=lang.get("id"), name=lang.get("name")) for lang in languages_data]
+                self._cache.set(key, value, ttl=3600)
+                return value
             # Enhanced diagnostics
             raise Exception(
                 "Failed to fetch languages: "
@@ -75,7 +86,13 @@ class Judge0Service:
     
     async def get_statuses(self) -> List[Judge0Status]:
         """Statuses."""
-        async with httpx.AsyncClient() as client:
+        key = "judge0:statuses"
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
                 f"{self.base_url}/statuses",
                 headers=self.headers
@@ -85,8 +102,10 @@ class Judge0Service:
                     statuses_data = response.json()
                 except Exception as e:
                     raise Exception(f"Failed to parse statuses JSON: {e} body={response.text[:200]}")
-                return [Judge0Status(id=status.get("id"), description=status.get("description"))
+                value = [Judge0Status(id=status.get("id"), description=status.get("description"))
                         for status in statuses_data]
+                self._cache.set(key, value, ttl=3600)
+                return value
             raise Exception(
                 "Failed to fetch statuses: "
                 f"{response.status_code} body={response.text[:300]}"
@@ -99,7 +118,9 @@ class Judge0Service:
             stdin=submission.stdin
         )
         
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=30, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.post(
                 f"{self.base_url}/submissions?base64_encoded=false&wait=false",
                 headers=self.headers,
@@ -129,7 +150,9 @@ class Judge0Service:
             stdin=submission.stdin,
             expected_output=submission.expected_output if submission.expected_output else None,
         )
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=45, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.post(
                 f"{self.base_url}/submissions?base64_encoded=false&wait=true&fields={fields}",
                 headers=self.headers,
@@ -192,7 +215,9 @@ class Judge0Service:
     
     async def get_submission_result(self, token: str) -> Judge0ExecutionResult:
         #Result by token.
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
                 f"{self.base_url}/submissions/{token}?base64_encoded=false",
                 headers=self.headers
@@ -243,7 +268,9 @@ class Judge0Service:
         """
         token = (await self.submit_code(submission)).token
         start = time.time()
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=30, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             while True:
                 response = await client.get(
                     f"{self.base_url}/submissions/{token}",

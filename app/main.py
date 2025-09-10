@@ -35,7 +35,7 @@ def _split_env_csv(name: str, default: str = ""):
 
 _FRONTEND_ORIGINS = _split_env_csv(
     "ALLOW_ORIGINS",
-    "http://localhost:5173",
+    "http://localhost:5173,http://localhost:3000",
 )
 
 app.add_middleware(
@@ -62,6 +62,17 @@ async def request_id_middleware(request: Request, call_next):  # type: ignore[ov
 	response.headers["X-Request-Id"] = req_id
 	logger.info("request.end", extra={"request_id": req_id, "path": request.url.path, "status_code": response.status_code})
 	return response
+
+# Tiny request timing middleware for quick visibility
+@app.middleware("http")
+async def timing_middleware(request: Request, call_next):  # type: ignore[override]
+    from time import perf_counter
+    t0 = perf_counter()
+    resp = await call_next(request)
+    dt = int((perf_counter() - t0) * 1000)
+    # Print once per request to spot 30s stalls
+    print(f"{request.method} {request.url.path} {dt}ms {resp.status_code}")
+    return resp
 _START_TIME = datetime.now(timezone.utc)
 _settings = get_settings()
 
@@ -80,11 +91,6 @@ app.include_router(dashboard_router, dependencies=protected_deps)
 app.include_router(lecturer_router, dependencies=protected_deps)
 
 # Newly added feature routers
-try:
-    from app.features.weeks.endpoints import router as weeks_router
-    app.include_router(weeks_router, dependencies=protected_deps)
-except Exception:
-    pass
 try:
     from app.features.submissions.endpoints import router as submissions_router
     app.include_router(submissions_router, dependencies=protected_deps)
@@ -109,47 +115,51 @@ async def root():
 
 @app.get("/healthz", tags=["meta"], summary="Liveness / readiness probe")
 async def healthz() -> Dict[str, Any]:
-	"""Vitals with lightweight DB ping."""
-	now = datetime.now(timezone.utc)
-	uptime_seconds = (now - _START_TIME).total_seconds()
+    """Vitals with lightweight DB ping."""
+    now = datetime.now(timezone.utc)
+    uptime_seconds = (now - _START_TIME).total_seconds()
 
-	# Database check (only "ok" if query succeeds)
-	db_status: str = "unknown"
-	db_latency_ms: float | None = None
-	try:
-		import time
-		from app.DB.session import engine  
-		start = time.perf_counter()
-		with engine.connect() as conn:
-			conn.execute(text("SELECT 1"))
-		db_latency_ms = round((time.perf_counter() - start) * 1000, 2)
-		db_status = "ok"
-	except SQLAlchemyError as e:
-		db_status = f"error:{type(e).__name__}"
-	except Exception as e: 
-		db_status = f"error:{type(e).__name__}"
+    db_status: str = "unknown"
+    db_latency_ms: float | None = None
 
-	judge0_ready = bool(getattr(_settings, "judge0_api_url", None))
+    try:
+        import time
+        from app.DB.session import engine
+        start = time.perf_counter()
+        # AUTOCOMMIT isolation for a 1-row ping
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("SELECT 1"))
+        db_latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        db_status = "ok"
+    except SQLAlchemyError as e:
+        db_status = f"error:{type(e).__name__}"
+    except Exception as e:
+        db_status = f"error:{type(e).__name__}"
 
-	route_count = len(app.routes)
-	tags = sorted({t for r in app.routes for t in getattr(r, 'tags', [])})
+    judge0_ready = bool(getattr(_settings, "judge0_api_url", None))
+    route_count = len(app.routes)
+    tags = sorted({t for r in app.routes for t in getattr(r, "tags", [])})
 
-	return {
-		"status": "ok" if db_status == "ok" else "degraded",
-		"time_utc": now.isoformat(),
-		"uptime_seconds": round(uptime_seconds, 2),
-		"version": os.getenv("APP_VERSION", "dev"),
-		"environment": "debug" if _settings.debug else "prod",
-		"components": {
-			"database": ( {"status": db_status, "latency_ms": db_latency_ms} if db_status == "ok" else {"status": db_status} ),
-			"judge0": "configured" if judge0_ready else "missing-config",
-		},
-		"counts": {
-			"routes": route_count,
-			"models": 0,
-		},
-		"tags": tags,
-	}
+    return {
+        "status": "ok" if db_status == "ok" else "degraded",
+        "time_utc": now.isoformat(),
+        "uptime_seconds": round(uptime_seconds, 2),
+        "version": os.getenv("APP_VERSION", "dev"),
+        "environment": "debug" if _settings.debug else "prod",
+        "components": {
+            "database": (
+                {"status": db_status, "latency_ms": db_latency_ms}
+                if db_status == "ok"
+                else {"status": db_status}
+            ),
+            "judge0": "configured" if judge0_ready else "missing-config",
+        },
+        "counts": {
+            "routes": route_count,
+            "models": 0,
+        },
+        "tags": tags,
+    }
 
 
 @app.get("/favicon.ico", include_in_schema=False)

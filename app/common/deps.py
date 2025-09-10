@@ -45,10 +45,17 @@ async def get_current_user(
       3. Return typed minimal identity object
       4. Log request with X-Request-Id if provided
     """
+    import asyncio, os, time
     client = await get_supabase()
     token = credentials.credentials
     try:
-        auth_user = await client.auth.get_user(token)
+        # Clamp whoami to avoid 30s stalls
+        t0 = time.perf_counter()
+        whoami_timeout = float(os.getenv("AUTH_WHOAMI_TIMEOUT", "5"))
+        auth_user = await asyncio.wait_for(client.auth.get_user(token), timeout=whoami_timeout)
+        ms = int((time.perf_counter() - t0) * 1000)
+        if ms > 50:
+            logger.info("auth.get_user_ms=%d", ms)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials") from exc
 
@@ -60,11 +67,11 @@ async def get_current_user(
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User email missing in token")
 
-    # Ensure local provisioning (idempotent)
+    # Ensure local provisioning (idempotent) and avoid a second fetch
+    t1 = time.perf_counter()
     db_user = await ensure_user_provisioned(sup_user.id, email, (sup_user.user_metadata or {}).get("full_name"))
-    # Re-fetch typed (optional improvement) or build minimal identity
-    typed = await get_profile_by_supabase_id(sup_user.id)
-    role = (typed.get("role") if typed else db_user.get("role")) or "student"
+    t2 = time.perf_counter()
+    role = (db_user.get("role") if isinstance(db_user, dict) else None) or "student"
 
     current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
 
@@ -80,6 +87,11 @@ async def get_current_user(
         request_id,
         request.url.path,
     )
+    # Span timings for hot path (whoami/provision)
+    try:
+        logger.info("auth_spans_ms whoami=%s provision=%s", None, int((t2 - t1) * 1000))
+    except Exception:
+        pass
     return current
 
 
@@ -103,10 +115,9 @@ async def get_current_user_from_cookie(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: missing subject")
 
     try:
-        # Ensure local provisioning (idempotent)
+        # Ensure local provisioning (idempotent) and avoid redundant fetch
         db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
-        typed = await get_profile_by_supabase_id(user_id)
-        role = (typed.get("role") if typed else db_user.get("role")) or "student"
+        role = (db_user.get("role") if isinstance(db_user, dict) else None) or "student"
 
         current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
         # Cache for downstream dependencies / endpoints
@@ -164,10 +175,9 @@ async def get_current_user_with_refresh(
             # Log but don't fail the request - use existing token
             logger.warning(f"Failed to auto-refresh token for user {user_id}: {e}")
 
-    # Ensure local provisioning (idempotent)
+    # Ensure local provisioning (idempotent) and avoid redundant fetch
     db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
-    typed = await get_profile_by_supabase_id(user_id)
-    role = (typed.get("role") if typed else db_user.get("role")) or "student"
+    role = (db_user.get("role") if isinstance(db_user, dict) else None) or "student"
 
     current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
 

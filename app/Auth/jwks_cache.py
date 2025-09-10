@@ -15,7 +15,10 @@ class JWKSCache:
     async def get(self) -> dict:
         now = time.time()
         if self._jwks is None or (now - self._fetched_at) > self.ttl:
-            async with httpx.AsyncClient(timeout=10) as client:
+            # Clamp timeouts and pool to avoid 30s stalls
+            timeout = httpx.Timeout(connect=3, read=5, write=5, pool=5)
+            limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+            async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
                 headers = {}
                 if _settings.supabase_anon_key:
                     headers = {

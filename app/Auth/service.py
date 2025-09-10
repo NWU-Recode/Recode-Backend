@@ -55,7 +55,9 @@ async def supabase_sign_up(email: str, password: str, full_name: str | None = No
         meta["full_name"] = full_name
     if meta:
         payload["data"] = meta  # becomes raw_user_meta_data
-    async with httpx.AsyncClient(timeout=15) as client:
+    timeout = httpx.Timeout(connect=3, read=5, write=5, pool=5)
+    limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+    async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
         r = await client.post(
             f"{AUTH_BASE}/signup",
             headers=_json_headers(),
@@ -86,7 +88,9 @@ async def supabase_sign_up(email: str, password: str, full_name: str | None = No
 async def supabase_password_grant(email: str, password: str) -> TokenPair:
     payload = {"email": email.strip().lower(), "password": password}
     url = f"{AUTH_BASE}/token?grant_type=password"
-    async with httpx.AsyncClient(timeout=15) as client:
+    timeout = httpx.Timeout(connect=3, read=5, write=5, pool=5)
+    limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+    async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
         r = await client.post(url, headers=_json_headers(), json=payload)
 
     if r.status_code != 200:
@@ -135,7 +139,9 @@ async def supabase_refresh(refresh_token: str) -> TokenPair:
     
     payload = {"refresh_token": refresh_token}
     url = f"{AUTH_BASE}/token?grant_type=refresh_token"
-    async with httpx.AsyncClient(timeout=15) as client:
+    timeout = httpx.Timeout(connect=3, read=5, write=5, pool=5)
+    limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+    async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
         r = await client.post(url, headers=_json_headers(), json=payload)
 
     if r.status_code != 200:

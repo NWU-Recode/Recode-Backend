@@ -2,17 +2,31 @@ from __future__ import annotations
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 from app.DB.supabase import get_supabase
+from app.common import cache
 
 class ChallengeRepository:
     async def get_challenge(self, challenge_id: str) -> Optional[Dict[str, Any]]:
+        key = f"challenge:id:{challenge_id}"
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
         client = await get_supabase()
         resp = client.table("challenges").select("*").eq("id", challenge_id).single().execute()
-        return resp.data or None
+        data = resp.data or None
+        if data is not None:
+            cache.set(key, data)
+        return data
 
     async def get_challenge_questions(self, challenge_id: str) -> List[Dict[str, Any]]:
+        key = f"challenge:{challenge_id}:questions"
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
         client = await get_supabase()
         resp = client.table("questions").select("*").eq("challenge_id", challenge_id).execute()
-        return resp.data or []
+        data = resp.data or []
+        cache.set(key, data)
+        return data
 
     async def get_open_attempt(self, challenge_id: str, student_number: int) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
@@ -91,9 +105,15 @@ class ChallengeRepository:
         return existing
 
     async def list_challenges(self) -> List[Dict[str, Any]]:
+        key = "challenge:list"
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
         client = await get_supabase()
         resp = client.table("challenges").select("*").order("sequence_index").execute()
-        return resp.data or []
+        data = resp.data or []
+        cache.set(key, data)
+        return data
 
     async def list_user_attempts(self, student_number: int) -> List[Dict[str, Any]]:
         client = await get_supabase()
