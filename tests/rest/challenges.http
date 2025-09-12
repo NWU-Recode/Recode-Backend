@@ -1,0 +1,102 @@
+@baseUrl = http://localhost:8000
+@json = application/json
+
+# Lecturer Login
+POST {{baseUrl}}/auth/login
+Content-Type: {{json}}
+
+{
+  "email": "{{LECTURER_EMAIL}}",
+  "password": "{{LECTURER_PASSWORD}}"
+}
+
+> {% client.global.set("LECTURER_TOKEN", response.body.access_token); %}
+
+
+# Student Login
+POST {{baseUrl}}/auth/login
+Content-Type: {{json}}
+
+{
+  "email": "{{STUDENT_EMAIL}}",
+  "password": "{{STUDENT_PASSWORD}}"
+}
+
+> {% client.global.set("STUDENT_TOKEN", response.body.access_token); %}
+
+
+# Create Week Challenges (lecturer)
+POST {{baseUrl}}/challenges/create
+Authorization: Bearer {{LECTURER_TOKEN}}
+Content-Type: {{json}}
+
+{
+  "slides_url": "supabase://slides-bucket/2025S2/w01/variables-loops/1751875200-Week1_Variables_Loops.pptx",
+  "force": false
+}
+
+###
+
+# Or explicit week create (lecturer)
+POST {{baseUrl}}/challenges/1/create
+Authorization: Bearer {{LECTURER_TOKEN}}
+Content-Type: {{json}}
+
+{
+  "slides_url": "supabase://slides-bucket/2025S2/w01/variables-loops/1751875200-Week1_Variables_Loops.pptx",
+  "force": false
+}
+
+###
+
+# Publish Week 1 (lecturer)
+POST {{baseUrl}}/challenges/publish/1
+Authorization: Bearer {{LECTURER_TOKEN}}
+
+###
+
+# Semester Overview (student)
+GET {{baseUrl}}/challenges/semester/overview
+Authorization: Bearer {{STUDENT_TOKEN}}
+
+###
+
+# Get Attempt Snapshot for Plain Challenge (student)
+# Replace the id when known (from Supabase or generation response)
+@PLAIN_CHALLENGE_ID = 00000000-0000-0000-0000-000000000000
+GET {{baseUrl}}/challenges/{{PLAIN_CHALLENGE_ID}}/attempt
+Authorization: Bearer {{STUDENT_TOKEN}}
+
+###
+
+# Submit Plain Challenge (student)
+POST {{baseUrl}}/challenges/{{PLAIN_CHALLENGE_ID}}/submit
+Authorization: Bearer {{STUDENT_TOKEN}}
+
+###
+
+# Submit Plain Challenge with code for missing questions (student)
+POST {{baseUrl}}/challenges/{{PLAIN_CHALLENGE_ID}}/submit
+Authorization: Bearer {{STUDENT_TOKEN}}
+Content-Type: {{json}}
+
+{
+  "items": [
+    {
+      "question_id": "00000000-0000-0000-0000-000000000000",
+      "source_code": "print('hello')",
+      "stdin": ""
+    }
+  ]
+}
+
+###
+
+# Ruby/Emerald attempt and submit (student)
+@SPECIAL_CHALLENGE_ID = 00000000-0000-0000-0000-000000000000
+GET {{baseUrl}}/challenges/{{SPECIAL_CHALLENGE_ID}}/attempt
+Authorization: Bearer {{STUDENT_TOKEN}}
+
+POST {{baseUrl}}/challenges/{{SPECIAL_CHALLENGE_ID}}/submit
+Authorization: Bearer {{STUDENT_TOKEN}}
+

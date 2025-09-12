@@ -12,7 +12,7 @@ class TopicDTO(BaseModel):
 class ChallengeKind(str, Enum):
     common = "common"
     ruby = "ruby"
-    platinum = "platinum"
+    emerald = "emerald"
     diamond = "diamond"
 
 class ChallengeStatus(str, Enum):
@@ -33,7 +33,7 @@ class QuestionDifficulty(str, Enum):
     silver = "silver"
     gold = "gold"
     ruby = "ruby"
-    platinum = "platinum"
+    emerald = "emerald"
     diamond = "diamond"
 
 class QuestionDTO(BaseModel):
@@ -84,7 +84,7 @@ class BadgeType(str, Enum):
     silver = "silver"
     gold = "gold"
     ruby = "ruby"
-    platinum = "platinum"
+    emerald = "emerald"
     diamond = "diamond"
 
 class BadgeAwardDTO(BaseModel):

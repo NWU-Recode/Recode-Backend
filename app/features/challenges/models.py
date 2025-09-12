@@ -15,7 +15,7 @@ class ChallengeTier(enum.Enum):
 class ChallengeKind(enum.Enum):
     common = "common"
     ruby = "ruby"
-    platinum = "platinum"
+    emerald = "emerald"
     diamond = "diamond"
 
 class ChallengeStatus(enum.Enum):

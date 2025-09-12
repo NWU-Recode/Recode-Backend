@@ -38,7 +38,7 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_topic_week'), ['week'], unique=False)
 
     # Challenge enums (kind, status)
-    challengekind = sa.Enum('common', 'ruby', 'platinum', 'diamond', name='challengekind')
+    challengekind = sa.Enum('common', 'ruby', 'emerald', 'diamond', name='challengekind')
     challengestatus = sa.Enum('draft', 'published', name='challengestatus')
     challengekind.create(bind, checkfirst=True)
     challengestatus.create(bind, checkfirst=True)
@@ -62,7 +62,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    challengekind = sa.Enum('common', 'ruby', 'platinum', 'diamond', name='challengekind')
+    challengekind = sa.Enum('common', 'ruby', 'emerald', 'diamond', name='challengekind')
     challengestatus = sa.Enum('draft', 'published', name='challengestatus')
 
     # Revert questions

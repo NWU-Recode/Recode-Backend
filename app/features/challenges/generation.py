@@ -59,9 +59,9 @@ class ChallengeGenerator:
         elif kind == "ruby":
             slug = f"w{self.week:02d}-ruby"
             title = f"Week {self.week} - Ruby"
-        elif kind == "platinum":
-            slug = f"w{self.week:02d}-platinum"
-            title = f"Week {self.week} - Platinum"
+        elif kind == "emerald":
+            slug = f"w{self.week:02d}-emerald"
+            title = f"Week {self.week} - emerald"
         elif kind == "diamond":
             slug = "diamond-final"
             title = "Diamond - Final Capstone"
@@ -85,17 +85,17 @@ class ChallengeGenerator:
         return resp.data[0]
 
     def _make_common_specs(self) -> List[Tuple[str, int]]:
-        # (tier, points)
-        return [("bronze", 10), ("bronze", 10), ("bronze", 10), ("silver", 20), ("gold", 30)]
+        # Enforce 5 questions: 2 bronze, 2 silver, 1 gold
+        return [("bronze", 10), ("bronze", 10), ("silver", 20), ("silver", 20), ("gold", 30)]
 
     def _make_single_spec(self, kind: str) -> Tuple[str, int]:
-        mapping = {"ruby": ("ruby", 40), "platinum": ("platinum", 60), "diamond": ("diamond", 100)}
+        mapping = {"ruby": ("ruby", 40), "emerald": ("emerald", 60), "diamond": ("diamond", 100)}
         return mapping.get(kind, ("bronze", 10))
 
-    async def _create_question(self, challenge_id: str, tier: str, points: int, kind: str) -> Dict[str, Any]:
+    async def _create_question(self, challenge_id: str, tier: str, points: int, kind: str, topic: Dict[str, Any]) -> Dict[str, Any]:
         # Prefer AI-generated spec; fallback to static template
         try:
-            tpl = await generate_question_spec(slide_texts=None, week=self.week, topic=None, kind=kind, tier=tier)
+            tpl = await generate_question_spec(slide_texts=None, week=self.week, topic=topic, kind=kind, tier=tier)
         except Exception:
             tpl = template_reverse_string()
         language_id = tpl.get("language_id", 28)
@@ -140,27 +140,27 @@ class ChallengeGenerator:
 
     async def generate(self) -> Dict[str, Any]:
         topic = await self._ensure_topic()
-        created: Dict[str, Optional[Dict[str, Any]]] = {"common": None, "ruby": None, "platinum": None}
+        created: Dict[str, Optional[Dict[str, Any]]] = {"common": None, "ruby": None, "emerald": None}
 
         # Common (always)
         common = await self._create_challenge("common", topic)
         for tier, pts in self._make_common_specs():
-            await self._create_question(str(common["id"]), tier=tier, points=pts, kind="common")
+            await self._create_question(str(common["id"]), tier=tier, points=pts, kind="common", topic=topic)
         created["common"] = {"challenge_id": str(common["id"]) }
 
         # Ruby every 2nd week
         if self.week % 2 == 0:
             ruby = await self._create_challenge("ruby", topic)
             t, pts = self._make_single_spec("ruby")
-            await self._create_question(str(ruby["id"]), tier=t, points=pts, kind="ruby")
+            await self._create_question(str(ruby["id"]), tier=t, points=pts, kind="ruby", topic=topic)
             created["ruby"] = {"challenge_id": str(ruby["id"]) }
 
-        # Platinum every 4th week
+        # emerald every 4th week
         if self.week % 4 == 0:
-            plat = await self._create_challenge("platinum", topic)
-            t, pts = self._make_single_spec("platinum")
-            await self._create_question(str(plat["id"]), tier=t, points=pts, kind="platinum")
-            created["platinum"] = {"challenge_id": str(plat["id"]) }
+            plat = await self._create_challenge("emerald", topic)
+            t, pts = self._make_single_spec("emerald")
+            await self._create_question(str(plat["id"]), tier=t, points=pts, kind="emerald", topic=topic)
+            created["emerald"] = {"challenge_id": str(plat["id"]) }
 
         return {
             "week": self.week,
