@@ -63,7 +63,7 @@ class Judge0Service:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
@@ -90,7 +90,7 @@ class Judge0Service:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
@@ -118,7 +118,7 @@ class Judge0Service:
             stdin=submission.stdin
         )
         
-        timeout = httpx.Timeout(connect=3, read=30, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.post(
@@ -150,7 +150,7 @@ class Judge0Service:
             stdin=submission.stdin,
             expected_output=submission.expected_output if submission.expected_output else None,
         )
-        timeout = httpx.Timeout(connect=3, read=45, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.post(
@@ -215,7 +215,7 @@ class Judge0Service:
     
     async def get_submission_result(self, token: str) -> Judge0ExecutionResult:
         #Result by token.
-        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
@@ -268,7 +268,7 @@ class Judge0Service:
         """
         token = (await self.submit_code(submission)).token
         start = time.time()
-        timeout = httpx.Timeout(connect=3, read=30, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             while True:
@@ -319,7 +319,9 @@ class Judge0Service:
                 ).model_dump(exclude_none=True) for s in submissions
             ]
         }
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             resp = await client.post(
                 f"{self.base_url}/submissions/batch?base64_encoded=false&wait=false",
                 headers=self.headers,
@@ -351,7 +353,9 @@ class Judge0Service:
             return {}
         # Judge0 expects comma separated tokens
         token_param = ",".join(tokens)
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             resp = await client.get(
                 f"{self.base_url}/submissions/batch?tokens={token_param}&base64_encoded=false",
                 headers=self.headers,
@@ -398,7 +402,9 @@ class Judge0Service:
         judge0_response = await self.submit_code(submission)
         token = judge0_response.token
 
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             while True:
                 response = await client.get(
                     f"{self.base_url}/submissions/{token}",

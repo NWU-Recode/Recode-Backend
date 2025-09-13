@@ -5,6 +5,7 @@ fastapi==0.116.1
 starlette==0.47.2
 uvicorn[standard]==0.35.0
 httpx==0.28.1
+asyncpg==0.29.0
 python-multipart==0.0.20
 pydantic==2.11.7
 pydantic_core==2.33.2

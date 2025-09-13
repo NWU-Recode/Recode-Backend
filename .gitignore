@@ -126,6 +126,9 @@ credentials.json
 # Dev token storage (never commit)
 .dev_refresh_token.json
 
+# Local AI agent guidance (do not commit the live file)
+.github/copilot-instructions.md
+
 # Redis dump
 dump.rdb
 

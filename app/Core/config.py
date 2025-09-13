@@ -21,9 +21,16 @@ class Settings:
         )
         self.supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET") or None
         self.database_url = os.getenv("DATABASE_URL", "")
-        self.judge0_api_url = os.getenv("JUDGE0_BASE_URL", "")
-        self.judge0_api_key = os.getenv("JUDGE0_KEY", "")
-        self.judge0_host = os.getenv("JUDGE0_HOST", "")
+        # Direct Postgres for polling Judge0 sync results (optional)
+        self.supabase_db_url = os.getenv("SUPABASE_DB_URL", "")
+        # Judge0 configuration: prefer explicit URL used for EC2-hosted Judge0
+        self.judge0_api_url = os.getenv("JUDGE0_URL") or os.getenv("JUDGE0_BASE_URL", "")
+        self.judge0_api_key = os.getenv("JUDGE0_KEY", "")  # optional (RapidAPI legacy)
+        self.judge0_host = os.getenv("JUDGE0_HOST", "")    # optional (RapidAPI legacy)
+        try:
+            self.judge0_timeout_s = float(os.getenv("JUDGE0_TIMEOUT", "30"))
+        except Exception:
+            self.judge0_timeout_s = 30.0
         # Hugging Face / AI generation
         self.hf_api_token = os.getenv("HUGGINGFACE_API_TOKEN", "")
         self.hf_model_id = os.getenv("HF_MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
