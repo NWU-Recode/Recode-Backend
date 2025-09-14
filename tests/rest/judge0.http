@@ -1,0 +1,103 @@
+POST http://localhost:8000/auth/login
+Content-Type: application/json
+
+{
+  "email": "recodeproject0@gmail.com",
+  "password": "SecretPassword123!"
+}
+
+###
+
+# Paste your backend auth token below for protected endpoints
+# Authorization: Bearer PASTE_AUTH_TOKEN_HERE
+
+###
+
+# ---- Health / metadata ----
+GET http://localhost:8000/judge0/test
+
+###
+
+GET http://localhost:8000/judge0/languages
+
+###
+
+GET http://localhost:8000/judge0/statuses
+
+###
+
+# ---- Simple execute variants ----
+# 1) Quick stdout only (for Run button)
+POST http://localhost:8000/judge0/run
+Content-Type: application/json
+
+{
+  "source_code": "print('hello')",
+  "language_id": 71,
+  "stdin": ""
+}
+
+###
+
+# 2) Waited normalized result with optional expected_output
+POST http://localhost:8000/judge0/execute
+Content-Type: application/json
+
+{
+  "source_code": "print('5')",
+  "language_id": 71,
+  "stdin": "",
+  "expected_output": "5\n"
+}
+
+###
+
+# 3) Batch execute (two snippets)
+POST http://localhost:8000/judge0/execute/batch
+Content-Type: application/json
+
+[
+  {"source_code": "print('A')", "language_id": 71},
+  {"source_code": "print('B')", "language_id": 71}
+]
+
+###
+
+# ---- Async submit then poll Supabase (requires EC2 sync writing to submissions) ----
+POST http://localhost:8000/judge0/submit/poll
+Content-Type: application/json
+
+{
+  "source_code": "print('poll')",
+  "language_id": 71,
+  "stdin": ""
+}
+
+###
+
+# ---- Protected submit (returns token only; no DB write) ----
+POST http://localhost:8000/judge0/submit/full
+Authorization: Bearer PASTE_AUTH_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "source_code": "print('token')",
+  "language_id": 71,
+  "stdin": ""
+}
+
+###
+
+# Fetch result by token (direct from Judge0, no DB write)
+GET http://localhost:8000/judge0/result/PASTE_JUDGE0_TOKEN_HERE
+Authorization: Bearer PASTE_AUTH_TOKEN_HERE
+
+###
+
+# ---- Run against a question’s tests ----
+POST http://localhost:8000/judge0/questions/PASTE_QUESTION_ID_HERE/run-tests
+Content-Type: application/json
+
+{
+  "source_code": "print('hello')"
+}

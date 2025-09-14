@@ -1,7 +1,7 @@
 @baseUrl = http://localhost:8000
 @json = application/json
 
-# Lecturer Login
+# ---- Auth ----
 POST {{baseUrl}}/auth/login
 Content-Type: {{json}}
 
@@ -12,8 +12,8 @@ Content-Type: {{json}}
 
 > {% client.global.set("LECTURER_TOKEN", response.body.access_token); %}
 
+###
 
-# Student Login
 POST {{baseUrl}}/auth/login
 Content-Type: {{json}}
 
@@ -24,8 +24,9 @@ Content-Type: {{json}}
 
 > {% client.global.set("STUDENT_TOKEN", response.body.access_token); %}
 
+###
 
-# Create Week Challenges (lecturer)
+# ---- Create weekly challenges from slides (lecturer) ----
 POST {{baseUrl}}/challenges/create
 Authorization: Bearer {{LECTURER_TOKEN}}
 Content-Type: {{json}}
@@ -37,7 +38,7 @@ Content-Type: {{json}}
 
 ###
 
-# Or explicit week create (lecturer)
+# Explicit week create
 POST {{baseUrl}}/challenges/1/create
 Authorization: Bearer {{LECTURER_TOKEN}}
 Content-Type: {{json}}
@@ -49,33 +50,32 @@ Content-Type: {{json}}
 
 ###
 
-# Publish Week 1 (lecturer)
+# ---- Publish (lecturer) ----
 POST {{baseUrl}}/challenges/publish/1
 Authorization: Bearer {{LECTURER_TOKEN}}
 
 ###
 
-# Semester Overview (student)
+# ---- Semester overview (student) ----
 GET {{baseUrl}}/challenges/semester/overview
 Authorization: Bearer {{STUDENT_TOKEN}}
 
 ###
 
-# Get Attempt Snapshot for Plain Challenge (student)
-# Replace the id when known (from Supabase or generation response)
+# ---- Attempt & Submit (student) ----
 @PLAIN_CHALLENGE_ID = 00000000-0000-0000-0000-000000000000
+
 GET {{baseUrl}}/challenges/{{PLAIN_CHALLENGE_ID}}/attempt
 Authorization: Bearer {{STUDENT_TOKEN}}
 
 ###
 
-# Submit Plain Challenge (student)
 POST {{baseUrl}}/challenges/{{PLAIN_CHALLENGE_ID}}/submit
 Authorization: Bearer {{STUDENT_TOKEN}}
 
 ###
 
-# Submit Plain Challenge with code for missing questions (student)
+# Submit with code for missing questions
 POST {{baseUrl}}/challenges/{{PLAIN_CHALLENGE_ID}}/submit
 Authorization: Bearer {{STUDENT_TOKEN}}
 Content-Type: {{json}}
@@ -92,10 +92,12 @@ Content-Type: {{json}}
 
 ###
 
-# Ruby/Emerald attempt and submit (student)
+# ---- Special (ruby/emerald) single-question challenge ----
 @SPECIAL_CHALLENGE_ID = 00000000-0000-0000-0000-000000000000
 GET {{baseUrl}}/challenges/{{SPECIAL_CHALLENGE_ID}}/attempt
 Authorization: Bearer {{STUDENT_TOKEN}}
+
+###
 
 POST {{baseUrl}}/challenges/{{SPECIAL_CHALLENGE_ID}}/submit
 Authorization: Bearer {{STUDENT_TOKEN}}

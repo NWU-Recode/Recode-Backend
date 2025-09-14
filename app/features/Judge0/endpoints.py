@@ -4,7 +4,7 @@ from typing import List
 
 from app.common.deps import get_current_user, CurrentUser  
 
-from .schemas import (
+from app.features.judge0.schemas import (
     CodeSubmissionCreate,
     CodeSubmissionResponse,
     CodeExecutionResult,
@@ -13,7 +13,7 @@ from .schemas import (
     Judge0SubmissionResponse,
     QuickCodeSubmission,
 )
-from .service import judge0_service
+from app.features.judge0.service import judge0_service
 from app.features.submissions.service import submission_service
 from app.features.topic_detections.repository import question_repository
 from app.adapters.judge0_client import run_many
@@ -21,7 +21,7 @@ from app.features.challenges.repository import challenge_repository
 from app.features.topic_detections.service import question_service
 from app.features.submissions.schemas import SubmissionCreate
 from app.Core.config import get_settings
-import asyncpg, ssl, asyncio
+import ssl, asyncio, time
 
 # Public router (no authentication required)
 public_router = APIRouter(prefix="/judge0", tags=["judge0-public"])
@@ -101,6 +101,18 @@ async def execute_stdout_only(submission: QuickCodeSubmission):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to execute: {str(e)}")
 
+@public_router.post("/execute/simple", summary="Execute with expected; returns stdout + success")
+async def execute_simple(submission: CodeSubmissionCreate):
+    try:
+        waited = await judge0_service.submit_code_wait(submission)
+        status_id = waited.status.get("id") if waited.status else None
+        success = judge0_service._compute_success(status_id, waited.stdout, submission.expected_output)  # type: ignore
+        return {"stdout": waited.stdout or "", "success": bool(success)}
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Execution timeout")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
+
 @public_router.post("/execute/batch", summary="Execute multiple submissions via batch API")
 async def execute_batch(submissions: List[CodeSubmissionCreate]):
     """Submit a batch and poll until all complete; returns list of {token, result}."""
@@ -116,8 +128,9 @@ async def execute_batch(submissions: List[CodeSubmissionCreate]):
 @public_router.post("/run", summary="Simple run; returns stdout only")
 async def run_stdout_only(submission: QuickCodeSubmission):
     try:
+        # Wait until Judge0 completes; no read timeout configured in service layer
         result = await judge0_service.execute_quick_code(submission)  # type: ignore
-        return {"stdout": result.stdout, "status_id": result.status_id, "time": result.execution_time, "memory": result.memory_used}
+        return {"stdout": result.stdout}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to run: {str(e)}")
 
@@ -148,7 +161,8 @@ async def run_question_tests(question_id: str, body: dict):
             {"language_id": language_id, "source": src, "stdin": t.get("input"), "expected": t.get("expected")}
             for t in tests
         ]
-        results = await run_many(items)
+        # No timeout for running tests like an IDE/LeetCode experience
+        results = await run_many(items, timeout_seconds=None)
         passed = sum(1 for r in results if r.get("success"))
         failed = len(results) - passed
         detailed = []
@@ -174,10 +188,10 @@ async def run_question_tests(question_id: str, body: dict):
 # -----------------------------
 # Submit then poll Supabase for result (sync service must be running on EC2)
 # -----------------------------
-_pg_pool: asyncpg.Pool | None = None
+_pg_pool = None  # lazy init; asyncpg imported on demand
 
 
-async def _get_pg_pool() -> asyncpg.Pool:
+async def _get_pg_pool():
     global _pg_pool
     if _pg_pool is not None:
         return _pg_pool
@@ -185,6 +199,10 @@ async def _get_pg_pool() -> asyncpg.Pool:
     dsn = settings.supabase_db_url or settings.database_url
     if not dsn:
         raise HTTPException(status_code=500, detail="SUPABASE_DB_URL not configured")
+    try:
+        import asyncpg  # type: ignore
+    except ImportError:
+        raise HTTPException(status_code=500, detail="asyncpg not installed. Run: pip install asyncpg")
     ctx = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
     ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED
