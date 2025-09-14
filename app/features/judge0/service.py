@@ -409,21 +409,53 @@ class Judge0Service:
         poll_interval: float = 1.0,
     ) -> List[tuple[str, CodeExecutionResult]]:
         """Submit a batch then poll until all finished; returns list aligned to original order."""
+        # Fast path: for small batches, prefer waited single-call executes to avoid batch API edge cases
+        if len(submissions) <= 8:
+            out: List[tuple[str, CodeExecutionResult]] = []
+            for sub in submissions:
+                tok, res = await self.execute_code_sync(sub)
+                out.append((tok, res))
+            return out
+
         tokens = await self.submit_batch(submissions)
         pending = set(tokens)
         start = time.time()
         latest: Dict[str, CodeExecutionResult] = {}
         while pending and (timeout_seconds is None or time.time() - start < timeout_seconds):
-            batch = await self.get_batch_results(list(pending))
-            for tok, raw in batch.items():
-                status_id = raw.status.get("id") if raw.status else None
-                if status_id not in [1, 2]:
-                    # find corresponding submission for expected output & language
-                    idx = tokens.index(tok)
-                    sub = submissions[idx]
-                    latest[tok] = self._to_code_execution_result(raw, sub.expected_output, sub.language_id)
-                    pending.discard(tok)
+            # Try batch fetch first
+            try:
+                batch = await self.get_batch_results(list(pending))
+            except Exception:
+                batch = {}
+            progressed = False
+            if batch:
+                for tok, raw in batch.items():
+                    status_id = raw.status.get("id") if raw.status else None
+                    if status_id not in [1, 2]:
+                        idx = tokens.index(tok)
+                        sub = submissions[idx]
+                        latest[tok] = self._to_code_execution_result(raw, sub.expected_output, sub.language_id)
+                        if tok in pending:
+                            pending.discard(tok)
+                            progressed = True
+            # For any still pending, try individual GETs (some Judge0 builds respond better individually)
             if pending:
+                for tok in list(pending):
+                    try:
+                        raw = await self.get_submission_result(tok)
+                        status_id = raw.status.get("id") if raw.status else None
+                        if status_id not in [1, 2]:
+                            idx = tokens.index(tok)
+                            sub = submissions[idx]
+                            latest[tok] = self._to_code_execution_result(raw, sub.expected_output, sub.language_id)
+                            pending.discard(tok)
+                            progressed = True
+                    except Exception:
+                        # ignore transient errors and keep polling
+                        pass
+            if not pending:
+                break
+            if not progressed:
                 await asyncio.sleep(poll_interval)
         if pending and timeout_seconds is not None:
             raise TimeoutError("Batch execution timed out")

@@ -114,10 +114,10 @@ async def execute_simple(submission: CodeSubmissionCreate):
         raise HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
 
 @public_router.post("/execute/batch", summary="Execute multiple submissions via batch API")
-async def execute_batch(submissions: List[CodeSubmissionCreate]):
+async def execute_batch(submissions: List[CodeSubmissionCreate], timeout_s: int | None = 180):
     """Submit a batch and poll until all complete; returns list of {token, result}."""
     try:
-        batch = await judge0_service.execute_batch(submissions)  # type: ignore
+        batch = await judge0_service.execute_batch(submissions, timeout_seconds=timeout_s)  # type: ignore
         return [{"token": tok, "result": res} for tok, res in batch]
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Batch execution timeout")

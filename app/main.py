@@ -23,7 +23,6 @@ from app.features.challenges.endpoints import router as challenges_router
 from app.features.topic_detections.slide_extraction.endpoints import router as slide_extraction_router
 from app.features.slides.endpoints import router as slides_router
 from app.features.dashboard.endpoints import router as dashboard_router
-from app.features.lecturer.endpoints import router as lecturer_router
 from app.common.deps import get_current_user_from_cookie
 from app.common.middleware import SessionManagementMiddleware
 
@@ -88,7 +87,6 @@ app.include_router(slides_router, dependencies=protected_deps)
 app.include_router(questions_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
-app.include_router(lecturer_router, dependencies=protected_deps)
 
 # Newly added feature routers
 try:
