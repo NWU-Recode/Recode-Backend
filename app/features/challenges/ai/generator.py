@@ -16,8 +16,6 @@ def _load_template(kind: str) -> str:
         "ruby": "hf_ruby_template.txt",
         "emerald": "hf_emerald_template.txt",
         "diamond": "hf_diamond_template.txt",
-        # Map platinum to emerald-style (hard, integrated)
-        "platinum": "hf_emerald_template.txt",
     }.get(kind, "hf_week_template.txt")
     path = base_dir / fname
     try:
@@ -32,12 +30,19 @@ def _load_template(kind: str) -> str:
 
 def _build_prompt(slide_texts: List[str], week: int, topic: Dict[str, Any] | None, kind: str, tier: str) -> str:
     topic_title = (topic or {}).get("title") or (topic or {}).get("slug") or f"Week {week}"
+    topic_slug = (topic or {}).get("slug") or ""
+    detected_topic = (topic or {}).get("detected_topic") or ""
+    detected_subtopics = (topic or {}).get("detected_subtopics") or ""
     topics_list = topic_title
     if slide_texts:
         lines = [ln.strip() for ln in slide_texts if ln and ln.strip()]
         topics_list = ", ".join(lines[:6])[:400]
     base = _load_template(kind)
-    return base.replace("{{topics_list}}", topics_list)
+    prompt = base.replace("{{topics_list}}", topics_list)
+    prompt = prompt.replace("{{topic_slug}}", str(topic_slug))
+    prompt = prompt.replace("{{detected_topic}}", str(detected_topic))
+    prompt = prompt.replace("{{detected_subtopics}}", str(detected_subtopics))
+    return prompt
 
 
 async def generate_question_spec(

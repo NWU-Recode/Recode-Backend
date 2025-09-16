@@ -135,4 +135,15 @@ class QuestionRepository:
         resp = await client.table("question_tests").insert(rows).execute()
         return resp.data or []
 
+    async def list_tests(self, question_id: str) -> List[Dict[str, Any]]:
+        client = await get_supabase()
+        resp = await (
+            client.table("question_tests")
+            .select("id,input,expected,visibility,created_at")
+            .eq("question_id", question_id)
+            .order("created_at")
+            .execute()
+        )
+        return resp.data or []
+
 question_repository = QuestionRepository()

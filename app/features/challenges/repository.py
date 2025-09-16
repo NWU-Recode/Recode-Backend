@@ -197,4 +197,32 @@ class ChallengeRepository:
         resp = client.table("challenges").select("id").eq("tier", "plain").execute()
         return len(resp.data or [])
 
+    async def publish_for_week(self, week_number: int) -> Dict[str, int]:
+        """Set status='published' for all challenges inferred for a given week.
+
+        Heuristics:
+        - Matches slugs containing 'wNN-' or topic-derived slugs ending with '-common'.
+        - Updates common, ruby, emerald for that week if present.
+        """
+        client = await get_supabase()
+        # Match common via slug pattern and ruby/emerald by explicit wNN- prefix
+        week_tag = f"w{week_number:02d}"
+        updated = 0
+        # Fetch candidates
+        resp = client.table("challenges").select("id, slug, status").execute()
+        rows = resp.data or []
+        ids: list[str] = []
+        for r in rows:
+            slug = str(r.get("slug") or "")
+            if week_tag in slug:
+                ids.append(str(r.get("id")))
+        if not ids:
+            return {"updated": 0}
+        # Batch update
+        for cid in ids:
+            u = client.table("challenges").update({"status": "published"}).eq("id", cid).execute()
+            if u.data:
+                updated += 1
+        return {"updated": updated}
+
 challenge_repository = ChallengeRepository()

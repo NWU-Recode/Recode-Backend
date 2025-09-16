@@ -6,6 +6,7 @@ from .service import challenge_service
 from app.features.challenges.repository import challenge_repository
 from app.features.topic_detections.repository import question_repository 
 from app.features.challenges.generation import generate_week_challenges
+from app.features.challenges.semester_orchestrator import semester_orchestrator
 from app.features.slides.pathing import parse_week_topic_from_filename
 import re
 
@@ -78,8 +79,10 @@ class _GenerateReq:
 
 
 @router.post("/create")
-async def create_from_slides(req: dict = Body(...)):
+async def create_from_slides(req: dict = Body(...), current_user: CurrentUser = Depends(get_current_user)):
     try:
+        if getattr(current_user, "role", "student") != "lecturer":
+            raise HTTPException(status_code=403, detail={"error_code":"E_FORBIDDEN","message":"lecturer_only"})
         gr = _GenerateReq(slides_url=req.get("slides_url"), force=bool(req.get("force", False)))
         if not isinstance(gr.slides_url, str) or not gr.slides_url:
             raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"slides_url required"})
@@ -115,7 +118,9 @@ async def create_from_slides(req: dict = Body(...)):
 
 
 @router.post("/{week_number}/create")
-async def create_for_week(week_number: int, req: dict = Body(...)):
+async def create_for_week(week_number: int, req: dict = Body(...), current_user: CurrentUser = Depends(get_current_user)):
+    if getattr(current_user, "role", "student") != "lecturer":
+        raise HTTPException(status_code=403, detail={"error_code":"E_FORBIDDEN","message":"lecturer_only"})
     if week_number <= 0:
         raise HTTPException(status_code=400, detail={"error_code": "E_INVALID_WEEK", "message": "week must be > 0"})
     slides_url = req.get("slides_url")
@@ -126,7 +131,18 @@ async def create_for_week(week_number: int, req: dict = Body(...)):
 
 
 @router.post("/publish/{week_number}")
-async def publish_week_challenges(week_number: int):
+async def publish_week_challenges(week_number: int, current_user: CurrentUser = Depends(get_current_user)):
+    if getattr(current_user, "role", "student") != "lecturer":
+        raise HTTPException(status_code=403, detail={"error_code":"E_FORBIDDEN","message":"lecturer_only"})
     if week_number <= 0:
         raise HTTPException(status_code=400, detail={"error_code": "E_INVALID_WEEK", "message": "week must be > 0"})
-    return {"week": week_number, "status": "published"}
+    res = await challenge_repository.publish_for_week(week_number)
+    return {"week": week_number, "status": "published", "updated": res.get("updated", 0)}
+
+
+@router.get("/semester/overview")
+async def get_semester_overview(current_user: CurrentUser = Depends(get_current_user)):
+    try:
+        return await semester_orchestrator.get_release_overview(str(current_user.id))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"error_code":"E_UNKNOWN","message":str(e)})

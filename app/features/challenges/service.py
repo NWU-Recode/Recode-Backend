@@ -184,9 +184,9 @@ class WeeksOrchestrator:
         elif kind == "ruby":
             slug = f"w{self.week:02d}-ruby"
             title = f"Week {self.week} – Ruby"
-        elif kind == "platinum":
-            slug = f"w{self.week:02d}-platinum"
-            title = f"Week {self.week} – Platinum"
+        elif kind == "emerald":
+            slug = f"w{self.week:02d}-emerald"
+            title = f"Week {self.week} – emerald"
         elif kind == "diamond":
             slug = "diamond-final"
             title = "Diamond – Final Capstone"
@@ -215,7 +215,7 @@ class WeeksOrchestrator:
         return [("bronze", 10), ("bronze", 10), ("bronze", 10), ("silver", 20), ("gold", 30)]
 
     def _make_single_spec(self, kind: str) -> Tuple[str, int]:
-        mapping = {"ruby": ("ruby", 40), "platinum": ("platinum", 60), "diamond": ("diamond", 100)}
+        mapping = {"ruby": ("ruby", 40), "emerald": ("emerald", 60), "diamond": ("diamond", 100)}
         return mapping.get(kind, ("bronze", 10))
 
     async def _create_question_from_template(self, challenge_id: str, tier: str, points: int) -> Dict[str, Any]:
@@ -269,7 +269,7 @@ class WeeksOrchestrator:
 
     async def generate(self) -> Dict[str, Any]:
         topic = await self._ensure_topic()
-        created: Dict[str, Optional[Dict[str, Any]]] = {"common": None, "ruby": None, "platinum": None}
+        created: Dict[str, Optional[Dict[str, Any]]] = {"common": None, "ruby": None, "emerald": None}
 
         # Common (always)
         common = await self._create_challenge("common", topic)
@@ -285,12 +285,12 @@ class WeeksOrchestrator:
             await self._create_question_from_template(str(ruby["id"]), tier=t, points=pts)
             created["ruby"] = {"challenge_id": str(ruby["id"]) }
 
-        # Platinum every 4th week
+        # emerald every 4th week
         if self.week % 4 == 0:
-            plat = await self._create_challenge("platinum", topic)
-            t, pts = self._make_single_spec("platinum")
+            plat = await self._create_challenge("emerald", topic)
+            t, pts = self._make_single_spec("emerald")
             await self._create_question_from_template(str(plat["id"]), tier=t, points=pts)
-            created["platinum"] = {"challenge_id": str(plat["id"]) }
+            created["emerald"] = {"challenge_id": str(plat["id"]) }
 
         return {
             "week": self.week,

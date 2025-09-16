@@ -49,7 +49,8 @@ async def run_one(
 
 
 async def run_many(
-    items: List[Dict[str, Any]]
+    items: List[Dict[str, Any]],
+    timeout_seconds: Optional[float] = 60,
 ) -> List[Dict[str, Any]]:
     """Execute many snippets and return aligned list of result dicts.
 
@@ -63,7 +64,7 @@ async def run_many(
             stdin=it.get("stdin"),
             expected_output=_normalize_expected(it.get("expected")),
         ))
-    batch = await judge0_service.execute_batch(submissions)
+    batch = await judge0_service.execute_batch(submissions, timeout_seconds=timeout_seconds)
     out: List[Dict[str, Any]] = []
     for (token, res) in batch:
         out.append({

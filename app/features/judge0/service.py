@@ -33,6 +33,35 @@ class Judge0Service:
         # Simple in-memory caches for static metadata endpoints
         from app.common import cache as _cache
         self._cache = _cache
+        # Known archived/unsupported language ids on the EC2 Judge0 instance
+        self._archived_ids = {28}
+        self._python3_cache: Optional[int] = None
+
+    async def _resolve_python3_id(self) -> int:
+        if self._python3_cache is not None:
+            return self._python3_cache
+        try:
+            langs = await self.get_languages()
+            # Prefer a Python 3.x language
+            for lang in langs:
+                name = (lang.name or "").lower()
+                if name.startswith("python (3") or name.startswith("python 3"):
+                    self._python3_cache = int(lang.id)
+                    return self._python3_cache
+        except Exception:
+            pass
+        # Fallback to common Python 3 id on Judge0 CE
+        self._python3_cache = 71
+        return 71
+
+    async def _normalize_language_id(self, lang_id: Optional[int]) -> int:
+        try:
+            lid = int(lang_id) if lang_id is not None else 0
+        except Exception:
+            lid = 0
+        if lid in self._archived_ids or lid <= 0:
+            return await self._resolve_python3_id()
+        return lid
 
     @staticmethod
     def _compute_success(status_id: int | None, stdout: str | None, expected_output: str | None) -> bool:
@@ -63,7 +92,7 @@ class Judge0Service:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
@@ -90,7 +119,7 @@ class Judge0Service:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
@@ -112,13 +141,14 @@ class Judge0Service:
             )
     
     async def submit_code(self, submission: CodeSubmissionCreate) -> Judge0SubmissionResponse:
+        norm_lang = await self._normalize_language_id(submission.language_id)
         judge0_request = Judge0SubmissionRequest(
             source_code=submission.source_code,
-            language_id=submission.language_id,
+            language_id=norm_lang,
             stdin=submission.stdin
         )
         
-        timeout = httpx.Timeout(connect=3, read=30, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.post(
@@ -144,13 +174,14 @@ class Judge0Service:
 
         This is used for per-question instant submits to avoid polling overhead.
         """
+        norm_lang = await self._normalize_language_id(submission.language_id)
         judge0_request = Judge0SubmissionRequest(
             source_code=submission.source_code,
-            language_id=submission.language_id,
+            language_id=norm_lang,
             stdin=submission.stdin,
             expected_output=submission.expected_output if submission.expected_output else None,
         )
-        timeout = httpx.Timeout(connect=3, read=45, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=None, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.post(
@@ -215,7 +246,7 @@ class Judge0Service:
     
     async def get_submission_result(self, token: str) -> Judge0ExecutionResult:
         #Result by token.
-        timeout = httpx.Timeout(connect=3, read=10, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             response = await client.get(
@@ -268,7 +299,7 @@ class Judge0Service:
         """
         token = (await self.submit_code(submission)).token
         start = time.time()
-        timeout = httpx.Timeout(connect=3, read=30, write=5, pool=5)
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             while True:
@@ -309,17 +340,19 @@ class Judge0Service:
     # -------- Batch operations --------
     async def submit_batch(self, submissions: List[CodeSubmissionCreate]) -> List[str]:
         """Submit multiple code submissions at once (returns list of tokens in same order)."""
-        payload = {
-            "submissions": [
-                Judge0SubmissionRequest(
-                    source_code=s.source_code,
-                    language_id=s.language_id,
-                    stdin=s.stdin,
-                    expected_output=s.expected_output,
-                ).model_dump(exclude_none=True) for s in submissions
-            ]
-        }
-        async with httpx.AsyncClient() as client:
+        reqs: List[Dict[str, Any]] = []
+        for s in submissions:
+            norm_lang = await self._normalize_language_id(s.language_id)
+            reqs.append(Judge0SubmissionRequest(
+                source_code=s.source_code,
+                language_id=norm_lang,
+                stdin=s.stdin,
+                expected_output=s.expected_output,
+            ).model_dump(exclude_none=True))
+        payload = {"submissions": reqs}
+        timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             resp = await client.post(
                 f"{self.base_url}/submissions/batch?base64_encoded=false&wait=false",
                 headers=self.headers,
@@ -351,7 +384,9 @@ class Judge0Service:
             return {}
         # Judge0 expects comma separated tokens
         token_param = ",".join(tokens)
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=None, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             resp = await client.get(
                 f"{self.base_url}/submissions/batch?tokens={token_param}&base64_encoded=false",
                 headers=self.headers,
@@ -370,27 +405,59 @@ class Judge0Service:
     async def execute_batch(
         self,
         submissions: List[CodeSubmissionCreate],
-        timeout_seconds: int = 60,
+        timeout_seconds: Optional[float] = 60,
         poll_interval: float = 1.0,
     ) -> List[tuple[str, CodeExecutionResult]]:
         """Submit a batch then poll until all finished; returns list aligned to original order."""
+        # Fast path: for small batches, prefer waited single-call executes to avoid batch API edge cases
+        if len(submissions) <= 8:
+            out: List[tuple[str, CodeExecutionResult]] = []
+            for sub in submissions:
+                tok, res = await self.execute_code_sync(sub)
+                out.append((tok, res))
+            return out
+
         tokens = await self.submit_batch(submissions)
         pending = set(tokens)
         start = time.time()
         latest: Dict[str, CodeExecutionResult] = {}
-        while pending and time.time() - start < timeout_seconds:
-            batch = await self.get_batch_results(list(pending))
-            for tok, raw in batch.items():
-                status_id = raw.status.get("id") if raw.status else None
-                if status_id not in [1, 2]:
-                    # find corresponding submission for expected output & language
-                    idx = tokens.index(tok)
-                    sub = submissions[idx]
-                    latest[tok] = self._to_code_execution_result(raw, sub.expected_output, sub.language_id)
-                    pending.discard(tok)
+        while pending and (timeout_seconds is None or time.time() - start < timeout_seconds):
+            # Try batch fetch first
+            try:
+                batch = await self.get_batch_results(list(pending))
+            except Exception:
+                batch = {}
+            progressed = False
+            if batch:
+                for tok, raw in batch.items():
+                    status_id = raw.status.get("id") if raw.status else None
+                    if status_id not in [1, 2]:
+                        idx = tokens.index(tok)
+                        sub = submissions[idx]
+                        latest[tok] = self._to_code_execution_result(raw, sub.expected_output, sub.language_id)
+                        if tok in pending:
+                            pending.discard(tok)
+                            progressed = True
+            # For any still pending, try individual GETs (some Judge0 builds respond better individually)
             if pending:
+                for tok in list(pending):
+                    try:
+                        raw = await self.get_submission_result(tok)
+                        status_id = raw.status.get("id") if raw.status else None
+                        if status_id not in [1, 2]:
+                            idx = tokens.index(tok)
+                            sub = submissions[idx]
+                            latest[tok] = self._to_code_execution_result(raw, sub.expected_output, sub.language_id)
+                            pending.discard(tok)
+                            progressed = True
+                    except Exception:
+                        # ignore transient errors and keep polling
+                        pass
+            if not pending:
+                break
+            if not progressed:
                 await asyncio.sleep(poll_interval)
-        if pending:
+        if pending and timeout_seconds is not None:
             raise TimeoutError("Batch execution timed out")
         return [(tok, latest[tok]) for tok in tokens]
 
@@ -398,7 +465,9 @@ class Judge0Service:
         judge0_response = await self.submit_code(submission)
         token = judge0_response.token
 
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(connect=3, read=None, write=5, pool=5)
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             while True:
                 response = await client.get(
                     f"{self.base_url}/submissions/{token}",

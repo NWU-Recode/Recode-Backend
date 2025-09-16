@@ -9,7 +9,7 @@ class BadgeType(enum.Enum):
     silver = "silver"
     gold = "gold"
     ruby = "ruby"
-    platinum = "platinum"
+    emerald = "emerald"
     diamond = "diamond"
 
 class BadgeAward(Base):

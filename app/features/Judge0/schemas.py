@@ -51,6 +51,7 @@ class Judge0SubmissionResponse(BaseModel):
     token: str
 
 class Judge0ExecutionResult(BaseModel):
+    token: Optional[str] = None
     stdout: Optional[str] = None
     stderr: Optional[str] = None
     compile_output: Optional[str] = None
