@@ -35,19 +35,31 @@ class BadgeBatchAddResponse(BaseModel):
     badges: List[BadgeResponse]
 
 #for json schema for badge table
+
+
 class BadgeActionSchema(BaseModel):
     action_type: str  # like "submit challenges"
     count_required: int 
     description: Optional[str] = None
 #Titles
-class TitleResponse(BaseModel):
-    title_id: str
-    title: str
-    date_awarded: datetime
+#for genearl title showcase (current)
+class TitleInfo(BaseModel):
+    id: str
+    name: str
+    min_elo: int
+    icon_url: Optional[str] = None
 
-#elo points = specific title so if after submission, elo surpasses specific nr, title is unlocked
+#for helping with the checking of title change
+class TitleResponse(BaseModel):
+    user_id: str
+    current_title: TitleInfo
+    title_changed: bool
+    old_title: Optional[TitleInfo] = None
+    new_title: Optional[TitleInfo] = None
+    message: Optional[str] = None
+
 class TitleUpdateRequest(BaseModel):
-    submission_id: str 
+    old_elo: int
 
 #Achievements Trigger
 class CheckAchievementsRequest(BaseModel):
