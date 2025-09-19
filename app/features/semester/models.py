@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Boolean, DateTime
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from app.DB.base import Base
 
 class Semester(Base):
@@ -16,3 +17,8 @@ class Semester(Base):
     is_current = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+   # in semester/models.py
+    modules = relationship("Module", back_populates="semester")
+
+

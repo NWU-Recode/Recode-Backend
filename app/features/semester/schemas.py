@@ -1,21 +1,31 @@
+# app/features/semester/schemas.py
 from pydantic import BaseModel
+from datetime import date
 from uuid import UUID
-from datetime import datetime
 
-class SemesterBase(BaseModel):
+class SemesterCreate(BaseModel):
     year: int
     term_name: str
-    start_date: datetime
-    end_date: datetime
-    is_current: bool = False
+    start_date: date
+    end_date: date
 
-class SemesterCreate(SemesterBase):
-    pass
-
-class SemesterResponse(SemesterBase):
+class SemesterResponse(BaseModel):
     id: UUID
-    created_at: datetime
-    updated_at: datetime
+    year: int
+    term_name: str
+    start_date: date
+    end_date: date
+    is_current: bool
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True  # <-- this replaces orm_mode
+    }
+class ModuleResponse(BaseModel):
+    id: UUID
+    name: str
+    code: str
+    description: str 
+
+    model_config = {
+        "from_attributes": True  # allows from_orm/model_validate
+    }

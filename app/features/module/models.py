@@ -4,6 +4,7 @@ from sqlalchemy import Column, String, Integer, ForeignKey, Text, SmallInteger, 
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.DB.base import Base
+from sqlalchemy.orm import relationship
 
 class Module(Base):
     __tablename__ = "modules"
@@ -18,3 +19,6 @@ class Module(Base):
     credits = Column(SmallInteger)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    semester = relationship("Semester", back_populates="modules")
+   
