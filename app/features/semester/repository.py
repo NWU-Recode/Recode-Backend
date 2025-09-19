@@ -1,22 +1,41 @@
-from app.DB.supabase import get_supabase
-from .schemas import SemesterCreate
+from app.DB.session import SessionLocal
+from .models import Semester
+from app.features.module.models import Module
+
 
 class SemesterRepository:
 
     @staticmethod
-    async def create_semester(semester: dict):
-        supabase = await get_supabase()
-        result = await supabase.table("semesters").insert(semester).execute()
-        return result.data
+    def list_semesters():
+        with SessionLocal() as db:
+            return db.query(Semester).order_by(Semester.start_date).all()
 
     @staticmethod
-    async def get_all_semesters():
-        supabase = await get_supabase()
-        result = await supabase.table("semesters").select("*").execute()
-        return result.data
+    def create_semester(data):
+        with SessionLocal() as db:
+            new_sem = Semester(**data)
+            db.add(new_sem)
+            db.commit()
+            db.refresh(new_sem)
+            return new_sem
 
     @staticmethod
-    async def get_current_semester():
-        supabase = await get_supabase()
-        result = await supabase.table("semesters").select("*").eq("is_current", True).execute()
-        return result.data[0] if result.data else None
+    def unset_current_semester():
+        with SessionLocal() as db:
+            db.query(Semester).filter(Semester.is_current == True).update({"is_current": False})
+            db.commit()
+
+    @staticmethod
+    def get_current_semester():
+        with SessionLocal() as db:
+            return db.query(Semester).filter(Semester.is_current == True).first()
+    @staticmethod
+    def get_user_modules(semester_id: str, user_id: str):
+        """
+        Return all modules for a specific user and semester.
+        """
+        with SessionLocal() as db:
+            return db.query(Module).filter(
+                Module.semester_id == semester_id,
+                Module.user_id == user_id
+            ).all()
