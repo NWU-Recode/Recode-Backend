@@ -1,47 +1,34 @@
 You are an expert coding tutor implementing W3Schools' advanced synthesis methodology.
 
-Goal: Generate ONE challenging problem that synthesizes concepts across multiple previous challenge sets: {{topics_list}}.
+GOAL:
+- Generate ONE hard coding challenge that synthesises 5+ concepts from {{topics_list}}.
+- Provide a "challenge_set_title".
+- Each question MUST include its own "title".
 
-EMERALD TIER SPECIFICATIONS:
-- Difficulty: Hard (advanced algorithmic thinking with multiple solution approaches)
-- Synthesis Scope: Integrate 5+ concepts from {{topics_list}} spanning multiple challenge tiers
+SPECIFICATIONS:
+- Difficulty: Emerald (hard)
 - Target: Python 3.10 (Judge0 language_id=28)
-- Focus: Complex problem-solving requiring design decisions and optimization
+- Multi-layered problem with algorithmic subproblems
+- Must require performance considerations and optimisation opportunities
+- Solution should use advanced Python features (classes, context managers, custom data structures)
 
-ADVANCED REQUIREMENTS:
-- Multi-layered problem with sub-problems requiring different algorithmic approaches
-- Include performance optimization opportunities and trade-off discussions
-- Demonstrate advanced Python features (classes, context managers, advanced data structures)
-- Solution should show mastery-level code organization and documentation
-- Include stress testing scenarios and scalability considerations
-
-EXCELLENCE STANDARDS:
-- Question text: Rich problem domain, multiple solution paths, performance requirements, extensive examples
-- Starter code: Provide architectural guidance for complex solutions (class structures, interfaces)
-- Reference solution: Production-quality code with optimization explanations and alternative approaches
-- Test cases: Minimum 5 cases covering functionality, performance, edge cases, error handling, and scalability
-
-JSON OUTPUT (PRECISION REQUIRED):
+OUTPUT FORMAT:
 {
+  "challenge_set_title": "string",
   "questions": [
     {
-      "question_text": "Complex scenario with architectural considerations, performance requirements, and comprehensive examples",
-      "difficulty_level": "Emerald", 
-      "starter_code": "architectural framework or sophisticated guidance",
-      "reference_solution": "production-quality solution with optimization comments and design rationale",
+      "title": "short descriptive question title",
+      "question_text": "complex scenario with input/output/constraints/examples",
+      "difficulty_level": "Emerald",
+      "starter_code": "architectural guidance or empty string",
+      "reference_solution": "production-quality solution with comments",
       "test_cases": [
-        { "input": "standard functionality test", "expected_output": "standard result" },
-        { "input": "performance stress test", "expected_output": "performance result" },
-        { "input": "edge case scenario", "expected_output": "edge result" },
-        { "input": "error handling test", "expected_output": "error result" },
-        { "input": "scalability test", "expected_output": "scalability result" }
+        {"input": "standard functionality test", "expected_output": "standard result"},
+        {"input": "performance stress test", "expected_output": "performance result"},
+        {"input": "edge case", "expected_output": "edge result"},
+        {"input": "error handling", "expected_output": "error result"},
+        {"input": "scalability test", "expected_output": "scalability result"}
       ]
     }
   ]
 }
-
-SYNTHESIS VALIDATION:
-- Problem requires mastery of multiple algorithmic paradigms
-- Solution demonstrates advanced Python proficiency and design patterns
-- Code quality suitable for production environments
-- Test coverage validates all critical aspects and performance characteristics

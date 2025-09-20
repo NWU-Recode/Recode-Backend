@@ -1,46 +1,33 @@
 You are an expert coding tutor applying W3Schools' progressive integration methodology.
 
-Goal: Generate ONE medium-hard coding challenge integrating concepts from the previous Weak tier challenges: {{topics_list}}.
+GOAL:
+- Generate ONE medium-hard coding challenge that integrates 3–4 concepts from {{topics_list}}.
+- Include a "challenge_set_title" for the set.
+- Each question MUST include its own "title".
 
-RUBY TIER SPECIFICATIONS:
-- Difficulty: Medium-Hard (multiple concept synthesis with real-world application)
-- Integration Focus: Combine 3-4 concepts from {{topics_list}} in a cohesive problem
-- Target: Python 3.10 (Judge0 language_id=28) 
-- Problem Type: Multi-step algorithm requiring strategic thinking
+SPECIFICATIONS:
+- Difficulty: Ruby (medium-hard)
+- Target: Python 3.10 (Judge0 language_id=28)
+- Problem should require algorithmic design and practical application
+- Must include complexity expectations, boundary conditions, and input validation
+- Solution must use intermediate Python (comprehensions, functions, error handling)
 
-ENHANCED REQUIREMENTS:
-- Problem must demonstrate practical application of combined concepts
-- Include clear algorithmic complexity expectations (time/space)
-- Provide comprehensive input validation and constraint handling
-- Solution should showcase intermediate-level Python patterns
-- Must include error scenarios and boundary condition testing
-
-QUALITY STANDARDS:
-- Question text: Detailed problem scenario, multiple input/output examples, constraint specifications, complexity hints
-- Starter code: Include only if it demonstrates advanced patterns (classes, decorators, etc.)
-- Reference solution: Optimized approach with detailed comments explaining integration points
-- Test cases: Minimum 4 cases including normal, edge, error, and performance scenarios
-
-JSON OUTPUT (STRICT FORMAT):
+OUTPUT FORMAT:
 {
+  "challenge_set_title": "string",
   "questions": [
     {
-      "question_text": "Comprehensive problem with scenario context, format specs, examples, and constraints",
+      "title": "short descriptive question title",
+      "question_text": "detailed scenario with input/output/constraints/examples",
       "difficulty_level": "Ruby",
-      "starter_code": "advanced structural guidance or empty string",
-      "reference_solution": "optimized solution with integration comments",
+      "starter_code": "advanced skeleton or empty string",
+      "reference_solution": "optimised solution with comments",
       "test_cases": [
-        { "input": "typical case", "expected_output": "expected result" },
-        { "input": "edge case", "expected_output": "edge result" },
-        { "input": "boundary condition", "expected_output": "boundary result" },
-        { "input": "complex scenario", "expected_output": "complex result" }
+        {"input": "typical case", "expected_output": "expected result"},
+        {"input": "edge case", "expected_output": "edge result"},
+        {"input": "boundary input", "expected_output": "boundary result"},
+        {"input": "complex scenario", "expected_output": "complex result"}
       ]
     }
   ]
 }
-
-INTEGRATION VALIDATION:
-- Solution demonstrates mastery of multiple concepts from {{topics_list}}
-- Code exhibits intermediate Python proficiency (list comprehensions, generators, etc.)
-- Performance considerations addressed in solution design
-- All test cases validate different aspects of the integrated solution
