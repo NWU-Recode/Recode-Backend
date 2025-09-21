@@ -5,7 +5,7 @@ import json
 import re
 
 from app.DB.supabase import get_supabase
-from app.features.topic_detections.slide_extraction.topic_service import slide_extraction_topic_service
+from app.features.topic_detections.topics.topic_service import topic_service
 from app.features.challenges.ai.generator import generate_question_spec
 from app.features.challenges.ai.bedrock_client import invoke_claude
 from app.Core.config import get_settings
@@ -83,12 +83,12 @@ Output STRICT JSON:
     async def _get_topics(self) -> List[str]:
         """Get topics from slide extraction or use defaults."""
         if self.slide_stack_id:
-            topics = await slide_extraction_topic_service.get_topics_from_slide_extraction(self.slide_stack_id)
+            topics = await topic_service.get_topics_from_slide_extraction(self.slide_stack_id)
             if topics:
                 return topics
 
         # Fallback: get topics for the week
-        topics = await slide_extraction_topic_service.get_all_topics_for_week(self.week)
+        topics = await topic_service.get_all_topics_for_week(self.week)
         return topics if topics else ["programming", "algorithms", "data structures"]
 
     async def _generate_common_challenges(self, topics: List[str]) -> Dict[str, Any]:

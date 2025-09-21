@@ -13,9 +13,9 @@ from typing import Dict, Any, Optional
 
 router = APIRouter(prefix="/challenges", tags=["challenges"])
 
-# -----------------------------
+# ---------------------------------------------
 # Generation of challenges for different 4 tiers
-# -----------------------------
+# ---------------------------------------------
 class _GenerateReq:
     def __init__(self, slides_url: str, force: bool = False):
         self.slides_url = slides_url
@@ -112,7 +112,7 @@ async def get_semester_overview(current_user: CurrentUser = Depends(get_current_
 # -----------------------------
 # TIER-SPECIFIC GENERATION ENDPOINTS
 # -----------------------------
-from app.features.topic_detections.slide_extraction.topic_service import slide_extraction_topic_service
+from app.features.topic_detections.topics.topic_service import topic_service
 from app.features.challenges.ai.bedrock_client import invoke_claude
 import os
 from pathlib import Path
@@ -129,10 +129,10 @@ DEFAULT_BASIC_TOPICS = [
 async def _fetch_topics_from_supabase(module_code: str, week_number: int) -> str:
     """Fetch topics for prompt filling, preferring `topics` table subtopics, then slide_extractions, then defaults."""
     # 1) Prefer topics table subtopics
-    topics = await slide_extraction_topic_service.get_subtopics_for_week(week_number, module_code)
+    topics = await topic_service.get_subtopics_for_week(week_number, module_code)
     # 2) Fallback to slide_extractions aggregation
     if not topics:
-        topics = await slide_extraction_topic_service.get_all_topics_for_week(week_number, module_code)
+        topics = await topic_service.get_all_topics_for_week(week_number, module_code)
     if not topics:
         topics = DEFAULT_BASIC_TOPICS
     return ", ".join(topics)
@@ -311,7 +311,7 @@ async def generate_and_save(
         raise HTTPException(status_code=400, detail={"error_code": "E_INVALID_TIER", "message": "invalid tier"})
 
     if not module_code and module_id is not None:
-        resolved = await slide_extraction_topic_service.resolve_module_code(module_id)
+        resolved = await topic_service.resolve_module_code(module_id)
         module_code = resolved or str(module_id)
     if not module_code:
         raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"module_code or module_id required"})
@@ -343,7 +343,7 @@ async def generate_base_challenge(
 
     # Backward compatibility: resolve module_code from module_id if needed
     if not module_code and module_id is not None:
-        resolved = await slide_extraction_topic_service.resolve_module_code(module_id)
+        resolved = await topic_service.resolve_module_code(module_id)
         module_code = resolved or str(module_id)
     if not module_code:
         raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"module_code or module_id required"})
@@ -363,7 +363,7 @@ async def generate_ruby_challenge(
         raise HTTPException(status_code=403, detail={"error_code": "E_FORBIDDEN", "message": "lecturer_only"})
 
     if not module_code and module_id is not None:
-        resolved = await slide_extraction_topic_service.resolve_module_code(module_id)
+        resolved = await topic_service.resolve_module_code(module_id)
         module_code = resolved or str(module_id)
     if not module_code:
         raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"module_code or module_id required"})
@@ -383,7 +383,7 @@ async def generate_emerald_challenge(
         raise HTTPException(status_code=403, detail={"error_code": "E_FORBIDDEN", "message": "lecturer_only"})
 
     if not module_code and module_id is not None:
-        resolved = await slide_extraction_topic_service.resolve_module_code(module_id)
+        resolved = await topic_service.resolve_module_code(module_id)
         module_code = resolved or str(module_id)
     if not module_code:
         raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"module_code or module_id required"})
@@ -403,7 +403,7 @@ async def generate_diamond_challenge(
         raise HTTPException(status_code=403, detail={"error_code": "E_FORBIDDEN", "message": "lecturer_only"})
 
     if not module_code and module_id is not None:
-        resolved = await slide_extraction_topic_service.resolve_module_code(module_id)
+        resolved = await topic_service.resolve_module_code(module_id)
         module_code = resolved or str(module_id)
     if not module_code:
         raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"module_code or module_id required"})
@@ -421,13 +421,13 @@ async def preview_topics(
     if getattr(current_user, "role", "student") != "lecturer":
         raise HTTPException(status_code=403, detail={"error_code":"E_FORBIDDEN","message":"lecturer_only"})
     if not module_code and module_id is not None:
-        resolved = await slide_extraction_topic_service.resolve_module_code(module_id)
+        resolved = await topic_service.resolve_module_code(module_id)
         module_code = resolved or str(module_id)
     if not module_code:
         raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"module_code or module_id required"})
 
-    topics_from_topics = await slide_extraction_topic_service.get_subtopics_for_week(week_number, module_code)
-    topics_from_extractions = await slide_extraction_topic_service.get_all_topics_for_week(week_number, module_code)
+    topics_from_topics = await topic_service.get_subtopics_for_week(week_number, module_code)
+    topics_from_extractions = await topic_service.get_all_topics_for_week(week_number, module_code)
     final = topics_from_topics or topics_from_extractions or DEFAULT_BASIC_TOPICS
     return {
         "module_code": module_code,

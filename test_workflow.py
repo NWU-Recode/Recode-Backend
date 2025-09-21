@@ -12,7 +12,7 @@ import os
 sys.path.append('.')
 
 from app.Core.config import get_settings
-from app.features.topic_detections.slide_extraction.topic_service import slide_extraction_topic_service
+from app.features.topic_detections.topics.topic_service import topic_service
 
 
 async def test_workflow():
@@ -45,7 +45,7 @@ async def test_workflow():
         module_id = 1
         week_number = 1
 
-        topics = await slide_extraction_topic_service.get_all_topics_for_week(week_number, module_id)
+        topics = await topic_service.get_all_topics_for_week(week_number, module_id)
         print(f"   ✓ Fetched topics for module {module_id}, week {week_number}: {topics}")
 
         if not topics:
@@ -62,8 +62,8 @@ async def test_workflow():
     # 2b. Test topics table subtopics fetching with module_code
     print("2b. Testing topics table subtopics (module_code=CMPG111)...")
     try:
-        subtopics_w1 = await slide_extraction_topic_service.get_subtopics_for_week(1, "CMPG111")
-        subtopics_w2 = await slide_extraction_topic_service.get_subtopics_for_week(2, "CMPG111")
+        subtopics_w1 = await topic_service.get_subtopics_for_week(1, "CMPG111")
+        subtopics_w2 = await topic_service.get_subtopics_for_week(2, "CMPG111")
         print(f"   ✓ Week 1 subtopics: {subtopics_w1}")
         print(f"   ✓ Week 2 subtopics: {subtopics_w2}\n")
     except Exception as e:
@@ -73,7 +73,7 @@ async def test_workflow():
     # 2c. Direct topics table probe for visibility
     print("2c. Probing topics table directly by week...")
     try:
-        client = slide_extraction_topic_service.supabase
+        client = topic_service.supabase
         # Supabase project URL host (redacted)
         from app.Core.config import get_settings as _gs
         supa_url = _gs().supabase_url

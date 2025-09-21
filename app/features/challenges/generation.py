@@ -6,17 +6,15 @@ from typing import Dict, Any, List, Optional, Tuple
 import re
 
 from app.DB.supabase import get_supabase
-from app.features.topic_detections.repository import question_repository
-from app.features.topic_detections.topics.service import TopicService
+from app.features.topic_detections.slide_extraction.repository_supabase import slide_extraction_supabase_repository as question_repository
+from app.features.topic_detections.topics.topic_service import TopicService
 from app.adapters.judge0_client import run_many
 try:
-    from app.features.topic_detections.templates.strings import template_reverse_string
+	from app.features.challenges.templates.strings import template_reverse_string
 except ImportError:
-    def template_reverse_string():
-        return {}
+	def template_reverse_string():
+		return {}
 from app.features.challenges.ai.generator import generate_question_spec
-
-
 def _slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
