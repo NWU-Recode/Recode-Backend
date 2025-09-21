@@ -9,18 +9,19 @@ async def batch_upload_slides():
     assets_dir = "Assets"
     pptx_files = [f for f in os.listdir(assets_dir) if f.lower().endswith('.pptx')]
     
-    # Sort by week number
+    # Sort by week number and exclude test files
     def get_week_num(filename):
         match = re.match(r'Week(\d+)_', filename)
         return int(match.group(1)) if match else 0
     
-    pptx_files.sort(key=get_week_num)
-    pptx_files = pptx_files[:3]  # Only first 3 files
+    # Filter out test files and sort by week number
+    week_files = [f for f in pptx_files if f.startswith('Week')]
+    week_files.sort(key=get_week_num)
     
     semester_start = date(2025, 7, 7)  # As in endpoints.py
     
-    for filename in pptx_files:
-        week_num = get_week_num(filename) + 12  # Weeks 13-15
+    for filename in week_files:
+        week_num = get_week_num(filename)
         if not week_num:
             continue
         
@@ -47,7 +48,7 @@ async def batch_upload_slides():
             module_code="CMPG111",
         )
         
-        print(f"Result: extraction_id={result.get('extraction_id')}, topic_id={result.get('topic', {}).get('id')}")
+        print(f"Result: extraction_id={result.get('extraction_id')}, topic_id={result.get('topic', {}).get('id') if result.get('topic') else 'None'}")
         print("---")
 
 if __name__ == "__main__":

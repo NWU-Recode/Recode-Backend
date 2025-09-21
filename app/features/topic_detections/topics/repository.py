@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Dict, Any
 import logging
+import uuid
 from app.DB.supabase import get_supabase
 from app.common import cache
 import asyncio, time, os
@@ -35,7 +36,12 @@ class TopicRepository:
         module_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         client = await get_supabase()
-        payload: Dict[str, Any] = {"week": week, "slug": slug, "title": title}
+        payload: Dict[str, Any] = {
+            "id": str(uuid.uuid4()),
+            "week": week, 
+            "slug": slug, 
+            "title": title
+        }
         if subtopics is not None:
             payload["subtopics"] = subtopics
         if slides_key is not None:

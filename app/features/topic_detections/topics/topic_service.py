@@ -56,10 +56,9 @@ class TopicService:
         else:
             subtopics = []
         title = primary_key.replace("-", " ").title()
+        # Make title unique by including week number
+        title = f"Week {week}: {title}"
         slug = f"w{week:02d}-{primary_key}"
-        existing = await TopicRepository.get_by_title(title)
-        if existing:
-            return existing
         # Resolve module_id if module_code provided
         module_id = None
         if module_code:
@@ -189,6 +188,15 @@ class TopicService:
         except Exception as e:
             print(f"Error fetching topics for module {module_code}, week {week_number}: {e}")
             return []
+
+    async def update_slide_extraction_id(self, topic_uuid: str, slide_extraction_id: int) -> None:
+        """Update the slide_extraction_id for a topic."""
+        try:
+            await self.supabase.table("topic").update({
+                "slide_extraction_id": slide_extraction_id
+            }).eq("id", topic_uuid).execute()
+        except Exception as e:
+            print(f"Error updating slide_extraction_id for topic {topic_uuid}: {e}")
 
 
 # Global instance

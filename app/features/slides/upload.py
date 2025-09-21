@@ -66,7 +66,22 @@ async def upload_slide_bytes(
             # Detect topic locally (phrase/spaCy/heuristics)
             slide_texts = [line for _, lines in sorted(slides_map.items()) for line in lines]
             primary, subtopics = extract_primary_topic(slide_texts)
-            # Persist to Supabase if table exists
+            
+            # Create Topic first (Supabase)
+            topic = await TopicService.create_from_slides(
+                slides_url=f"supabase://slides/{key.object_key}",
+                week=key.week,
+                slide_texts=slide_texts,
+                slides_key=key.object_key,
+                detected_topic=primary,
+                detected_subtopics=subtopics,
+                slide_extraction_id=None,  # Will update later
+                module_code=module_code,
+            )
+            topic_row = topic
+            topic_uuid = topic.get("id")
+            
+            # Persist slide extraction to Supabase with topic reference
             try:
                 sup_row = await slide_extraction_supabase_repository.create_extraction({
                     "filename": original_filename,
@@ -76,25 +91,18 @@ async def upload_slide_bytes(
                     "detected_subtopics": subtopics,
                     "week_number": key.week,
                     "module_code": module_code,
+                    "topic_id": topic_uuid,
                 })
                 if sup_row:
                     sup_extraction_id = sup_row.get("id")
                     # Use Supabase row id as extraction_id to avoid confusion
                     extraction_id = sup_extraction_id
+                    
+                    # Update topic with slide_extraction_id
+                    if topic_uuid:
+                        await TopicService.update_slide_extraction_id(topic_uuid, sup_extraction_id)
             except Exception:
                 pass
-            # Create/find Topic (Supabase)
-            topic = await TopicService.create_from_slides(
-                slides_url=f"supabase://slides/{key.object_key}",
-                week=key.week,
-                slide_texts=slide_texts,
-                slides_key=key.object_key,
-                detected_topic=primary,
-                detected_subtopics=subtopics,
-                slide_extraction_id=sup_extraction_id,
-                module_code=module_code,
-            )
-            topic_row = topic
     except Exception as e:
         # Non-fatal: extraction/topic detection is best-effort, but log for visibility
         logging.getLogger("slides").exception("Slide extraction/topic detection failed: %s", str(e))
