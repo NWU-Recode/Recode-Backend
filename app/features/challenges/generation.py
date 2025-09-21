@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import re
 
 from app.DB.supabase import get_supabase
-from app.features.topic_detections.slide_extraction.repository_supabase import slide_extraction_supabase_repository as question_repository
+from app.DB.supabase import get_supabase as question_repository
 from app.features.topic_detections.topics.topic_service import TopicService
 from app.adapters.judge0_client import run_many
 try:
@@ -121,8 +121,12 @@ class ChallengeGenerator:
             "max_memory_kb": tpl.get("max_memory_kb", 256000),
             "tier": tier,
         }
-        q = await question_repository.create_question(payload)
-        await question_repository.insert_tests(str(q["id"]), tests)
+        client = await question_repository
+        q = await client.table("questions").insert(payload).execute()
+        q = q.data[0]
+        for test in tests:
+            test["question_id"] = str(q["id"])
+            await client.table("tests").insert(test).execute()
 
         if reference_solution and tests:
             items = [
