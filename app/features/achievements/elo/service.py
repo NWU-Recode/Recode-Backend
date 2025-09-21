@@ -1,4 +1,4 @@
-from app.db.session import get_db
+from app.DB.session import get_db
 from app.features.elo.schemas import EloHistorySchema
 
 class EloService:
