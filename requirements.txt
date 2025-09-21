@@ -27,3 +27,7 @@ supabase==2.18.0
 black==24.3.0
 ruff==0.7.0
 pytest==8.3.3
+
+# --- NLP ---
+spacy==3.7.5
+scikit-learn==1.5.2

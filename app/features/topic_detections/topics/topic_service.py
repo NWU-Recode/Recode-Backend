@@ -34,6 +34,7 @@ class TopicService:
         detected_topic: Optional[str] = None,
         detected_subtopics: Optional[List[str]] = None,
         slide_extraction_id: Optional[int] = None,
+        module_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or return a topic derived from slides for a given week.
 
@@ -54,11 +55,15 @@ class TopicService:
             subtopics = subs
         else:
             subtopics = []
+        title = primary_key.replace("-", " ").title()
         slug = f"w{week:02d}-{primary_key}"
-        existing = await TopicRepository.get_by_slug(slug)
+        existing = await TopicRepository.get_by_title(title)
         if existing:
             return existing
-        title = primary_key.replace("-", " ").title()
+        # Resolve module_id if module_code provided
+        module_id = None
+        if module_code:
+            module_id = await TopicService().resolve_module_id_by_code(module_code)
         # Use detected_* overrides if provided
         det_topic = detected_topic or primary_key
         det_subs = detected_subtopics or subtopics
@@ -71,6 +76,8 @@ class TopicService:
             detected_topic=det_topic,
             detected_subtopics=det_subs,
             slide_extraction_id=slide_extraction_id,
+            module_code_slidesdeck=module_code,
+            module_id=module_id,
         )
 
     async def resolve_module_id_by_code(self, module_code: str) -> Optional[str]:

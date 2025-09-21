@@ -11,5 +11,6 @@ class Topic(Base):
     slug = Column(String, unique=True, nullable=False)
     title = Column(String, nullable=False)
     subtopics = Column(JSONB, nullable=True)
+    module_code_slidesdeck = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     challenges = relationship("Challenge", back_populates="topic")

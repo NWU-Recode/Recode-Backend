@@ -24,6 +24,7 @@ async def upload_slide_bytes(
     topic_name: str,
     given_at_dt,             # datetime
     semester_start_date,     # date
+    module_code: str,
     signed_url_ttl_sec: int = 900,
 ) -> Dict[str, Any]:
     key = build_slide_object_key(original_filename, topic_name, given_at_dt, semester_start_date)
@@ -73,6 +74,8 @@ async def upload_slide_bytes(
                     "slides": slides_map,
                     "detected_topic": primary,
                     "detected_subtopics": subtopics,
+                    "week_number": key.week,
+                    "module_code": module_code,
                 })
                 if sup_row:
                     sup_extraction_id = sup_row.get("id")
@@ -89,6 +92,7 @@ async def upload_slide_bytes(
                 detected_topic=primary,
                 detected_subtopics=subtopics,
                 slide_extraction_id=sup_extraction_id,
+                module_code=module_code,
             )
             topic_row = topic
     except Exception as e:
