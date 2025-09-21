@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from jsonschema import ValidationError, validate
+
 from app.DB.supabase import get_supabase
 from app.features.challenges.ai.bedrock_client import invoke_claude
+from app.features.challenges.templates.strings import get_fallback_payload
 
 DEFAULT_TOPICS = [
     "variables",
@@ -27,6 +32,52 @@ POINTS_BY_DIFFICULTY = {
 
 BASE_DISTRIBUTION = ["Bronze", "Bronze", "Silver", "Silver", "Gold"]
 
+
+QUESTION_SCHEMA = {
+    "type": "object",
+    "required": ["challenge_set_title", "questions"],
+    "properties": {
+        "challenge_set_title": {"type": "string"},
+        "questions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "required": [
+                    "title",
+                    "question_text",
+                    "difficulty_level",
+                    "starter_code",
+                    "reference_solution",
+                    "tests",
+                ],
+                "properties": {
+                    "title": {"type": "string"},
+                    "question_text": {"type": "string"},
+                    "difficulty_level": {"type": "string"},
+                    "starter_code": {"type": "string"},
+                    "reference_solution": {"type": "string"},
+                    "tests": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "required": ["input", "expected"],
+                            "properties": {
+                                "input": {"type": "string"},
+                                "expected": {"type": "string"},
+                                "visibility": {"type": "string"},
+                            },
+                            "additionalProperties": True,
+                        },
+                    },
+                },
+                "additionalProperties": True,
+            },
+        },
+    },
+    "additionalProperties": True,
+}
 
 @dataclass
 class TopicContext:
@@ -166,17 +217,26 @@ def _render_prompt(template: str, context: TopicContext) -> str:
 
 
 def _normalise_question(kind: str, question: Dict[str, Any], expected_difficulty: Optional[str]) -> Dict[str, Any]:
-    difficulty = str(question.get("difficulty_level", "")).title()
+    result = dict(question)
+
+    raw_difficulty = question.get("difficulty_level")
+    difficulty = str(raw_difficulty).strip().title() if raw_difficulty else ""
     if expected_difficulty:
         difficulty = expected_difficulty
+    elif difficulty:
+        pass
     elif kind in {"ruby", "emerald", "diamond"}:
         difficulty = kind.title()
-    question["difficulty_level"] = difficulty
+    else:
+        difficulty = "Bronze"
+    result["difficulty_level"] = difficulty
 
-    starter_code = question.get("starter_code") or ""
-    reference_solution = question.get("reference_solution") or ""
-    question["starter_code"] = str(starter_code)
-    question["reference_solution"] = str(reference_solution)
+    result["starter_code"] = str(question.get("starter_code", ""))
+    result["reference_solution"] = str(question.get("reference_solution", ""))
+    if "question_text" in question:
+        result["question_text"] = str(question.get("question_text", ""))
+    if "title" in question:
+        result["title"] = str(question.get("title", ""))
 
     tests = question.get("tests") or []
     normalised_tests: List[Dict[str, str]] = []
@@ -185,7 +245,7 @@ def _normalise_question(kind: str, question: Dict[str, Any], expected_difficulty
             continue
         visibility = str(test.get("visibility", "public" if index == 0 else "private")).lower()
         if visibility not in {"public", "private"}:
-            visibility = "public" if index == 0 else "private"
+            visibility = "private"
         normalised_tests.append(
             {
                 "input": str(test.get("input", "")),
@@ -193,10 +253,15 @@ def _normalise_question(kind: str, question: Dict[str, Any], expected_difficulty
                 "visibility": visibility,
             }
         )
-    if not normalised_tests:
-        normalised_tests = [{"input": "", "expected": "", "visibility": "public"}]
-    question["tests"] = normalised_tests
-    return question
+    while len(normalised_tests) < 3:
+        visibility = "public" if not normalised_tests else "private"
+        normalised_tests.append({"input": "", "expected": "", "visibility": visibility})
+    if normalised_tests:
+        normalised_tests[0]["visibility"] = "public"
+        for idx in range(1, len(normalised_tests)):
+            normalised_tests[idx]["visibility"] = "private"
+    result["tests"] = normalised_tests
+    return result
 
 
 def _normalise_questions(kind: str, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -217,7 +282,17 @@ def _normalise_questions(kind: str, payload: Dict[str, Any]) -> List[Dict[str, A
 async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
     template = _load_template(kind)
     prompt = _render_prompt(template, context)
-    return await invoke_claude(prompt)
+    result = await invoke_claude(prompt)
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            return get_fallback_payload(kind, context.week, context.topic_title)
+    try:
+        validate(instance=result, schema=QUESTION_SCHEMA)
+    except (ValidationError, TypeError):
+        return get_fallback_payload(kind, context.week, context.topic_title)
+    return result
 
 
 async def _insert_challenge(
@@ -227,21 +302,60 @@ async def _insert_challenge(
     context: TopicContext,
     challenge_title: str,
     challenge_description: str,
+    lecturer_id: Optional[int],
 ) -> Dict[str, Any]:
-    slug_origin = context.topic_slug or challenge_title or challenge_description
-    slug_base = _slugify(slug_origin)
+    if lecturer_id is None:
+        raise ValueError("lecturer_id is required to insert challenge")
+
     module_part = _slugify(context.module_code or "module")
-    slug = f"{module_part}-w{context.week:02d}-{tier}"
+    tier_slug = "plain" if tier == "base" else _slugify(tier)
+    slug = f"{module_part}-w{context.week:02d}-{tier_slug}"
+    kind_value = "common" if tier == "base" else tier
+    tier_value = "plain" if tier == "base" else tier
+
+    key_source = "|".join([
+        str(context.topic_id or ""),
+        str(context.module_code or ""),
+        str(context.week),
+        tier,
+    ])
+    idempotency_key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()[:16]
+
+    async def _fetch_existing(field: str, value: Any) -> Optional[Dict[str, Any]]:
+        if value in {None, ""}:
+            return None
+        try:
+            resp = await client.table("challenges").select("*").eq(field, value).limit(1).execute()
+            rows = resp.data or []
+            return rows[0] if rows else None
+        except Exception:
+            return None
+
+    existing = await _fetch_existing("idempotency_key", idempotency_key)
+    if existing is None:
+        existing = await _fetch_existing("slug", slug)
+        if existing and not existing.get("idempotency_key"):
+            try:
+                update = await client.table("challenges").update({"idempotency_key": idempotency_key}).eq("id", existing.get("id")).execute()
+                if update.data:
+                    existing = update.data[0]
+            except Exception:
+                pass
+    if existing:
+        return existing
+
     payload = {
         "title": challenge_title,
         "description": challenge_description,
         "slug": slug,
         "status": "draft",
-        "tier": tier,
-        "kind": tier,
+        "tier": tier_value,
+        "kind": kind_value,
         "topic_id": context.topic_id,
         "week_number": context.week,
         "linked_module": context.module_code,
+        "lecturer_creator": int(lecturer_id),
+        "idempotency_key": idempotency_key,
     }
     resp = await client.table("challenges").insert(payload).execute()
     if not resp.data:
@@ -267,24 +381,40 @@ async def _insert_question(
     question: Dict[str, Any],
     order_index: int,
 ) -> Dict[str, Any]:
-    difficulty = question.get("difficulty_level", "Bronze")
-    points = POINTS_BY_DIFFICULTY.get(difficulty, 10)
+    difficulty = str(question.get("difficulty_level", "Bronze"))
+    points = POINTS_BY_DIFFICULTY.get(difficulty.title(), 10)
     tests = question.get("tests", [])
-    public_expected = next((t.get("expected") for t in tests if t.get("visibility") == "public"), None)
+    public_expected = next((t.get("expected") for t in tests if (t.get("visibility") == "public")), None)
     if public_expected is None and tests:
         public_expected = tests[0].get("expected")
+    if public_expected is not None:
+        public_expected = str(public_expected)
+
+    language_id = question.get("language_id")
+    if isinstance(language_id, int):
+        resolved_language = language_id
+    else:
+        language_key = str(question.get("language", "")).lower()
+        resolved_language = {"python": 71, "python3": 71, "py": 71}.get(language_key, 71)
+
+    title_value = str(question.get("title", "")).strip() or "Problem"
+    question_text = str(question.get("question_text", ""))
+    starter_code = str(question.get("starter_code", ""))
+    reference_solution = str(question.get("reference_solution", ""))
+
     payload = {
         "challenge_id": challenge_id,
-        "language_id": 71,
+        "language_id": resolved_language,
         "expected_output": public_expected,
         "points": points,
-        "starter_code": question.get("starter_code", ""),
+        "starter_code": starter_code,
         "max_time_ms": 2000,
         "max_memory_kb": 256000,
         "tier": difficulty.lower(),
-        "question_text": question.get("question_text"),
-        "reference_solution": question.get("reference_solution"),
+        "question_text": question_text,
+        "reference_solution": reference_solution,
         "question_number": order_index,
+        "title": title_value,
     }
     resp = await client.table("questions").insert(payload).execute()
     if not resp.data:
@@ -295,10 +425,11 @@ async def _insert_question(
 
 
 class ClaudeChallengeGenerator:
-    def __init__(self, week: int, slide_stack_id: Optional[int] = None, module_code: Optional[str] = None):
+    def __init__(self, week: int, slide_stack_id: Optional[int] = None, module_code: Optional[str] = None, lecturer_id: Optional[int] = None):
         self.week = week
         self.slide_stack_id = slide_stack_id
         self.module_code = module_code
+        self.lecturer_id = lecturer_id
         self._client = None
 
     async def _client_handle(self):
@@ -314,6 +445,9 @@ class ClaudeChallengeGenerator:
         )
         client = await self._client_handle()
 
+        if self.lecturer_id is None:
+            raise ValueError("lecturer_id is required to persist generated challenges")
+
         created: Dict[str, Optional[Dict[str, Any]]] = {"base": None, "ruby": None, "emerald": None, "diamond": None}
         topics_used = context.joined_topics()
 
@@ -327,16 +461,24 @@ class ClaudeChallengeGenerator:
                     context=context,
                     challenge_title=payload.get("challenge_set_title") or f"Week {self.week} {tier.title()} Challenge",
                     challenge_description=f"Auto-generated {tier} challenge for Week {self.week} covering {context.topic_title}.",
+                    lecturer_id=self.lecturer_id,
                 )
+                # Idempotency: avoid duplicating questions if challenge already exists with questions
+                existing_q = await client.table("questions").select("id").eq("challenge_id", challenge.get("id")).execute()
+                existing_ids = [str(r.get("id")) for r in (existing_q.data or []) if r.get("id")]
                 stored_questions = []
-                for idx, question in enumerate(questions, start=1):
-                    stored = await _insert_question(
-                        client,
-                        challenge_id=challenge.get("id"),
-                        question=question,
-                        order_index=idx,
-                    )
-                    stored_questions.append(stored)
+                if existing_ids:
+                    # Return existing mapping without inserting duplicates
+                    stored_questions = [{"id": qid} for qid in existing_ids]
+                else:
+                    for idx, question in enumerate(questions, start=1):
+                        stored = await _insert_question(
+                            client,
+                            challenge_id=challenge.get("id"),
+                            question=question,
+                            order_index=idx,
+                        )
+                        stored_questions.append(stored)
                 return {
                     "challenge_id": str(challenge.get("id")),
                     "question_ids": [str(q.get("id")) for q in stored_questions],
@@ -345,10 +487,10 @@ class ClaudeChallengeGenerator:
                 print(f"[claude-generator] Skipped {tier}: {exc}")
                 return None
 
-        created["base"] = await _generate_and_store("base")
-        created["ruby"] = await _generate_and_store("ruby")
-        created["emerald"] = await _generate_and_store("emerald")
-        created["diamond"] = await _generate_and_store("diamond")
+        tiers = ["base", "ruby", "emerald", "diamond"]
+        results = await asyncio.gather(*(_generate_and_store(t) for t in tiers))
+        for tier_name, tier_result in zip(tiers, results):
+            created[tier_name] = tier_result
 
         return {
             "week": self.week,
@@ -368,8 +510,11 @@ async def generate_challenges_with_claude(
     week: int,
     slide_stack_id: Optional[int] = None,
     module_code: Optional[str] = None,
+    lecturer_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    generator = ClaudeChallengeGenerator(week, slide_stack_id=slide_stack_id, module_code=module_code)
+    generator = ClaudeChallengeGenerator(
+        week, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id
+    )
     return await generator.generate()
 
 
@@ -402,10 +547,13 @@ async def generate_and_save_tier(
     week: int,
     slide_stack_id: Optional[int] = None,
     module_code: Optional[str] = None,
+    lecturer_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     internal_tier = _tier_from_kind(tier)
     context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code)
     client = await get_supabase()
+    if lecturer_id is None:
+        raise ValueError("lecturer_id is required to persist generated challenges")
     payload = await _call_bedrock(internal_tier, context)
     questions = _normalise_questions(internal_tier, payload)
     challenge = await _insert_challenge(
@@ -414,17 +562,24 @@ async def generate_and_save_tier(
         context=context,
         challenge_title=payload.get("challenge_set_title") or f"Week {week} {internal_tier.title()} Challenge",
         challenge_description=f"Auto-generated {internal_tier} challenge for Week {week} covering {context.topic_title}.",
+        lecturer_id=lecturer_id,
     )
+    # Idempotency: do not insert duplicate questions if they already exist for this challenge
     stored = []
-    for idx, question in enumerate(questions, start=1):
-        stored.append(
-            await _insert_question(
-                client,
-                challenge_id=challenge.get("id"),
-                question=question,
-                order_index=idx,
+    existing_q = await client.table("questions").select("id").eq("challenge_id", challenge.get("id")).execute()
+    existing_ids = [str(r.get("id")) for r in (existing_q.data or []) if r.get("id")]
+    if existing_ids:
+        stored = [{"id": qid} for qid in existing_ids]
+    else:
+        for idx, question in enumerate(questions, start=1):
+            stored.append(
+                await _insert_question(
+                    client,
+                    challenge_id=challenge.get("id"),
+                    question=question,
+                    order_index=idx,
+                )
             )
-        )
     return {
         "topic_context": {
             "topic_id": context.topic_id,

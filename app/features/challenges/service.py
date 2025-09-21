@@ -30,7 +30,12 @@ class ChallengeService:
         challenge = await challenge_repository.get_challenge(str(req.challenge_id))
         if not challenge:
             raise ValueError("Challenge not found")
-        attempt = await challenge_repository.create_or_get_open_attempt(str(req.challenge_id), user_id)
+        # Supabase stores student_number in integer user_id column
+        try:
+            student_number = int(user_id)
+        except Exception:
+            raise ValueError("invalid_student_number")
+        attempt = await challenge_repository.create_or_get_open_attempt(str(req.challenge_id), student_number)
         if attempt.get("status") == "submitted":
             raise ValueError("challenge_already_submitted")
         snapshot = await challenge_repository.get_snapshot(attempt)

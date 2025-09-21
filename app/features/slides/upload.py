@@ -9,7 +9,7 @@ from .pathing import build_slide_object_key
 from app.DB.supabase import get_supabase
 from app.features.topic_detections.slide_extraction.pptx_extraction import extract_pptx_text
 from io import BytesIO
-from app.features.topic_detections.topics.topic_service import TopicService
+from app.features.topic_detections.topics.topic_service import TopicService, topic_service
 from app.adapters.nlp_spacy import extract_primary_topic
 from app.features.topic_detections.slide_extraction.repository_supabase import slide_extraction_supabase_repository
 
@@ -100,7 +100,7 @@ async def upload_slide_bytes(
                     
                     # Update topic with slide_extraction_id
                     if topic_uuid:
-                        await TopicService.update_slide_extraction_id(topic_uuid, sup_extraction_id)
+                        await topic_service.update_slide_extraction_id(topic_uuid, sup_extraction_id)
             except Exception:
                 pass
     except Exception as e:

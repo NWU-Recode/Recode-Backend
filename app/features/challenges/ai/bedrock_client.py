@@ -70,25 +70,6 @@ async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[s
                 parts.append(block)
         return "".join(parts).strip()
 
-    try:
-        response_body = await _invoke(payload)
-    except ClientError as ce:
-        message = str(ce)
-        if "ValidationException" in message and "stop_sequences" in message:
-            payload.pop("stop_sequences", None)
-            response_body = await _invoke(payload)
-        else:
-            raise
-
-    full_text = _extract_text(response_body)
-    if not full_text and payload.get("stop_sequences"):
-        try:
-            payload.pop("stop_sequences", None)
-            response_body = await _invoke(payload)
-            full_text = _extract_text(response_body)
-        except Exception:
-            full_text = ""
-
     tick = chr(96)
 
     def _strip_code_fences(text: str) -> str:
@@ -123,13 +104,46 @@ async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[s
         cleaned = text.strip().strip(tick)
         return json.loads(cleaned)
 
+    def _coerce_json(value: Any) -> Any:
+        while isinstance(value, str):
+            value = json.loads(value)
+        return value
+
+    def _ensure_dict(value: Any, error_message: str) -> Dict[str, Any]:
+        coerced = _coerce_json(value)
+        if not isinstance(coerced, dict):
+            raise ValueError(error_message)
+        return coerced
+
     try:
+        try:
+            raw_response = await _invoke(payload)
+        except ClientError as ce:
+            message = str(ce)
+            if "ValidationException" in message and "stop_sequences" in message:
+                payload.pop("stop_sequences", None)
+                raw_response = await _invoke(payload)
+            else:
+                raise
+
+        response_body = _ensure_dict(raw_response, "Bedrock response is not a JSON object")
+        full_text = _extract_text(response_body)
+
+        if not full_text and payload.get("stop_sequences"):
+            try:
+                payload.pop("stop_sequences", None)
+                retry_response = await _invoke(payload)
+                response_body = _ensure_dict(retry_response, "Bedrock response is not a JSON object")
+                full_text = _extract_text(response_body)
+            except Exception:
+                full_text = ""
+
         if not full_text:
             raise ValueError(f"Empty response content: {json.dumps(response_body)[:500]}")
 
-        result = _try_parse_json(full_text)
-        if not isinstance(result, dict):
-            raise ValueError("Response is not a JSON object")
+        parsed = _try_parse_json(full_text)
+        result = _ensure_dict(parsed, "Response is not a JSON object")
+
         if "challenge_set_title" not in result or "questions" not in result:
             raise ValueError("Response missing required fields: challenge_set_title or questions")
         if not isinstance(result["questions"], list):
