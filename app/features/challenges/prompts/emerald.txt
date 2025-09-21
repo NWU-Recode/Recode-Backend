@@ -1,37 +1,42 @@
-You are an expert coding tutor creating expert-level challenges for competitive programmers.
-This coding challenge should be beginner-friendly, and intermediate-friendly, but always clear, and concise.
-GOAL:
-- Generate ONE expert-level coding challenge based on the topics: {{topics_list}}
-- The challenge MUST include:
-  - A descriptive "title" field (highly technical and specific)
-  - Extremely comprehensive problem statement with multiple layers of complexity
-- Include one "challenge_set_title" for the challenge set.
+You are a reassuring coding mentor preparing the Emerald challenge for Week {{week_number}}.
+Treat this as a guided mini-project that stays beginner-friendly but introduces additional context and information to process.
 
-DIFFICULTY: Emerald (expert algorithms, advanced data structures, mathematical optimization)
+CONTEXT:
+- Focus topic: {{topic_title}}
+- Supporting ideas to reference: {{topics_list}}
+
+GOAL:
+- Produce EXACTLY ONE Python challenge that resembles a realistic scenario with several parts to complete in sequence.
+- Include one "challenge_set_title" describing the scenario.
+- Supply the fields below:
+  - "title": informative, project-style heading.
+  - "question_text": story-driven instructions with numbered subtasks, explicit input/output specification, and at least two sample runs explaining the calculations.
+  - "difficulty_level": must be "Emerald".
+  - "starter_code": structured template (e.g. skeleton classes or helper functions) showing where to place each solution step.
+  - "reference_solution": polished Python 3.10 solution with comments signalling each subtask and gentle reminders about key ideas.
+  - "tests": at least 5 cases with varied sizes, first marked "public", remaining marked "private". Ensure expected outputs are precise and fully evaluated.
 
 STRICT REQUIREMENTS:
-- Language: Python 3.10 (Judge0 language_id=71)
-- Standard library only
-- Deterministic I/O (no randomness, no time-dependence, no interactive input)
-- Highly complex problem requiring advanced algorithmic techniques
-- Multiple constraints, mathematical properties, and optimization requirements
-- Reference solution must be:
-  - Most optimal algorithm possible (theoretical best complexity)
-  - Mathematical proof of correctness in comments
-  - Handle extreme edge cases and large inputs efficiently
-- Do NOT include a test_cases array
-- JSON must be valid, with proper escaping
+- Language: Python 3.10 (Judge0 language_id=71).
+- Standard library only.
+- Deterministic results; avoid randomness, time-dependent behaviour, or networking.
+- The challenge should feel bigger because of the narrative and calculations, not because it requires advanced algorithms. Loops, collections, and simple parsing are acceptable.
+- JSON output only; escape newlines with 
+ and quotes with \".
 
-OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
+OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
 {
   "challenge_set_title": "string",
   "questions": [
     {
-      "title": "highly technical title of the expert challenge",
-      "question_text": "extremely comprehensive problem statement with mathematical constraints, multiple optimization requirements, and complex examples",
+      "title": "string",
+      "question_text": "string",
       "difficulty_level": "Emerald",
-      "starter_code": "minimal skeleton or empty string",
-      "reference_solution": "theoretically optimal solution with mathematical comments and proofs"
+      "starter_code": "string",
+      "reference_solution": "string",
+      "tests": [
+        {"input": "string", "expected": "string", "visibility": "public|private"}
+      ]
     }
   ]
 }

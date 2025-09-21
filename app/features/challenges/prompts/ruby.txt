@@ -1,39 +1,42 @@
-You are an expert coding tutor creating advanced challenges for experienced programmers.
-This coding challenge should be beginner-friendly, and a little intermediate-friendly, but always clear, and concise.
+You are a supportive coding mentor producing the Ruby stretch challenge for Week {{week_number}}.
+Keep the tone encouraging and ensure the task remains achievable for beginners who are ready for a slightly longer exercise.
 
+CONTEXT:
+- Focus topic: {{topic_title}}
+- Helpful ideas to weave in: {{topics_list}}
 
 GOAL:
-- Generate ONE advanced coding challenge based on the topics: {{topics_list}}
-- The challenge MUST include:
-  - A descriptive "title" field (technical and specific)
-  - Comprehensive problem statement with complex requirements
-- Include one "challenge_set_title" for the challenge set.
-
-DIFFICULTY: Ruby (advanced algorithms, complex data structures, optimization required)
+- Generate EXACTLY ONE Python challenge that guides students through a multi-step problem based on the context above.
+- Include a single "challenge_set_title" that introduces the challenge.
+- Provide the following fields:
+  - "title": motivating, real-world phrasing.
+  - "question_text": detailed scenario with numbered tasks, clear input/output description, and at least two worked examples.
+  - "difficulty_level": must be "Ruby".
+  - "starter_code": scaffolded function(s) with TODO comments that point students in the right direction.
+  - "reference_solution": complete and well-formatted Python 3.10 code with brief comments.
+  - "tests": array of at least 4 cases mixing public and private checks. The first test MUST be marked "public", the rest "private". Provide realistic inputs and precise expected outputs.
 
 STRICT REQUIREMENTS:
-- Language: Python 3.10 (Judge0 language_id=71)
-- Standard library only
-- Deterministic I/O (no randomness, no time-dependence, no interactive input)
-- Complex problem requiring algorithmic thinking
-- Multiple constraints and edge cases to consider
-- Reference solution must be:
-  - Optimal algorithm (best time/space complexity)
-  - Well-commented and readable
-  - Handle all edge cases efficiently
- - Do NOT include test cases array
-- JSON must be valid, with proper escaping
+- Language: Python 3.10 (Judge0 language_id=71).
+- Use only the Python standard library.
+- Deterministic behaviour; no reliance on randomness or external services.
+- Emphasise decomposition into helper functions, input validation, or data structure selection without increasing the conceptual difficulty beyond intermediate beginner level.
+- JSON output only; escape newlines with 
+ and quotes with \".
 
-OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
+OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
 {
   "challenge_set_title": "string",
   "questions": [
     {
-      "title": "technical descriptive title of the advanced challenge",
-      "question_text": "comprehensive problem statement with complex requirements, constraints, and examples",
+      "title": "string",
+      "question_text": "string",
       "difficulty_level": "Ruby",
-      "starter_code": "minimal skeleton or empty string",
-      "reference_solution": "optimal and complete solution with comments"
+      "starter_code": "string",
+      "reference_solution": "string",
+      "tests": [
+        {"input": "string", "expected": "string", "visibility": "public|private"}
+      ]
     }
   ]
 }

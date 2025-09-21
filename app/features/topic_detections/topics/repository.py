@@ -46,6 +46,10 @@ class TopicRepository:
             payload["subtopics"] = subtopics
         if slides_key is not None:
             payload["slides_key"] = slides_key
+        if detected_topic is not None:
+            payload["detected_topic"] = detected_topic
+        if detected_subtopics is not None:
+            payload["detected_subtopics"] = detected_subtopics
         if slide_extraction_id is not None:
             payload["slide_extraction_id"] = slide_extraction_id
         if module_code_slidesdeck is not None:

@@ -1,10 +1,13 @@
-import boto3
+from __future__ import annotations
+
+import asyncio
 import json
-import os
-import re
-from typing import Dict, Any
-from app.Core.config import get_settings
+from typing import Any, Dict, List, Optional
+
+import boto3
 from botocore.exceptions import ClientError
+
+from app.Core.config import get_settings
 
 settings = get_settings()
 
@@ -12,24 +15,15 @@ bedrock = boto3.client(
     service_name="bedrock-runtime",
     region_name=settings.aws_region,
     aws_access_key_id=settings.aws_access_key_id,
-    aws_secret_access_key=settings.aws_secret_access_key
+    aws_secret_access_key=settings.aws_secret_access_key,
 )
 
-def invoke_claude(prompt: str, max_tokens: int = None) -> Dict[str, Any]:
-    """
-    Invoke Claude model via AWS Bedrock.
-    
-    Args:
-        prompt: The prompt to send to Claude
-        max_tokens: Maximum tokens to generate (optional, uses config default)
-        
-    Returns:
-        Parsed JSON response from Claude
-    """
+
+async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[str, Any]:
+    """Invoke the configured Claude model on AWS Bedrock and return a validated JSON payload."""
     if max_tokens is None:
         max_tokens = settings.bedrock_max_tokens
-    
-    # Sanitize stop sequences: remove empty/whitespace-only entries
+
     raw_stops = settings.bedrock_stop_sequences or []
     safe_stops = [s for s in raw_stops if isinstance(s, str) and s.strip()]
 
@@ -43,98 +37,90 @@ def invoke_claude(prompt: str, max_tokens: int = None) -> Dict[str, Any]:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt}
-                ]
+                    {"type": "text", "text": prompt},
+                ],
             }
-        ]
+        ],
     }
     if safe_stops:
         payload["stop_sequences"] = safe_stops
 
-    body = json.dumps(payload)
-    
-    def _invoke(body_json: str):
-        return bedrock.invoke_model(
-            modelId=settings.bedrock_model_id,
-            body=body_json,
-            contentType="application/json",
-            accept="application/json"
-        )
+    async def _invoke(payload_dict: Dict[str, Any]) -> Dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        body_json = json.dumps(payload_dict)
+
+        def _call() -> Dict[str, Any]:
+            response = bedrock.invoke_model(
+                modelId=settings.bedrock_model_id,
+                body=body_json,
+                contentType="application/json",
+                accept="application/json",
+            )
+            return json.loads(response["body"].read())
+
+        return await loop.run_in_executor(None, _call)
 
     def _extract_text(resp_body: Dict[str, Any]) -> str:
-        content_list = resp_body.get('content') or []
-        text_parts = []
+        content_list = resp_body.get("content") or []
+        parts: List[str] = []
         for block in content_list:
-            if isinstance(block, dict) and block.get('type') == 'text':
-                text_parts.append(block.get('text') or '')
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text") or ""))
             elif isinstance(block, str):
-                text_parts.append(block)
-        return ''.join(text_parts).strip()
+                parts.append(block)
+        return "".join(parts).strip()
 
     try:
-        response = _invoke(body)
+        response_body = await _invoke(payload)
     except ClientError as ce:
-        msg = str(ce)
-        if "ValidationException" in msg and "stop_sequences" in msg:
-            # Retry without stop sequences
-            try:
-                payload.pop("stop_sequences", None)
-                body_no_stops = json.dumps(payload)
-                response = _invoke(body_no_stops)
-            except Exception as e2:
-                raise ValueError(f"Bedrock invoke failed after removing stop_sequences: {e2}")
+        message = str(ce)
+        if "ValidationException" in message and "stop_sequences" in message:
+            payload.pop("stop_sequences", None)
+            response_body = await _invoke(payload)
         else:
             raise
 
-    response_body = json.loads(response['body'].read())
-
-    # If we got no content due to early stop on a stop_sequence, retry once without stop sequences
     full_text = _extract_text(response_body)
     if not full_text and payload.get("stop_sequences"):
-        stop_reason = response_body.get('stop_reason')
-        if stop_reason == 'stop_sequence':
-            try:
-                payload.pop("stop_sequences", None)
-                response = _invoke(json.dumps(payload))
-                response_body = json.loads(response['body'].read())
-                full_text = _extract_text(response_body)
-            except Exception as e:
-                # fall through to normal error handling
-                full_text = ""
-
-    # Extract the JSON from Claude's response
-    # Claude returns text that should be valid JSON matching the specified format
-    def _try_parse_json(text: str) -> Any:
-        # direct
         try:
-            return json.loads(text)
+            payload.pop("stop_sequences", None)
+            response_body = await _invoke(payload)
+            full_text = _extract_text(response_body)
         except Exception:
-            pass
-        # strip code fences ```json ... ``` or ``` ... ```
-        fence_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
-        if fence_match:
-            inner = fence_match.group(1).strip()
+            full_text = ""
+
+    tick = chr(96)
+
+    def _strip_code_fences(text: str) -> str:
+        stripped = text.strip()
+        if stripped.startswith(tick * 3):
+            stripped = stripped.strip(tick)
+            lowered = stripped.lower()
+            if lowered.startswith("json"):
+                stripped = stripped[4:].lstrip()
+        return stripped
+
+    def _try_parse_json(text: str) -> Any:
+        for candidate in (text, _strip_code_fences(text)):
             try:
-                return json.loads(inner)
+                return json.loads(candidate)
             except Exception:
                 pass
-        # extract first balanced JSON object
-        start = text.find('{')
+        start = text.find("{")
         if start != -1:
             depth = 0
-            for i, ch in enumerate(text[start:], start=start):
-                if ch == '{':
+            for index, ch in enumerate(text[start:], start=start):
+                if ch == "{":
                     depth += 1
-                elif ch == '}':
+                elif ch == "}":
                     depth -= 1
                     if depth == 0:
-                        candidate = text[start:i+1]
+                        slice_text = text[start : index + 1]
                         try:
-                            return json.loads(candidate)
+                            return json.loads(slice_text)
                         except Exception:
                             break
-        # last attempt: remove leading/trailing junk and try again
-        cleaned = text.strip().lstrip('`').rstrip('`').strip()
+        cleaned = text.strip().strip(tick)
         return json.loads(cleaned)
 
     try:
@@ -142,28 +128,35 @@ def invoke_claude(prompt: str, max_tokens: int = None) -> Dict[str, Any]:
             raise ValueError(f"Empty response content: {json.dumps(response_body)[:500]}")
 
         result = _try_parse_json(full_text)
-        # Validate the structure matches expected format
         if not isinstance(result, dict):
             raise ValueError("Response is not a JSON object")
-
-        if 'challenge_set_title' not in result or 'questions' not in result:
+        if "challenge_set_title" not in result or "questions" not in result:
             raise ValueError("Response missing required fields: challenge_set_title or questions")
-
-        if not isinstance(result['questions'], list):
+        if not isinstance(result["questions"], list):
             raise ValueError("questions field must be an array")
 
-        # Validate each question structure
-        for i, question in enumerate(result['questions']):
-            required_fields = ['title', 'question_text', 'difficulty_level', 'starter_code', 'reference_solution']
+        valid_difficulties = {"Bronze", "Silver", "Gold", "Ruby", "Emerald", "Diamond"}
+        for index, question in enumerate(result["questions"]):
+            required_fields = ["title", "question_text", "difficulty_level", "starter_code", "reference_solution"]
             for field in required_fields:
                 if field not in question:
-                    raise ValueError(f"Question {i} missing required field: {field}")
-
-            # Validate difficulty levels
-            valid_difficulties = ['Bronze', 'Silver', 'Gold', 'Ruby', 'Emerald', 'Diamond']
-            if question['difficulty_level'] not in valid_difficulties:
-                raise ValueError(f"Question {i} has invalid difficulty_level: {question['difficulty_level']}")
+                    raise ValueError(f"Question {index} missing required field: {field}")
+            difficulty = question.get("difficulty_level")
+            if difficulty not in valid_difficulties:
+                raise ValueError(f"Question {index} has invalid difficulty_level: {difficulty}")
+            tests = question.get("tests")
+            if tests is not None:
+                if not isinstance(tests, list):
+                    raise ValueError(f"Question {index} has non-list tests field")
+                for test in tests:
+                    if not isinstance(test, dict):
+                        raise ValueError(f"Question {index} has invalid test item: {test}")
+                    if "input" not in test or "expected" not in test:
+                        raise ValueError(f"Question {index} test missing input/expected")
+                    visibility = str(test.get("visibility", "private"))
+                    if visibility not in {"public", "private"}:
+                        raise ValueError(f"Question {index} test has invalid visibility: {visibility}")
 
         return result
-    except (KeyError, json.JSONDecodeError, ValueError) as e:
-        raise ValueError(f"Failed to parse Claude response: {e}")
+    except (KeyError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"Failed to parse Claude response: {exc}")
