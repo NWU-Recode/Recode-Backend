@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, Any, Optional, List
 import re
 
-from app.features.topics.repository import TopicRepository
+from .repository import TopicRepository
 from app.adapters.nlp_spacy import extract_primary_topic
 
 

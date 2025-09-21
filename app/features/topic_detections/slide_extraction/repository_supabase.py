@@ -15,5 +15,13 @@ class SlideExtractionSupabaseRepository:
         except Exception:
             return None
 
+    async def update_extraction(self, extraction_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        client = await get_supabase()
+        try:
+            resp = await client.table(self.table).update(data).eq("id", extraction_id).execute()
+            return resp.data[0] if getattr(resp, "data", None) else None
+        except Exception:
+            return None
+
 
 slide_extraction_supabase_repository = SlideExtractionSupabaseRepository()

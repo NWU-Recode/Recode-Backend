@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
-from app.features.topics.schemas import TopicCreate, TopicResponse
-from app.features.topics.service import create_from_slides
+from app.features.topic_detections.topics.schemas import TopicCreate, TopicResponse
+from app.features.topic_detections.topics.service import create_from_slides
 
 router = APIRouter()
 

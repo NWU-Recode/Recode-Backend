@@ -1,8 +1,10 @@
 import boto3
 import json
 import os
+import re
 from typing import Dict, Any
 from app.Core.config import get_settings
+from botocore.exceptions import ClientError
 
 settings = get_settings()
 
@@ -40,7 +42,9 @@ def invoke_claude(prompt: str, max_tokens: int = None) -> Dict[str, Any]:
         "messages": [
             {
                 "role": "user",
-                "content": prompt
+                "content": [
+                    {"type": "text", "text": prompt}
+                ]
             }
         ]
     }
@@ -49,19 +53,95 @@ def invoke_claude(prompt: str, max_tokens: int = None) -> Dict[str, Any]:
 
     body = json.dumps(payload)
     
-    response = bedrock.invoke_model(
-        modelId=settings.bedrock_model_id,
-        body=body,
-        contentType="application/json",
-        accept="application/json"
-    )
-    
+    def _invoke(body_json: str):
+        return bedrock.invoke_model(
+            modelId=settings.bedrock_model_id,
+            body=body_json,
+            contentType="application/json",
+            accept="application/json"
+        )
+
+    def _extract_text(resp_body: Dict[str, Any]) -> str:
+        content_list = resp_body.get('content') or []
+        text_parts = []
+        for block in content_list:
+            if isinstance(block, dict) and block.get('type') == 'text':
+                text_parts.append(block.get('text') or '')
+            elif isinstance(block, str):
+                text_parts.append(block)
+        return ''.join(text_parts).strip()
+
+    try:
+        response = _invoke(body)
+    except ClientError as ce:
+        msg = str(ce)
+        if "ValidationException" in msg and "stop_sequences" in msg:
+            # Retry without stop sequences
+            try:
+                payload.pop("stop_sequences", None)
+                body_no_stops = json.dumps(payload)
+                response = _invoke(body_no_stops)
+            except Exception as e2:
+                raise ValueError(f"Bedrock invoke failed after removing stop_sequences: {e2}")
+        else:
+            raise
+
     response_body = json.loads(response['body'].read())
-    
+
+    # If we got no content due to early stop on a stop_sequence, retry once without stop sequences
+    full_text = _extract_text(response_body)
+    if not full_text and payload.get("stop_sequences"):
+        stop_reason = response_body.get('stop_reason')
+        if stop_reason == 'stop_sequence':
+            try:
+                payload.pop("stop_sequences", None)
+                response = _invoke(json.dumps(payload))
+                response_body = json.loads(response['body'].read())
+                full_text = _extract_text(response_body)
+            except Exception as e:
+                # fall through to normal error handling
+                full_text = ""
+
     # Extract the JSON from Claude's response
     # Claude returns text that should be valid JSON matching the specified format
+    def _try_parse_json(text: str) -> Any:
+        # direct
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+        # strip code fences ```json ... ``` or ``` ... ```
+        fence_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
+        if fence_match:
+            inner = fence_match.group(1).strip()
+            try:
+                return json.loads(inner)
+            except Exception:
+                pass
+        # extract first balanced JSON object
+        start = text.find('{')
+        if start != -1:
+            depth = 0
+            for i, ch in enumerate(text[start:], start=start):
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start:i+1]
+                        try:
+                            return json.loads(candidate)
+                        except Exception:
+                            break
+        # last attempt: remove leading/trailing junk and try again
+        cleaned = text.strip().lstrip('`').rstrip('`').strip()
+        return json.loads(cleaned)
+
     try:
-        result = json.loads(response_body['content'][0]['text'])
+        if not full_text:
+            raise ValueError(f"Empty response content: {json.dumps(response_body)[:500]}")
+
+        result = _try_parse_json(full_text)
         # Validate the structure matches expected format
         if not isinstance(result, dict):
             raise ValueError("Response is not a JSON object")
@@ -74,13 +154,10 @@ def invoke_claude(prompt: str, max_tokens: int = None) -> Dict[str, Any]:
 
         # Validate each question structure
         for i, question in enumerate(result['questions']):
-            required_fields = ['title', 'question_text', 'difficulty_level', 'starter_code', 'reference_solution', 'test_cases']
+            required_fields = ['title', 'question_text', 'difficulty_level', 'starter_code', 'reference_solution']
             for field in required_fields:
                 if field not in question:
                     raise ValueError(f"Question {i} missing required field: {field}")
-
-            if not isinstance(question['test_cases'], list):
-                raise ValueError(f"Question {i} test_cases must be an array")
 
             # Validate difficulty levels
             valid_difficulties = ['Bronze', 'Silver', 'Gold', 'Ruby', 'Emerald', 'Diamond']

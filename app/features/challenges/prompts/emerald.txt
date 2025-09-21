@@ -19,7 +19,7 @@ STRICT REQUIREMENTS:
   - Most optimal algorithm possible (theoretical best complexity)
   - Mathematical proof of correctness in comments
   - Handle extreme edge cases and large inputs efficiently
-- Test cases: minimum 7 (including extreme edge cases, large inputs, and mathematical boundaries)
+- Do NOT include a test_cases array
 - JSON must be valid, with proper escaping
 
 OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
@@ -31,16 +31,7 @@ OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
       "question_text": "extremely comprehensive problem statement with mathematical constraints, multiple optimization requirements, and complex examples",
       "difficulty_level": "Emerald",
       "starter_code": "minimal skeleton or empty string",
-      "reference_solution": "theoretically optimal solution with mathematical comments and proofs",
-      "test_cases": [
-        {"input": "standard input", "expected_output": "expected output"},
-        {"input": "mathematical edge case", "expected_output": "mathematical boundary output"},
-        {"input": "large scale input", "expected_output": "expected output"},
-        {"input": "extreme boundary condition", "expected_output": "extreme boundary output"},
-        {"input": "mathematical corner case", "expected_output": "corner case output"},
-        {"input": "performance stress test", "expected_output": "stress test output"},
-        {"input": "theoretical boundary test", "expected_output": "theoretical boundary output"}
-      ]
+      "reference_solution": "theoretically optimal solution with mathematical comments and proofs"
     }
   ]
 }

@@ -22,7 +22,7 @@ STRICT REQUIREMENTS:
   - Correct and tested against all provided test cases
   - Efficient (<2s runtime for max input)
   - Idiomatic Python with comments for clarity
-- Test cases: minimum 3 per question (basic, edge, comprehensive)
+- Do NOT include a test_cases array
 - JSON must be valid, with proper escaping (\\n for newlines, \\" for quotes)
 
 OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
@@ -34,12 +34,7 @@ OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
       "question_text": "complete problem statement with format specifications and examples",
       "difficulty_level": "Bronze|Silver|Gold",
       "starter_code": "functional skeleton or empty string",
-      "reference_solution": "complete and correct solution",
-      "test_cases": [
-        {"input": "exact input", "expected_output": "exact output"},
-        {"input": "edge case input", "expected_output": "edge case output"},
-        {"input": "comprehensive input", "expected_output": "comprehensive output"}
-      ]
+      "reference_solution": "complete and correct solution"
     }
   ]
 }

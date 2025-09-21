@@ -19,7 +19,7 @@ STRICT REQUIREMENTS:
   - Optimal algorithm (best time/space complexity)
   - Well-commented and readable
   - Handle all edge cases efficiently
-- Test cases: minimum 5 (including stress tests and edge cases)
+ - Do NOT include test cases array
 - JSON must be valid, with proper escaping
 
 OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
@@ -31,14 +31,7 @@ OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
       "question_text": "comprehensive problem statement with complex requirements, constraints, and examples",
       "difficulty_level": "Ruby",
       "starter_code": "minimal skeleton or empty string",
-      "reference_solution": "optimal and complete solution with comments",
-      "test_cases": [
-        {"input": "standard input", "expected_output": "expected output"},
-        {"input": "edge case input", "expected_output": "edge case output"},
-        {"input": "large input for performance", "expected_output": "expected output"},
-        {"input": "boundary condition", "expected_output": "boundary output"},
-        {"input": "stress test input", "expected_output": "stress test output"}
-      ]
+      "reference_solution": "optimal and complete solution with comments"
     }
   ]
 }

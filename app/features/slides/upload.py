@@ -7,11 +7,11 @@ from typing import Dict, Any
 
 from .pathing import build_slide_object_key
 from app.DB.supabase import get_supabase
-from app.features.questions.slide_extraction.pptx_extraction import extract_pptx_text
+from app.features.topic_detections.slide_extraction.pptx_extraction import extract_pptx_text
 from io import BytesIO
-from app.features.topics.service import TopicService
+from app.features.topic_detections.topics.service import TopicService
 from app.adapters.nlp_spacy import extract_primary_topic
-from app.features.questions.slide_extraction.repository_supabase import slide_extraction_supabase_repository
+from app.features.topic_detections.slide_extraction.repository_supabase import slide_extraction_supabase_repository
 
 
 async def _maybe_await(val):

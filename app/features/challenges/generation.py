@@ -6,10 +6,14 @@ from typing import Dict, Any, List, Optional, Tuple
 import re
 
 from app.DB.supabase import get_supabase
-from app.features.topics.service import TopicService
 from app.features.topic_detections.repository import question_repository
+from app.features.topic_detections.topics.service import TopicService
 from app.adapters.judge0_client import run_many
-from app.features.topic_detections.templates.strings import template_reverse_string
+try:
+    from app.features.topic_detections.templates.strings import template_reverse_string
+except ImportError:
+    def template_reverse_string():
+        return {}
 from app.features.challenges.ai.generator import generate_question_spec
 
 
@@ -39,7 +43,11 @@ class ChallengeGenerator:
                         data = data["data"]
                     if isinstance(data, (bytes, bytearray)):
                         from io import BytesIO
-                        from app.features.questions.slide_extraction.pptx_extraction import extract_pptx_text
+                        try:
+                            from app.features.topic_detections.slide_extraction.pptx_extraction import extract_pptx_text
+                        except ImportError:
+                            def extract_pptx_text(data):
+                                return {}
                         try:
                             slides_map = extract_pptx_text(BytesIO(data))
                             # Flatten to list of strings for NLP

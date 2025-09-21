@@ -19,7 +19,7 @@ STRICT REQUIREMENTS:
   - Best known algorithmic approach (potentially approximation or heuristic)
   - Theoretical analysis in comments (time/space complexity proofs)
   - Handle massive inputs with optimal algorithmic techniques
-- Test cases: minimum 10 (including theoretical boundaries, large-scale inputs, and algorithmic edge cases)
+- Do NOT include a test_cases array
 - JSON must be valid, with proper escaping
 
 OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
@@ -31,19 +31,7 @@ OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
       "question_text": "comprehensively detailed problem statement with theoretical depth, mathematical formulations, algorithmic constraints, and research-level examples",
       "difficulty_level": "Diamond",
       "starter_code": "minimal skeleton or empty string",
-      "reference_solution": "research-level optimal solution with theoretical analysis and complexity proofs",
-      "test_cases": [
-        {"input": "standard research input", "expected_output": "expected output"},
-        {"input": "theoretical boundary case", "expected_output": "boundary output"},
-        {"input": "large-scale computational input", "expected_output": "expected output"},
-        {"input": "algorithmic edge case", "expected_output": "edge case output"},
-        {"input": "mathematical corner case", "expected_output": "corner case output"},
-        {"input": "performance critical test", "expected_output": "performance output"},
-        {"input": "theoretical limit test", "expected_output": "theoretical limit output"},
-        {"input": "computational complexity test", "expected_output": "complexity test output"},
-        {"input": "algorithmic boundary test", "expected_output": "boundary test output"},
-        {"input": "ultimate stress test", "expected_output": "ultimate stress output"}
-      ]
+      "reference_solution": "research-level optimal solution with theoretical analysis and complexity proofs"
     }
   ]
 }
