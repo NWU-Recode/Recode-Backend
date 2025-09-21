@@ -15,5 +15,7 @@ class SlideExtraction(Base):
     slides = Column(JSONB, nullable=False)
     detected_topic = Column(String, nullable=True)
     detected_subtopics = Column(JSONB, nullable=True)
+    module_id = Column(Integer, nullable=True)
+    week_number = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

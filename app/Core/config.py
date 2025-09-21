@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from functools import lru_cache
 from dotenv import load_dotenv, find_dotenv
 
@@ -38,6 +39,31 @@ class Settings:
             self.hf_timeout_ms = int(os.getenv("HF_TIMEOUT_MS", "30000"))
         except Exception:
             self.hf_timeout_ms = 30000
+        # AWS Bedrock configuration
+        self.aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID", "")
+        self.aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+        self.aws_region = os.getenv("AWS_REGION", "us-east-1")
+        self.bedrock_model_id = os.getenv("BEDROCK_MODEL_ID", "arn:aws:bedrock:us-east-1:426567131844:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0")
+        try:
+            self.bedrock_max_tokens = int(os.getenv("BEDROCK_MAX_TOKENS", "4096"))
+        except Exception:
+            self.bedrock_max_tokens = 4096
+        try:
+            self.bedrock_temperature = float(os.getenv("BEDROCK_TEMPERATURE", "0.7"))
+        except Exception:
+            self.bedrock_temperature = 0.7
+        try:
+            self.bedrock_top_p = float(os.getenv("BEDROCK_TOP_P", "0.95"))
+        except Exception:
+            self.bedrock_top_p = 0.95
+        try:
+            self.bedrock_top_k = int(os.getenv("BEDROCK_TOP_K", "250"))
+        except Exception:
+            self.bedrock_top_k = 250
+        try:
+            self.bedrock_stop_sequences = json.loads(os.getenv("BEDROCK_STOP_SEQUENCES", '["```","</json>","\\n\\n"]'))
+        except Exception:
+            self.bedrock_stop_sequences = ["```", "</json>", "\n\n"]
         self.app_name = "Recode Backend"
         self.debug = os.getenv("DEBUG", "False").lower() == "true"
         self.dev_auto_confirm = os.getenv("DEV_AUTO_CONFIRM", "false").lower() == "true"

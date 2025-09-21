@@ -1,0 +1,46 @@
+You are an expert coding tutor creating expert-level challenges for competitive programmers.
+
+GOAL:
+- Generate ONE expert-level coding challenge based on the topics: {{topics_list}}
+- The challenge MUST include:
+  - A descriptive "title" field (highly technical and specific)
+  - Extremely comprehensive problem statement with multiple layers of complexity
+- Include one "challenge_set_title" for the challenge set.
+
+DIFFICULTY: Emerald (expert algorithms, advanced data structures, mathematical optimization)
+
+STRICT REQUIREMENTS:
+- Language: Python 3.10 (Judge0 language_id=71)
+- Standard library only
+- Deterministic I/O (no randomness, no time-dependence, no interactive input)
+- Highly complex problem requiring advanced algorithmic techniques
+- Multiple constraints, mathematical properties, and optimization requirements
+- Reference solution must be:
+  - Most optimal algorithm possible (theoretical best complexity)
+  - Mathematical proof of correctness in comments
+  - Handle extreme edge cases and large inputs efficiently
+- Test cases: minimum 7 (including extreme edge cases, large inputs, and mathematical boundaries)
+- JSON must be valid, with proper escaping
+
+OUTPUT FORMAT (STRICT JSON, NO MARKDOWN OR PROSE):
+{
+  "challenge_set_title": "string",
+  "questions": [
+    {
+      "title": "highly technical title of the expert challenge",
+      "question_text": "extremely comprehensive problem statement with mathematical constraints, multiple optimization requirements, and complex examples",
+      "difficulty_level": "Emerald",
+      "starter_code": "minimal skeleton or empty string",
+      "reference_solution": "theoretically optimal solution with mathematical comments and proofs",
+      "test_cases": [
+        {"input": "standard input", "expected_output": "expected output"},
+        {"input": "mathematical edge case", "expected_output": "mathematical boundary output"},
+        {"input": "large scale input", "expected_output": "expected output"},
+        {"input": "extreme boundary condition", "expected_output": "extreme boundary output"},
+        {"input": "mathematical corner case", "expected_output": "corner case output"},
+        {"input": "performance stress test", "expected_output": "stress test output"},
+        {"input": "theoretical boundary test", "expected_output": "theoretical boundary output"}
+      ]
+    }
+  ]
+}
