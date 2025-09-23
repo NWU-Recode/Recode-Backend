@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -87,6 +87,8 @@ class TopicContext:
     topic_title: str
     topic_slug: Optional[str]
     prompt_topics: List[str]
+    topic_ids_used: List[str] = field(default_factory=list)
+    topic_titles_used: List[str] = field(default_factory=list)
 
     def joined_topics(self) -> str:
         items = [t.strip() for t in self.prompt_topics if t and str(t).strip()]
@@ -120,16 +122,131 @@ def _ensure_list(value: Any) -> List[str]:
     return []
 
 
+
+TOPIC_WINDOW_BY_TIER = {
+    "base": 1,
+    "ruby": 2,
+    "emerald": 4,
+    "diamond": None,
+}
+
+TOPIC_LIMIT_BY_TIER = {
+    "base": 1,
+    "ruby": 2,
+    "emerald": 4,
+    "diamond": 12,
+}
+
+
+def _normalise_topic_string(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
+
+
+def _safe_week_number(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _trim_week_prefix(title: str) -> str:
+    cleaned = title.strip()
+    if ":" in cleaned:
+        head, tail = cleaned.split(":", 1)
+        if head.strip().lower().startswith("week"):
+            return tail.strip() or cleaned
+    return cleaned
+
+
+def _extract_keywords_from_topic_row(row: Dict[str, Any]) -> List[str]:
+    keywords: List[str] = []
+    primary = _normalise_topic_string(row.get("detected_topic"))
+    if primary:
+        keywords.append(primary)
+    for key in ("detected_subtopics", "subtopics"):
+        keywords.extend(_ensure_list(row.get(key)))
+    title_val = _normalise_topic_string(row.get("title"))
+    if title_val:
+        keywords.append(_trim_week_prefix(title_val))
+    slug_val = _normalise_topic_string(row.get("slug"))
+    if slug_val:
+        keywords.append(slug_val.replace("-", " "))
+    return keywords
+
+
+async def _collect_topic_rows(
+    client,
+    *,
+    week: int,
+    module_code: Optional[str],
+    window_weeks: Optional[int],
+    max_rows: Optional[int],
+) -> List[Dict[str, Any]]:
+    query = client.table("topic").select(
+        "id, week, title, slug, detected_topic, detected_subtopics, subtopics, module_code_slidesdeck, created_at"
+    )
+    if module_code:
+        query = query.eq("module_code_slidesdeck", module_code)
+    try:
+        query = query.order("week", desc=True)
+        query = query.order("created_at", desc=True)
+    except Exception:
+        try:
+            query = query.order("id", desc=True)
+        except Exception:
+            pass
+    fetch_limit = max_rows or 24
+    if window_weeks:
+        fetch_limit = max(fetch_limit, window_weeks * 4)
+    try:
+        resp = await query.limit(fetch_limit).execute()
+    except Exception:
+        resp = await query.execute()
+    rows = resp.data or []
+    filtered: List[Dict[str, Any]] = []
+    seen_ids: set = set()
+    for row in rows:
+        rid = row.get("id")
+        rid_key = str(rid) if rid is not None else None
+        if rid_key and rid_key in seen_ids:
+            continue
+        row_week = _safe_week_number(row.get("week"))
+        if row_week > week:
+            continue
+        filtered.append(row)
+        if rid_key:
+            seen_ids.add(rid_key)
+    filtered.sort(key=lambda r: (_safe_week_number(r.get("week")), str(r.get("created_at") or "")))
+    if window_weeks is not None:
+        min_week = max(1, week - window_weeks + 1)
+        filtered = [row for row in filtered if _safe_week_number(row.get("week")) >= min_week]
+    if max_rows is not None and len(filtered) > max_rows:
+        filtered = filtered[-max_rows:]
+    return filtered
+
+
 async def _fetch_topic_context(
     week: int,
     slide_stack_id: Optional[int] = None,
     module_code: Optional[str] = None,
+    tier: str = "base",
 ) -> TopicContext:
     client = await get_supabase()
+    tier_key = (tier or "base").lower()
+    window_weeks = TOPIC_WINDOW_BY_TIER.get(tier_key, 1)
+    max_rows = TOPIC_LIMIT_BY_TIER.get(tier_key, 12)
+
     topic_id: Optional[str] = None
     prompt_topics: List[str] = []
     topic_title = f"Week {week} Topic"
     topic_slug: Optional[str] = None
+    module_value = module_code
+    topic_rows: List[Dict[str, Any]] = []
 
     if slide_stack_id is not None:
         resp = await client.table("slide_extractions").select(
@@ -138,58 +255,108 @@ async def _fetch_topic_context(
         rows = resp.data or []
         if rows:
             row = rows[0]
-            topic_id = row.get("topic_id") or topic_id
-            module_code = module_code or row.get("module_code")
+            if row.get("topic_id"):
+                topic_id = str(row.get("topic_id"))
+            if not module_value and row.get("module_code"):
+                module_value = row.get("module_code")
             prompt_topics.extend(_ensure_list(row.get("detected_subtopics")))
-            if row.get("detected_topic"):
-                prompt_topics.append(str(row["detected_topic"]))
-
-    topic_row: Optional[Dict[str, Any]] = None
-    if topic_id:
-        t_resp = await client.table("topic").select(
-            "id, title, slug, detected_topic, detected_subtopics, subtopics, module_code_slidesdeck"
-        ).eq("id", topic_id).limit(1).execute()
-        t_rows = t_resp.data or []
-        if t_rows:
-            topic_row = t_rows[0]
-    if topic_row is None:
-        query = client.table("topic").select(
-            "id, title, slug, detected_topic, detected_subtopics, subtopics, module_code_slidesdeck"
-        ).eq("week", week)
-        if module_code:
-            query = query.eq("module_code_slidesdeck", module_code)
-        try:
-            query = query.order("created_at", desc=True)
-        except Exception:
+            detected_topic = row.get("detected_topic")
+            if detected_topic:
+                prompt_topics.append(str(detected_topic))
             try:
-                query = query.order("id", desc=True)
-            except Exception:
+                slide_week = int(row.get("week_number"))
+                if slide_week > 0:
+                    week = slide_week
+            except (TypeError, ValueError):
                 pass
-        t_resp = await query.limit(1).execute()
-        t_rows = t_resp.data or []
-        if t_rows:
-            topic_row = t_rows[0]
-            topic_id = topic_row.get("id")
-            if not module_code:
-                module_code = topic_row.get("module_code_slidesdeck")
 
-    if topic_row:
-        title = topic_row.get("title") or topic_row.get("slug")
-        if title:
-            topic_title = str(title)
-        topic_slug = topic_row.get("slug")
-        prompt_topics.extend(_ensure_list(topic_row.get("subtopics")))
-        prompt_topics.extend(_ensure_list(topic_row.get("detected_subtopics")))
-        if topic_row.get("detected_topic"):
-            prompt_topics.append(str(topic_row["detected_topic"]))
+    topic_rows = await _collect_topic_rows(
+        client,
+        week=week,
+        module_code=module_value,
+        window_weeks=window_weeks,
+        max_rows=max_rows,
+    )
+
+    if topic_id and all(str(r.get("id")) != topic_id for r in topic_rows):
+        try:
+            t_resp = await client.table("topic").select(
+                "id, week, title, slug, detected_topic, detected_subtopics, subtopics, module_code_slidesdeck, created_at"
+            ).eq("id", topic_id).limit(1).execute()
+            t_rows = t_resp.data or []
+            if t_rows:
+                topic_rows.append(t_rows[0])
+        except Exception:
+            pass
+
+    topic_rows.sort(key=lambda r: (_safe_week_number(r.get("week")), str(r.get("created_at") or "")))
+
+    topic_ids_used: List[str] = []
+    topic_titles_used: List[str] = []
+    for row in topic_rows:
+        rid = row.get("id")
+        if rid is not None:
+            rid_str = str(rid)
+            if rid_str not in topic_ids_used:
+                topic_ids_used.append(rid_str)
+        title_val = row.get("title") or row.get("detected_topic")
+        if title_val:
+            cleaned_title = _trim_week_prefix(str(title_val))
+            if cleaned_title and cleaned_title not in topic_titles_used:
+                topic_titles_used.append(cleaned_title)
+        prompt_topics.extend(_extract_keywords_from_topic_row(row))
+        if not module_value:
+            module_value = row.get("module_code_slidesdeck") or module_value
+
+    primary_row: Optional[Dict[str, Any]] = None
+    if topic_id:
+        primary_row = next((row for row in topic_rows if str(row.get("id")) == str(topic_id)), None)
+    if primary_row is None:
+        for row in topic_rows:
+            if _safe_week_number(row.get("week")) == week:
+                primary_row = row
+                break
+    if primary_row is None and topic_rows:
+        primary_row = topic_rows[-1]
+
+    if primary_row:
+        topic_title_candidate = primary_row.get("title") or primary_row.get("detected_topic")
+        if topic_title_candidate:
+            topic_title = str(topic_title_candidate)
+        topic_slug_candidate = primary_row.get("slug")
+        if topic_slug_candidate:
+            topic_slug = str(topic_slug_candidate)
+        if primary_row.get("id"):
+            topic_id = str(primary_row.get("id"))
+        if not module_value:
+            module_value = primary_row.get("module_code_slidesdeck") or module_value
+
+    cleaned_prompt: List[str] = []
+    seen_keys: set = set()
+    for item in prompt_topics:
+        normalised = _normalise_topic_string(item)
+        if not normalised:
+            continue
+        key = normalised.lower()
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        cleaned_prompt.append(normalised)
+    if not cleaned_prompt:
+        cleaned_prompt = DEFAULT_TOPICS
+
+    if not topic_ids_used and topic_id:
+        topic_ids_used = [topic_id]
 
     context = TopicContext(
         week=week,
-        module_code=module_code,
+        module_code=module_value,
         topic_id=str(topic_id) if topic_id else None,
         topic_title=topic_title,
         topic_slug=topic_slug,
-        prompt_topics=prompt_topics or DEFAULT_TOPICS,
+        prompt_topics=cleaned_prompt,
+        topic_ids_used=topic_ids_used,
+        topic_titles_used=topic_titles_used,
     )
     return context
 
@@ -437,22 +604,33 @@ class ClaudeChallengeGenerator:
             self._client = await get_supabase()
         return self._client
 
+
     async def generate(self) -> Dict[str, Any]:
-        context = await _fetch_topic_context(
-            self.week,
-            slide_stack_id=self.slide_stack_id,
-            module_code=self.module_code,
-        )
         client = await self._client_handle()
 
         if self.lecturer_id is None:
             raise ValueError("lecturer_id is required to persist generated challenges")
 
         created: Dict[str, Optional[Dict[str, Any]]] = {"base": None, "ruby": None, "emerald": None, "diamond": None}
-        topics_used = context.joined_topics()
+        tiers = ["base", "ruby", "emerald", "diamond"]
+        tier_contexts: Dict[str, TopicContext] = {}
+
+        async def _context_for(tier: str) -> TopicContext:
+            key = tier.lower()
+            existing = tier_contexts.get(key)
+            if existing is None:
+                existing = await _fetch_topic_context(
+                    self.week,
+                    slide_stack_id=self.slide_stack_id,
+                    module_code=self.module_code,
+                    tier=key,
+                )
+                tier_contexts[key] = existing
+            return existing
 
         async def _generate_and_store(tier: str) -> Optional[Dict[str, Any]]:
             try:
+                context = await _context_for(tier)
                 payload = await _call_bedrock(tier, context)
                 questions = _normalise_questions(tier, payload)
                 challenge = await _insert_challenge(
@@ -463,12 +641,10 @@ class ClaudeChallengeGenerator:
                     challenge_description=f"Auto-generated {tier} challenge for Week {self.week} covering {context.topic_title}.",
                     lecturer_id=self.lecturer_id,
                 )
-                # Idempotency: avoid duplicating questions if challenge already exists with questions
                 existing_q = await client.table("questions").select("id").eq("challenge_id", challenge.get("id")).execute()
                 existing_ids = [str(r.get("id")) for r in (existing_q.data or []) if r.get("id")]
                 stored_questions = []
                 if existing_ids:
-                    # Return existing mapping without inserting duplicates
                     stored_questions = [{"id": qid} for qid in existing_ids]
                 else:
                     for idx, question in enumerate(questions, start=1):
@@ -482,21 +658,39 @@ class ClaudeChallengeGenerator:
                 return {
                     "challenge_id": str(challenge.get("id")),
                     "question_ids": [str(q.get("id")) for q in stored_questions],
+                    "topics_used": context.joined_topics(),
+                    "topic_ids_used": context.topic_ids_used,
                 }
             except Exception as exc:
                 print(f"[claude-generator] Skipped {tier}: {exc}")
                 return None
 
-        tiers = ["base", "ruby", "emerald", "diamond"]
         results = await asyncio.gather(*(_generate_and_store(t) for t in tiers))
         for tier_name, tier_result in zip(tiers, results):
             created[tier_name] = tier_result
 
+        topics_used_by_tier: Dict[str, str] = {}
+        topic_ids_by_tier: Dict[str, List[str]] = {}
+        topic_titles_by_tier: Dict[str, List[str]] = {}
+        for tier_name in tiers:
+            context = tier_contexts.get(tier_name)
+            if context:
+                topics_used_by_tier[tier_name] = context.joined_topics()
+                topic_ids_by_tier[tier_name] = context.topic_ids_used
+                topic_titles_by_tier[tier_name] = context.topic_titles_used
+
+        base_context = tier_contexts.get("base")
+        module_value = base_context.module_code if base_context else self.module_code
+        topic_id_value = base_context.topic_id if base_context else None
+
         return {
             "week": self.week,
-            "topics_used": topics_used,
-            "topic_id": context.topic_id,
-            "module_code": context.module_code,
+            "topics_used": topics_used_by_tier.get("base") or "",
+            "topics_used_by_tier": topics_used_by_tier,
+            "topic_id": topic_id_value,
+            "topic_ids_by_tier": topic_ids_by_tier,
+            "topic_titles_by_tier": topic_titles_by_tier,
+            "module_code": module_value,
             "created": created,
             "status": "completed",
         }
@@ -518,6 +712,7 @@ async def generate_challenges_with_claude(
     return await generator.generate()
 
 
+
 async def generate_tier_preview(
     tier: str,
     week: int,
@@ -525,7 +720,7 @@ async def generate_tier_preview(
     module_code: Optional[str] = None,
 ) -> Dict[str, Any]:
     internal_tier = _tier_from_kind(tier)
-    context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code)
+    context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code, tier=internal_tier)
     payload = await _call_bedrock(internal_tier, context)
     questions = _normalise_questions(internal_tier, payload)
     return {
@@ -534,12 +729,15 @@ async def generate_tier_preview(
             "topic_title": context.topic_title,
             "module_code": context.module_code,
             "topics_list": context.joined_topics(),
+            "topic_ids_used": context.topic_ids_used,
+            "topic_titles_used": context.topic_titles_used,
         },
         "challenge_data": {
             "challenge_set_title": payload.get("challenge_set_title"),
             "questions": questions,
         },
     }
+
 
 
 async def generate_and_save_tier(
@@ -550,7 +748,7 @@ async def generate_and_save_tier(
     lecturer_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     internal_tier = _tier_from_kind(tier)
-    context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code)
+    context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code, tier=internal_tier)
     client = await get_supabase()
     if lecturer_id is None:
         raise ValueError("lecturer_id is required to persist generated challenges")
@@ -564,7 +762,6 @@ async def generate_and_save_tier(
         challenge_description=f"Auto-generated {internal_tier} challenge for Week {week} covering {context.topic_title}.",
         lecturer_id=lecturer_id,
     )
-    # Idempotency: do not insert duplicate questions if they already exist for this challenge
     stored = []
     existing_q = await client.table("questions").select("id").eq("challenge_id", challenge.get("id")).execute()
     existing_ids = [str(r.get("id")) for r in (existing_q.data or []) if r.get("id")]
@@ -586,6 +783,8 @@ async def generate_and_save_tier(
             "topic_title": context.topic_title,
             "module_code": context.module_code,
             "topics_list": context.joined_topics(),
+            "topic_ids_used": context.topic_ids_used,
+            "topic_titles_used": context.topic_titles_used,
         },
         "challenge": challenge,
         "questions": stored,
@@ -593,15 +792,20 @@ async def generate_and_save_tier(
     }
 
 
+
 async def fetch_topic_context_summary(
     week: int,
     slide_stack_id: Optional[int] = None,
     module_code: Optional[str] = None,
+    tier: str = "base",
 ) -> Dict[str, Any]:
-    context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code)
+    context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code, tier=tier)
     return {
         "topic_id": context.topic_id,
         "topic_title": context.topic_title,
         "module_code": context.module_code,
         "topics_list": context.joined_topics(),
+        "topic_ids_used": context.topic_ids_used,
+        "topic_titles_used": context.topic_titles_used,
     }
+
