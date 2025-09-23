@@ -142,7 +142,7 @@ async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[s
         if current_question:
             questions.append(current_question)
         
-        # Assign difficulties based on section
+        # Worst Case Fallback Assign difficulties based on section
         difficulty_map = {
             "Variables": "Bronze",
             "Conditionals": "Silver", 
