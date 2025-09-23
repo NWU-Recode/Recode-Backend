@@ -35,7 +35,7 @@ OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
       "starter_code": "string",
       "reference_solution": "string",
       "tests": [
-        {"input": "string", "expected": "string", "visibility": "public|private"}
+        {"input": "string", "expected": "string", "visibility": "2 public and 1 private"}
       ]
     }
   ]

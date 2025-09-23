@@ -50,7 +50,7 @@ BASE_QUESTIONS_TEMPLATE: List[Dict[str, Any]] = [
         ),
         "tests": [
             {"input": "Loops and lists\n", "expected": "stsil dna spooL\n", "visibility": "public"},
-            {"input": "topic\n", "expected": "cipot\n", "visibility": "private"},
+            {"input": "topic\n", "expected": "cipot\n", "visibility": "public"},
             {"input": "\n", "expected": "\n", "visibility": "private"},
         ],
     },
@@ -100,7 +100,7 @@ BASE_QUESTIONS_TEMPLATE: List[Dict[str, Any]] = [
         ),
         "tests": [
             {"input": "4\n10 20 15 5\n", "expected": "50\n", "visibility": "public"},
-            {"input": "3\n5 5 5\n", "expected": "15\n", "visibility": "private"},
+            {"input": "3\n5 5 5\n", "expected": "15\n", "visibility": "public"},
             {"input": "5\n1 2 3 4 5\n", "expected": "15\n", "visibility": "private"},
         ],
     },
@@ -151,7 +151,7 @@ BASE_QUESTIONS_TEMPLATE: List[Dict[str, Any]] = [
         ),
         "tests": [
             {"input": "3\n70 80 90\n", "expected": "80.0\n", "visibility": "public"},
-            {"input": "4\n100 100 80 60\n", "expected": "85.0\n", "visibility": "private"},
+            {"input": "4\n100 100 80 60\n", "expected": "85.0\n", "visibility": "public"},
             {"input": "2\n45 55\n", "expected": "50.0\n", "visibility": "private"},
         ],
     },
@@ -208,7 +208,7 @@ BASE_QUESTIONS_TEMPLATE: List[Dict[str, Any]] = [
         ),
         "tests": [
             {"input": "7\n1 1 0 1 1 1 0\n", "expected": "3\n", "visibility": "public"},
-            {"input": "5\n0 0 0 0 0\n", "expected": "0\n", "visibility": "private"},
+            {"input": "5\n0 0 0 0 0\n", "expected": "0\n", "visibility": "public"},
             {"input": "6\n1 1 1 1 1 1\n", "expected": "6\n", "visibility": "private"},
         ],
     },
@@ -275,7 +275,7 @@ BASE_QUESTIONS_TEMPLATE: List[Dict[str, Any]] = [
         ),
         "tests": [
             {"input": "3\nWeek1 180 4\nWeek2 200 5\nWeek3 160 6\n", "expected": "Total minutes: 540\nTop week: Week3\n", "visibility": "public"},
-            {"input": "2\nSprintA 120 3\nSprintB 90 5\n", "expected": "Total minutes: 210\nTop week: SprintB\n", "visibility": "private"},
+            {"input": "2\nSprintA 120 3\nSprintB 90 5\n", "expected": "Total minutes: 210\nTop week: SprintB\n", "visibility": "public"},
             {"input": "1\nOnly 75 2\n", "expected": "Total minutes: 75\nTop week: Only\n", "visibility": "private"},
         ],
     },
@@ -373,7 +373,7 @@ RUBY_PACKS: List[Dict[str, Any]] = [
                     ),
                     "tests": [
                         {"input": "3\nAva 78 42\nBen 91 30\nCara 91 28\n", "expected": "Average score: 86.7\nTop performer: Cara\nMedian score: 91.0\n", "visibility": "public"},
-                        {"input": "2\nDev 65 50\nElle 70 65\n", "expected": "Average score: 67.5\nTop performer: Elle\nMedian score: 67.5\n", "visibility": "private"},
+                        {"input": "2\nDev 65 50\nElle 70 65\n", "expected": "Average score: 67.5\nTop performer: Elle\nMedian score: 67.5\n", "visibility": "public"},
                         {"input": "4\nJo 60 40\nKa 80 60\nLi 80 45\nMo 90 70\n", "expected": "Average score: 77.5\nTop performer: Li\nMedian score: 80.0\n", "visibility": "private"},
                     ],
                 }
@@ -456,7 +456,7 @@ EMERALD_PACKS: List[Dict[str, Any]] = [
                     ),
                     "tests": [
                         {"input": "3\nAlpha 12 3\nBravo 9 6\nCharlie 15 5\n10\n", "expected": "Total completed: 36\nTeams meeting target: 2\nBacklog clearance (%): 63.7\nRanking: Alpha,Charlie,Bravo\n", "visibility": "public"},
-                        {"input": "2\nTeamA 5 5\nTeamB 5 0\n4\n", "expected": "Total completed: 10\nTeams meeting target: 2\nBacklog clearance (%): 75.0\nRanking: TeamB,TeamA\n", "visibility": "private"},
+                        {"input": "2\nTeamA 5 5\nTeamB 5 0\n4\n", "expected": "Total completed: 10\nTeams meeting target: 2\nBacklog clearance (%): 75.0\nRanking: TeamB,TeamA\n", "visibility": "public"},
                         {"input": "1\nSolo 0 0\n1\n", "expected": "Total completed: 0\nTeams meeting target: 0\nBacklog clearance (%): 100.0\nRanking: Solo\n", "visibility": "private"},
                     ],
                 }
@@ -540,7 +540,7 @@ DIAMOND_PACKS: List[Dict[str, Any]] = [
                     ),
                     "tests": [
                         {"input": "5\nADD A 80 120\nADD B 75 90\nADD A 90 150\nREPORT A\nREPORT B\n", "expected": "A 85.0 270\nB 75.0 90\n", "visibility": "public"},
-                        {"input": "4\nADD X 100 60\nREPORT X\nREPORT Y\nREPORT X\n", "expected": "X 100.0 60\nY 0.0 0\nX 100.0 60\n", "visibility": "private"},
+                        {"input": "4\nADD X 100 60\nREPORT X\nREPORT Y\nREPORT X\n", "expected": "X 100.0 60\nY 0.0 0\nX 100.0 60\n", "visibility": "public"},
                         {"input": "6\nADD Z 50 40\nADD Z 70 55\nADD M 90 100\nREPORT Z\nREPORT M\nREPORT Z\n", "expected": "Z 60.0 95\nM 90.0 100\nZ 60.0 95\n", "visibility": "private"},
                     ],
                 }

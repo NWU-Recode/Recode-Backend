@@ -6,6 +6,9 @@ from typing import Any, Dict, List, Optional
 
 import boto3
 from botocore.exceptions import ClientError
+import os
+from datetime import datetime
+import pathlib
 
 from app.Core.config import get_settings
 
@@ -102,7 +105,62 @@ async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[s
                         except Exception:
                             break
         cleaned = text.strip().strip(tick)
-        return json.loads(cleaned)
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            return None
+
+    def _parse_markdown_response(text: str) -> Dict[str, Any]:
+        """Parse markdown-formatted response into expected JSON structure."""
+        lines = text.split('\n')
+        title = ""
+        questions = []
+        current_question = None
+        current_section = ""
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('# ') and not title:
+                title = line[2:].strip()
+            elif line.startswith('## ') and '(' in line and 'Questions)' in line:
+                # New section, but we'll assign difficulties later
+                current_section = line.split('(')[0][3:].strip()
+            elif line.startswith('### ') and current_question is None:
+                if current_question:
+                    questions.append(current_question)
+                current_question = {
+                    "title": line[4:].strip(),
+                    "question_text": "",
+                    "difficulty_level": "Bronze",  # Default, will be updated based on section
+                    "starter_code": "",
+                    "reference_solution": "",
+                    "tests": []
+                }
+            elif current_question and line and not line.startswith('#'):
+                current_question["question_text"] += line + "\n"
+        
+        if current_question:
+            questions.append(current_question)
+        
+        # Assign difficulties based on section
+        difficulty_map = {
+            "Variables": "Bronze",
+            "Conditionals": "Silver", 
+            "Loops": "Gold",
+            "Functions": "Ruby",
+            "Lists": "Emerald"
+        }
+        
+        for question in questions:
+            for section, diff in difficulty_map.items():
+                if section.lower() in current_section.lower():
+                    question["difficulty_level"] = diff
+                    break
+        
+        return {
+            "challenge_set_title": title or "Programming Questions",
+            "questions": questions
+        }
 
     def _coerce_json(value: Any) -> Any:
         while isinstance(value, str):
@@ -142,6 +200,12 @@ async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[s
             raise ValueError(f"Empty response content: {json.dumps(response_body)[:500]}")
 
         parsed = _try_parse_json(full_text)
+        if parsed is None:
+            # Try parsing as markdown
+            try:
+                parsed = _parse_markdown_response(full_text)
+            except Exception:
+                raise ValueError("Response is neither valid JSON nor parseable markdown")
         result = _ensure_dict(parsed, "Response is not a JSON object")
 
         if "challenge_set_title" not in result or "questions" not in result:
@@ -173,4 +237,23 @@ async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[s
 
         return result
     except (KeyError, json.JSONDecodeError, ValueError) as exc:
+        # Optional: dump raw response and prompt payload for debugging
+        try:
+            if os.environ.get("BEDROCK_DUMP_RAW", "0") in {"1", "true", "True"}:
+                dump_dir = pathlib.Path("logs")
+                dump_dir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.utcnow().isoformat(timespec="seconds").replace(":", "-")
+                dump_path = dump_dir / f"bedrock_raw_{ts}.json"
+                dump_content = {
+                    "payload": payload,
+                    "response_body": response_body if 'response_body' in locals() else None,
+                    "full_text": full_text if 'full_text' in locals() else None,
+                }
+                try:
+                    dump_path.write_text(json.dumps(dump_content, default=str, indent=2), encoding="utf-8")
+                    print(f"[bedrock-debug] dumped raw response to: {dump_path}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
         raise ValueError(f"Failed to parse Claude response: {exc}")

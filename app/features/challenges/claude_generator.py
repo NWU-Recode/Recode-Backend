@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import asyncio
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -78,6 +80,8 @@ QUESTION_SCHEMA = {
     },
     "additionalProperties": True,
 }
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class TopicContext:
@@ -451,17 +455,44 @@ def _normalise_questions(kind: str, payload: Dict[str, Any]) -> List[Dict[str, A
 async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
     template = _load_template(kind)
     prompt = _render_prompt(template, context)
-    result = await invoke_claude(prompt)
-    if isinstance(result, str):
-        try:
-            result = json.loads(result)
-        except json.JSONDecodeError:
-            return get_fallback_payload(kind, context.week, context.topic_title)
-    try:
-        validate(instance=result, schema=QUESTION_SCHEMA)
-    except (ValidationError, TypeError):
+    # Optional test-mode: if GENERATOR_FAKE=1 use the local fallback payload
+    if os.environ.get("GENERATOR_FAKE", "0") in {"1", "true", "True"}:
         return get_fallback_payload(kind, context.week, context.topic_title)
-    return result
+
+    max_attempts = 2
+    last_error: Optional[Exception] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = await invoke_claude(prompt)
+            if isinstance(result, str):
+                result = json.loads(result)
+            validate(instance=result, schema=QUESTION_SCHEMA)
+            return result
+        except (json.JSONDecodeError, ValidationError, TypeError) as exc:
+            last_error = exc
+            logger.warning(
+                "Claude response validation failed (attempt %s/%s) for tier %s: %s",
+                attempt,
+                max_attempts,
+                kind,
+                exc,
+            )
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Claude invocation failed (attempt %s/%s) for tier %s: %s",
+                attempt,
+                max_attempts,
+                kind,
+                exc,
+            )
+    logger.warning(
+        "Using fallback challenge template for tier %s after %s Claude failures. Last error: %s",
+        kind,
+        max_attempts,
+        last_error,
+    )
+    return get_fallback_payload(kind, context.week, context.topic_title)
 
 
 async def _insert_challenge(
