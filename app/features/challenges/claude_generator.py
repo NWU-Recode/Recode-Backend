@@ -364,7 +364,6 @@ async def _fetch_topic_context(
 
 
 def _load_template(kind: str) -> str:
-    base_dir = Path(__file__).parent.parent / "prompts"
     templates = {
         "common": "base.txt",
         "base": "base.txt",
@@ -373,12 +372,19 @@ def _load_template(kind: str) -> str:
         "diamond": "diamond.txt",
     }
     name = templates.get(kind, "base.txt")
-    path = base_dir / name
-    try:
-        return path.read_text(encoding="utf-8")
-    except Exception:
-        # fall back to a simple prompt template when files are absent
-        return "Generate a set of programming questions for week {{week_number}} covering {{topic_title}}. Topics: {{topics_list}}."
+    candidate_dirs = [
+        Path(__file__).parent / "prompts",
+        Path(__file__).parent.parent / "prompts",
+    ]
+    for base_dir in candidate_dirs:
+        path = base_dir / name
+        if path.is_file():
+            try:
+                return path.read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Failed to read prompt template %s: %s", path, exc)
+    logger.warning("Prompt template %s not found; using minimal fallback", name)
+    return "Generate a set of programming questions for week {{week_number}} covering {{topic_title}}. Topics: {{topics_list}}."
 
 
 def _render_prompt(template: str, context: TopicContext) -> str:
