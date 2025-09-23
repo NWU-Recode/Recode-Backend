@@ -235,16 +235,17 @@ def require_lecturer(use_cookie: bool = False) -> Callable:
     return require_role("lecturer", use_cookie=use_cookie)
 
 # Convenience cookie-based lecturer dependency
+#changed(vonani)
 def require_lecturer_cookie() -> Callable:
-    from app.common.deps import get_current_user_from_cookie  # Lazy import to avoid circular dependency
-
-    async def dependency(request: Request):
-        user = await get_current_user_from_cookie(request)  # Await the async function
+    async def dependency(
+        user: CurrentUser = Depends(get_current_user_from_cookie)
+    ):
         if user.role != "lecturer":
             raise HTTPException(status_code=403, detail="Not authorized as lecturer")
         return user
 
     return dependency
+#end changed(vonani)
 
 def require_admin_or_lecturer_cookie() -> Callable:
     from app.common.deps import get_current_user_from_cookie  # Lazy import to avoid circular dependency

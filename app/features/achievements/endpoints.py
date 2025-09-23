@@ -6,7 +6,7 @@ from .schemas import (
     EloUpdateRequest, EloResponse,
     BadgeRequest, BadgeResponse,
     BadgeBatchAddRequest, BadgeBatchAddResponse,
-    TitleUpdateRequest, TitleResponse,
+    TitleUpdateRequest, TitleResponse, TitleInfo,
     AchievementsResponse,
     CheckAchievementsRequest, CheckAchievementsResponse
 )
@@ -67,7 +67,7 @@ async def add_badges_batch(user_id: str, req: BadgeBatchAddRequest, current_user
     
 #Title Endpoints
 #Gets users active title for dashboard
-@router.get("/users/{user_id}/title", response_model=TitleResponse)
+@router.get("/users/{user_id}/title", response_model=TitleInfo)
 async def get_title(user_id: str, current_user: CurrentUser = Depends(get_current_user)):
     try:
         return await achievements_service.get_title(user_id)
@@ -77,7 +77,7 @@ async def get_title(user_id: str, current_user: CurrentUser = Depends(get_curren
 @router.put("/users/{user_id}/title", response_model=TitleResponse)
 async def update_title(user_id: str, req: TitleUpdateRequest, current_user: CurrentUser = Depends(get_current_user)):
     try:
-        return await achievements_service.update_title(user_id, req)
+        return await achievements_service.check_title_after_elo_update(user_id, req.old_elo)
     except Exception as e:
         raise _err(400, "E_INVALID_INPUT", str(e))
 

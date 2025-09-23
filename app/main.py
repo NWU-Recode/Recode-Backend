@@ -23,6 +23,11 @@ from app.features.dashboard.endpoints import router as dashboard_router
 from app.features.slides.endpoints import router as slides_router
 from app.common.deps import get_current_user_from_cookie
 from app.common.middleware import SessionManagementMiddleware
+#just added(vonani)
+from app.features.admin_panel.endpoints import router as admin_router
+from app.features.module.endpoints import router as module_router
+from app.features.semester.endpoints import router as semester_router
+#end (vonani)
 
 app = FastAPI(title="Recode Backend")
 
@@ -83,6 +88,7 @@ app.include_router(judge0_protected_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
 app.include_router(slides_router, dependencies=protected_deps)
+
 
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
