@@ -5,6 +5,9 @@ from app.DB.supabase import get_supabase
 from app.common import cache
 
 class ChallengeRepository:
+    """Repository helpers for challenges.
+
+    Note: Supabase stores student numbers in the user_id column for challenge attempts."""
     async def get_challenge(self, challenge_id: str) -> Optional[Dict[str, Any]]:
         key = f"challenge:id:{challenge_id}"
         cached = cache.get(key)
@@ -34,7 +37,7 @@ class ChallengeRepository:
             client.table("challenge_attempts")
             .select("*")
             .eq("challenge_id", challenge_id)
-            .eq("user_id", student_number)  # Updated to use student_number as user_id
+            .eq("user_id", student_number)  # Supabase stores student_number in user_id column (integer)
             .eq("status", "open")
             .limit(1)
             .execute()
@@ -47,7 +50,7 @@ class ChallengeRepository:
         client = await get_supabase()
         resp = client.table("challenge_attempts").insert({
             "challenge_id": challenge_id,
-            "user_id": student_number,  # Updated to use student_number as user_id
+            "user_id": student_number,  # Supabase stores student_number in user_id column (integer)
             "status": "open",
         }).execute()
         if not resp.data:
@@ -81,7 +84,7 @@ class ChallengeRepository:
             deadline_at = (now + timedelta(days=7)).isoformat()
             resp = client.table("challenge_attempts").insert({
                 "challenge_id": challenge_id,
-                "user_id": student_number,  # Updated to use student_number as user_id
+                "user_id": student_number,  # Supabase stores student_number in user_id column (integer)
                 "status": "open",
                 "started_at": started_at,
                 "deadline_at": deadline_at,
@@ -110,14 +113,20 @@ class ChallengeRepository:
         if cached is not None:
             return cached
         client = await get_supabase()
-        resp = client.table("challenges").select("*").order("sequence_index").execute()
+        resp = (
+            client.table("challenges")
+            .select("*")
+            .order("week_number")
+            .order("created_at")
+            .execute()
+        )
         data = resp.data or []
         cache.set(key, data)
         return data
 
     async def list_user_attempts(self, student_number: int) -> List[Dict[str, Any]]:
         client = await get_supabase()
-        resp = client.table("challenge_attempts").select("*").eq("user_id", student_number).execute()  # Updated to use student_number as user_id
+        resp = client.table("challenge_attempts").select("*").eq("user_id", student_number).execute()  # Supabase stores student_number in user_id column (integer)
         return resp.data or []
 
     async def _build_snapshot(self, challenge_id: str) -> List[Dict[str, Any]]:
@@ -173,7 +182,7 @@ class ChallengeRepository:
         resp = (
             client.table("challenge_attempts")
             .select("id, challenge:challenges(tier)")
-            .eq("user_id", student_number)  # Updated to use student_number as user_id
+            .eq("user_id", student_number)  # Supabase stores student_number in user_id column (integer)
             .eq("status", "submitted")
             .execute()
         )
@@ -198,30 +207,23 @@ class ChallengeRepository:
         return len(resp.data or [])
 
     async def publish_for_week(self, week_number: int) -> Dict[str, int]:
-        """Set status='published' for all challenges inferred for a given week.
-
-        Heuristics:
-        - Matches slugs containing 'wNN-' or topic-derived slugs ending with '-common'.
-        - Updates common, ruby, emerald for that week if present.
-        """
+        """Set status='published' for all challenges inferred for a given week."""
         client = await get_supabase()
-        # Match common via slug pattern and ruby/emerald by explicit wNN- prefix
         week_tag = f"w{week_number:02d}"
         updated = 0
-        # Fetch candidates
-        resp = client.table("challenges").select("id, slug, status").execute()
-        rows = resp.data or []
-        ids: list[str] = []
-        for r in rows:
-            slug = str(r.get("slug") or "")
-            if week_tag in slug:
-                ids.append(str(r.get("id")))
+        try:
+            resp = client.table("challenges").select("id, slug, status, week_number").eq("week_number", week_number).execute()
+            rows = resp.data or []
+        except Exception:
+            rows = []
+        ids = [str(r.get("id")) for r in rows if r.get("id")]
         if not ids:
-            return {"updated": 0}
-        # Batch update
+            resp_all = client.table("challenges").select("id, slug").execute()
+            rows_all = resp_all.data or []
+            ids = [str(r.get("id")) for r in rows_all if week_tag in str(r.get("slug", ""))]
         for cid in ids:
-            u = client.table("challenges").update({"status": "published"}).eq("id", cid).execute()
-            if u.data:
+            update_resp = client.table("challenges").update({"status": "published"}).eq("id", cid).execute()
+            if update_resp.data:
                 updated += 1
         return {"updated": updated}
 

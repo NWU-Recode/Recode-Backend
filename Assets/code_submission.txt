@@ -1,2 +1,0 @@
-print("Hello from Judge0 Marking Service")
-

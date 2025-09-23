@@ -18,11 +18,9 @@ from app.Auth.routes import router as auth_router
 from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
 from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
-from app.features.topic_detections.slide_extraction.endpoints import router as questions_router
 from app.features.challenges.endpoints import router as challenges_router
-from app.features.topic_detections.slide_extraction.endpoints import router as slide_extraction_router
-from app.features.slides.endpoints import router as slides_router
 from app.features.dashboard.endpoints import router as dashboard_router
+from app.features.slides.endpoints import router as slides_router
 from app.common.deps import get_current_user_from_cookie
 from app.common.middleware import SessionManagementMiddleware
 #just added(vonani)
@@ -87,23 +85,10 @@ protected_deps = [Depends(get_current_user_from_cookie)]
 app.include_router(profiles_router, dependencies=protected_deps)
 app.include_router(judge0_public_router)
 app.include_router(judge0_protected_router, dependencies=protected_deps)
-app.include_router(slide_extraction_router, dependencies=protected_deps)
-app.include_router(slides_router, dependencies=protected_deps)
-app.include_router(questions_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
-#newly added routers (vonani)
-app.include_router(admin_router)
-app.include_router(module_router)
-app.include_router(semester_router)
-#end of routers (vonani)
+app.include_router(slides_router, dependencies=protected_deps)
 
-# Newly added feature routers
-try:
-    from app.features.submissions.endpoints import router as submissions_router
-    app.include_router(submissions_router, dependencies=protected_deps)
-except Exception:
-    pass
 
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")

@@ -17,8 +17,7 @@ from .schemas import (
     Judge0Status,
     QuickCodeSubmission
 )
-from app.features.submissions.schemas import SubmissionCreate
-from app.features.submissions.service import submission_service
+
 
 class Judge0Service:
     def __init__(self):
@@ -231,17 +230,17 @@ class Judge0Service:
         exec_result = self._to_code_execution_result(waited, submission.expected_output, submission.language_id)
         # Persist submission row (status set based on final status id)
         status_label = "completed" if exec_result.status_id not in [1, 2] else "processing"
-        sub_create = SubmissionCreate(
-            source_code=submission.source_code,
-            language_id=submission.language_id,
-            stdin=submission.stdin,
-            expected_output=submission.expected_output,
-            # question_id injected by higher layer (QuestionService) if needed; left None here
-        )
-        stored_sub = await submission_service.store_submission(sub_create, user_id, token)
+        # sub_create = SubmissionCreate(
+        #     source_code=submission.source_code,
+        #     language_id=submission.language_id,
+        #     stdin=submission.stdin,
+        #     expected_output=submission.expected_output,
+        #     # question_id injected by higher layer (QuestionService) if needed; left None here
+        # )
+        # stored_sub = await submission_service.store_submission(sub_create, user_id, token)
         # Update status if needed
         # Persist result row
-        await submission_service.store_result(token, exec_result)
+        # await submission_service.store_result(token, exec_result)
         return token, exec_result
     
     async def get_submission_result(self, token: str) -> Judge0ExecutionResult:
