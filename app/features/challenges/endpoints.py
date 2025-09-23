@@ -1,135 +1,73 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Depends, Body
 from app.common.deps import get_current_user, CurrentUser
-from .schemas import ChallengeSubmitRequest, ChallengeSubmitResponse, GetChallengeAttemptResponse, ChallengeAttemptQuestionStatus
+from .schemas import (
+    ChallengeSubmitRequest,
+    ChallengeSubmitResponse,
+    GetChallengeAttemptResponse,
+    ChallengeAttemptQuestionStatus,
+    ChallengeGenerateRequest,
+)
 from .service import challenge_service
 from app.features.challenges.repository import challenge_repository
-from app.features.topic_detections.repository import question_repository 
-from app.features.challenges.generation import generate_week_challenges
+from app.features.challenges.claude_generator import (
+    generate_tier_preview,
+    generate_and_save_tier,
+)
+from app.DB.supabase import get_supabase
 from app.features.challenges.semester_orchestrator import semester_orchestrator
-from app.features.slides.pathing import parse_week_topic_from_filename
-import re
+from typing import Dict, Any, Optional
 
 router = APIRouter(prefix="/challenges", tags=["challenges"])
 
-@router.post('/{challenge_id}/submit', response_model=ChallengeSubmitResponse)
-async def submit_challenge(challenge_id: str, current_user: CurrentUser = Depends(get_current_user)):
-    try:
-        from .schemas import ChallengeSubmitRequest
-        req = ChallengeSubmitRequest(challenge_id=challenge_id, items=None)
-        return await challenge_service.submit(req, str(current_user.id))
-    except ValueError as ve:
-        msg = str(ve)
-        if msg.startswith("challenge_already_submitted"):
-            raise HTTPException(status_code=409, detail={"error_code":"E_CONFLICT","message":"challenge_already_submitted"})
-        if msg.startswith("challenge_not_configured"):
-            raise HTTPException(status_code=409, detail={"error_code":"E_INVALID_STATE","message":msg})
-        if msg.startswith("missing_questions:"):
-            missing = msg.split(":",1)[1].split(',') if ':' in msg else []
-            raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"missing_questions","missing_question_ids":missing})
-        if msg.startswith("challenge_expired"):
-            raise HTTPException(status_code=409, detail={"error_code":"E_CONFLICT","message":"challenge_expired"})
-        raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":msg})
-    except Exception as e:
-        raise HTTPException(status_code=400, detail={"error_code":"E_UNKNOWN","message":str(e)})
+# ---------------------------------------------
+# Lecturer challenge generation
+# ---------------------------------------------
 
-@router.get('/{challenge_id}/attempt', response_model=GetChallengeAttemptResponse)
-async def get_challenge_attempt(challenge_id: str, current_user: CurrentUser = Depends(get_current_user)):
-    try:
-        user_id = str(current_user.id)
-        attempt = await challenge_repository.create_or_get_open_attempt(challenge_id, user_id)
-        snapshot = attempt.get("snapshot_questions") or []
-        latest_attempts = await question_repository.list_latest_attempts_for_challenge(challenge_id, user_id)
-        index = {a.get("question_id"): a for a in latest_attempts}
-        questions: list[ChallengeAttemptQuestionStatus] = []
-        for snap in snapshot:
-            qid = snap["question_id"]
-            att = index.get(qid)
-            if not att:
-                questions.append(ChallengeAttemptQuestionStatus(question_id=qid, status="unattempted"))
-            else:
-                status = "passed" if att.get("is_correct") else "failed"
-                questions.append(ChallengeAttemptQuestionStatus(
-                    question_id=qid,
-                    status=status,
-                    last_submitted_at=att.get("updated_at") or att.get("created_at"),
-                    token=att.get("judge0_token")
-                ))
-        return GetChallengeAttemptResponse(
-            challenge_attempt_id=attempt["id"],
-            challenge_id=attempt["challenge_id"],
-            status=attempt.get("status"),
-            started_at=attempt.get("started_at"),
-            deadline_at=attempt.get("deadline_at"),
-            submitted_at=attempt.get("submitted_at"),
-            snapshot_question_ids=[s["question_id"] for s in snapshot],
-            questions=questions
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":str(e)})
+ALLOWED_TIERS = {"base", "ruby", "emerald", "diamond"}
 
 
-# -----------------------------
-# GENERATION (moved from weeks)
-# -----------------------------
-class _GenerateReq:
-    def __init__(self, slides_url: str, force: bool = False):
-        self.slides_url = slides_url
-        self.force = force
-
-
-@router.post("/create")
-async def create_from_slides(req: dict = Body(...), current_user: CurrentUser = Depends(get_current_user)):
-    try:
-        if getattr(current_user, "role", "student") != "lecturer":
-            raise HTTPException(status_code=403, detail={"error_code":"E_FORBIDDEN","message":"lecturer_only"})
-        gr = _GenerateReq(slides_url=req.get("slides_url"), force=bool(req.get("force", False)))
-        if not isinstance(gr.slides_url, str) or not gr.slides_url:
-            raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"slides_url required"})
-        week_number = None
-        m = re.search(r"/w(\d{2})/", gr.slides_url)
-        if m:
-            try:
-                week_number = int(m.group(1))
-            except Exception:
-                week_number = None
-        if week_number is None:
-            # Try to extract from filename
-            if gr.slides_url.startswith("supabase://"):
-                rest = gr.slides_url.split("://", 1)[1]
-                parts = rest.split("/", 1)
-                object_key = parts[1] if len(parts) == 2 else parts[0]
-                filename = object_key.split("/")[-1]
-            else:
-                filename = gr.slides_url.split("/")[-1]
-            derived, _ = parse_week_topic_from_filename(filename)
-            if derived:
-                week_number = int(derived)
-        if not week_number:
-            raise HTTPException(status_code=400, detail={
-                "error_code": "E_INVALID_INPUT",
-                "message": "Could not derive week from slides_url. Include /wNN/ in path or use filename 'Week{n}_...'."
-            })
-        return await generate_week_challenges(week_number, gr.slides_url, gr.force)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail={"error_code":"E_UNKNOWN","message":str(e)})
-
-
-@router.post("/{week_number}/create")
-async def create_for_week(week_number: int, req: dict = Body(...), current_user: CurrentUser = Depends(get_current_user)):
+@router.post("/generate/{tier}")
+async def generate_challenge(
+    tier: str,
+    payload: ChallengeGenerateRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     if getattr(current_user, "role", "student") != "lecturer":
-        raise HTTPException(status_code=403, detail={"error_code":"E_FORBIDDEN","message":"lecturer_only"})
-    if week_number <= 0:
-        raise HTTPException(status_code=400, detail={"error_code": "E_INVALID_WEEK", "message": "week must be > 0"})
-    slides_url = req.get("slides_url")
-    force = bool(req.get("force", False))
-    if not slides_url:
-        raise HTTPException(status_code=400, detail={"error_code":"E_INVALID_INPUT","message":"slides_url required"})
-    return await generate_week_challenges(week_number, slides_url, force)
+        raise HTTPException(status_code=403, detail={"error_code": "E_FORBIDDEN", "message": "lecturer_only"})
 
+    tier_key = tier.lower()
+    if tier_key == "common":
+        tier_key = "base"
+    if tier_key not in ALLOWED_TIERS:
+        raise HTTPException(status_code=400, detail={"error_code": "E_INVALID_TIER", "message": "invalid tier"})
 
+    resolved_code = await _resolve_module_code_value(payload.module_code, payload.module_id)
+    week_number = int(payload.week_number)
+    slide_stack_id = payload.slide_stack_id
+
+    if payload.persist:
+        result = await generate_and_save_tier(
+            tier_key,
+            week_number,
+            slide_stack_id=slide_stack_id,
+            module_code=resolved_code,
+            lecturer_id=int(getattr(current_user, "id", 0) or 0),
+        )
+        challenge_info = result.get("challenge") if isinstance(result, dict) else None
+        if isinstance(challenge_info, dict):
+            idem = challenge_info.get("idempotency_key")
+            if idem:
+                result.setdefault("idempotency_key", idem)
+        return {"tier": tier_key, "status": "saved", **result}
+
+    preview = await generate_tier_preview(
+        tier_key,
+        week_number,
+        slide_stack_id=slide_stack_id,
+        module_code=resolved_code,
+    )
+    return {"tier": tier_key, "status": "preview", **preview}
 @router.post("/publish/{week_number}")
 async def publish_week_challenges(week_number: int, current_user: CurrentUser = Depends(get_current_user)):
     if getattr(current_user, "role", "student") != "lecturer":
@@ -146,3 +84,28 @@ async def get_semester_overview(current_user: CurrentUser = Depends(get_current_
         return await semester_orchestrator.get_release_overview(str(current_user.id))
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error_code":"E_UNKNOWN","message":str(e)})
+
+
+# -----------------------------
+# Generation helpers
+# -----------------------------
+
+
+async def _resolve_module_code_value(module_code: Optional[str], module_id: Optional[int]) -> Optional[str]:
+    if module_code:
+        return module_code
+    if module_id is None:
+        return None
+    try:
+        client = await get_supabase()
+        resp = await client.table("modules").select("code").eq("id", module_id).limit(1).execute()
+        rows = resp.data or []
+        if rows:
+            code = rows[0].get("code")
+            if code:
+                return str(code)
+    except Exception:
+        pass
+    return None
+
+

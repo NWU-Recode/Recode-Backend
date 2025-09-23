@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import List, Dict, Any
 from app.features.challenges.repository import challenge_repository
-from app.features.topic_detections.repository import question_repository
+from app.DB.supabase import get_supabase
 
 class DashboardService:
     async def get_dashboard(self, user_id: str) -> List[Dict[str, Any]]:
@@ -37,7 +37,8 @@ class DashboardService:
             progress = None
             if attempt and attempt.get("status") in ("open", "submitted"):
                 # Recompute from latest question attempts for accuracy
-                latest_q_attempts = await question_repository.list_latest_attempts_for_challenge(cid, user_id)
+                client = await get_supabase()
+                latest_q_attempts = await client.rpc("latest_attempts_for_challenge", {"challenge_id": cid, "user_id": user_id})
                 passed = sum(1 for qa in latest_q_attempts if qa.get("is_correct"))
                 progress = {"passed": passed, "total": 10}
             result.append({

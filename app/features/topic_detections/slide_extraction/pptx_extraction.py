@@ -3,11 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import BinaryIO, Dict, List, Union
 
-from pptx import Presentation
-from pptx.exc import PackageNotFoundError
+def _import_pptx():
+    try:
+        from pptx import Presentation
+        from pptx.exc import PackageNotFoundError
+        return Presentation, PackageNotFoundError
+    except Exception as e:
+        raise ImportError("python-pptx is required to extract PPTX files. Install with: pip install python-pptx") from e
 
-#Load a presentation from a file or binary data.
-def _load_presentation(source: Union[str, Path, BinaryIO]) -> Presentation:
+
+# Load a presentation from a file or binary data.
+def _load_presentation(source: Union[str, Path, BinaryIO]):
+    Presentation, PackageNotFoundError = _import_pptx()
     try:
         if isinstance(source, (str, Path)):
             path = Path(source)
@@ -22,7 +29,6 @@ def _load_presentation(source: Union[str, Path, BinaryIO]) -> Presentation:
 
 
 def extract_pptx_text(source: Union[str, Path, BinaryIO]) -> Dict[int, List[str]]:
-
     presentation = _load_presentation(source)
     slides: Dict[int, List[str]] = {}
 

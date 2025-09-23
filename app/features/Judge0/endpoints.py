@@ -14,12 +14,8 @@ from app.features.judge0.schemas import (
     QuickCodeSubmission,
 )
 from app.features.judge0.service import judge0_service
-from app.features.submissions.service import submission_service
-from app.features.topic_detections.repository import question_repository
 from app.adapters.judge0_client import run_many
 from app.features.challenges.repository import challenge_repository
-from app.features.topic_detections.service import question_service
-from app.features.submissions.schemas import SubmissionCreate
 from app.Core.config import get_settings
 import ssl, asyncio, time
 
@@ -140,50 +136,6 @@ class _RunTestsBody:
         self.source_code = source_code
         self.language_id = language_id
 
-
-@public_router.post("/questions/{question_id}/run-tests", summary="Run code against a question's test cases")
-async def run_question_tests(question_id: str, body: dict):
-    try:
-        src = body.get("source_code")
-        lang_override = body.get("language_id")
-        if not isinstance(src, str) or not src:
-            raise HTTPException(status_code=400, detail="source_code required")
-        qmeta = await question_repository.get_question(question_id)
-        if not qmeta:
-            raise HTTPException(status_code=404, detail="Question not found")
-        language_id = int(lang_override) if lang_override is not None else int(qmeta.get("language_id") or 0)
-        if not language_id:
-            raise HTTPException(status_code=400, detail="language_id missing and not derivable from question")
-        tests = await question_repository.list_tests(question_id)
-        if not tests:
-            raise HTTPException(status_code=404, detail="No tests configured for question")
-        items = [
-            {"language_id": language_id, "source": src, "stdin": t.get("input"), "expected": t.get("expected")}
-            for t in tests
-        ]
-        # No timeout for running tests like an IDE/LeetCode experience
-        results = await run_many(items, timeout_seconds=None)
-        passed = sum(1 for r in results if r.get("success"))
-        failed = len(results) - passed
-        detailed = []
-        for t, r in zip(tests, results):
-            detailed.append({
-                "input": t.get("input"),
-                "expected": t.get("expected"),
-                "visibility": t.get("visibility", "public"),
-                "stdout": r.get("stdout"),
-                "status_id": r.get("status_id"),
-                "status_description": r.get("status_description"),
-                "success": r.get("success"),
-                "time": r.get("time"),
-                "memory": r.get("memory"),
-                "token": r.get("token"),
-            })
-        return {"total": len(results), "passed": passed, "failed": failed, "results": detailed}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to run tests: {str(e)}")
 
 # -----------------------------
 # Submit then poll Supabase for result (sync service must be running on EC2)

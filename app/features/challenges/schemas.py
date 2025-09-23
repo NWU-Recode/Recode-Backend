@@ -72,6 +72,14 @@ from pydantic import BaseModel
 from datetime import datetime
 
 
+
+
+class ChallengeGenerateRequest(BaseModel):
+    module_code: Optional[str] = None
+    module_id: Optional[int] = None
+    week_number: int
+    slide_stack_id: Optional[int] = None
+    persist: bool = False
 class WeekSchema(BaseModel):
     start_date: datetime
     end_date: datetime

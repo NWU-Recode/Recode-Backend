@@ -7,11 +7,11 @@ from typing import Dict, Any
 
 from .pathing import build_slide_object_key
 from app.DB.supabase import get_supabase
-from app.features.questions.slide_extraction.pptx_extraction import extract_pptx_text
+from app.features.topic_detections.slide_extraction.pptx_extraction import extract_pptx_text
 from io import BytesIO
-from app.features.topics.service import TopicService
+from app.features.topic_detections.topics.topic_service import TopicService, topic_service
 from app.adapters.nlp_spacy import extract_primary_topic
-from app.features.questions.slide_extraction.repository_supabase import slide_extraction_supabase_repository
+from app.features.topic_detections.slide_extraction.repository_supabase import slide_extraction_supabase_repository
 
 
 async def _maybe_await(val):
@@ -24,6 +24,7 @@ async def upload_slide_bytes(
     topic_name: str,
     given_at_dt,             # datetime
     semester_start_date,     # date
+    module_code: str,
     signed_url_ttl_sec: int = 900,
 ) -> Dict[str, Any]:
     key = build_slide_object_key(original_filename, topic_name, given_at_dt, semester_start_date)
@@ -65,22 +66,8 @@ async def upload_slide_bytes(
             # Detect topic locally (phrase/spaCy/heuristics)
             slide_texts = [line for _, lines in sorted(slides_map.items()) for line in lines]
             primary, subtopics = extract_primary_topic(slide_texts)
-            # Persist to Supabase if table exists
-            try:
-                sup_row = await slide_extraction_supabase_repository.create_extraction({
-                    "filename": original_filename,
-                    "slides_key": key.object_key,
-                    "slides": slides_map,
-                    "detected_topic": primary,
-                    "detected_subtopics": subtopics,
-                })
-                if sup_row:
-                    sup_extraction_id = sup_row.get("id")
-                    # Use Supabase row id as extraction_id to avoid confusion
-                    extraction_id = sup_extraction_id
-            except Exception:
-                pass
-            # Create/find Topic (Supabase)
+            
+            # Create Topic first (Supabase)
             topic = await TopicService.create_from_slides(
                 slides_url=f"supabase://slides/{key.object_key}",
                 week=key.week,
@@ -88,9 +75,34 @@ async def upload_slide_bytes(
                 slides_key=key.object_key,
                 detected_topic=primary,
                 detected_subtopics=subtopics,
-                slide_extraction_id=sup_extraction_id,
+                slide_extraction_id=None,  # Will update later
+                module_code=module_code,
             )
             topic_row = topic
+            topic_uuid = topic.get("id")
+            
+            # Persist slide extraction to Supabase with topic reference
+            try:
+                sup_row = await slide_extraction_supabase_repository.create_extraction({
+                    "filename": original_filename,
+                    "slides_key": key.object_key,
+                    "slides": slides_map,
+                    "detected_topic": primary,
+                    "detected_subtopics": subtopics,
+                    "week_number": key.week,
+                    "module_code": module_code,
+                    "topic_id": topic_uuid,
+                })
+                if sup_row:
+                    sup_extraction_id = sup_row.get("id")
+                    # Use Supabase row id as extraction_id to avoid confusion
+                    extraction_id = sup_extraction_id
+                    
+                    # Update topic with slide_extraction_id
+                    if topic_uuid:
+                        await topic_service.update_slide_extraction_id(topic_uuid, sup_extraction_id)
+            except Exception:
+                pass
     except Exception as e:
         # Non-fatal: extraction/topic detection is best-effort, but log for visibility
         logging.getLogger("slides").exception("Slide extraction/topic detection failed: %s", str(e))

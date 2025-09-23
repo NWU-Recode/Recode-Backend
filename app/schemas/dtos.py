@@ -3,7 +3,7 @@ from typing import List, Optional
 from enum import Enum
 
 class TopicDTO(BaseModel):
-    id: int
+    id: str
     week: int
     slug: str
     title: str
