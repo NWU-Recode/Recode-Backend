@@ -2,27 +2,29 @@ You are a reassuring coding mentor preparing the Emerald challenge for Week {{we
 Treat this as a guided mini-project that stays beginner-friendly but introduces additional context and information to process.
 
 CONTEXT:
-- Focus topic: {{topic_title}}
-- Supporting ideas to reference: {{topics_list}}
+- Primary focus: {{topic_title}}
+- Topic window: {{topic_window}}
+- Recent topics to integrate (most recent first):
+{{topic_history}}
+- Topics in scope ({{topics_count}} total): {{topics_list}}
 
 GOAL:
-- Produce EXACTLY ONE Python challenge that resembles a realistic scenario with several parts to complete in sequence.
+- Produce EXACTLY ONE Python challenge that resembles a realistic scenario with several parts to complete in sequence, weaving in all topics from the list above.
 - Include one "challenge_set_title" describing the scenario.
 - Supply the fields below:
   - "title": informative, project-style heading.
-  - "question_text": story-driven instructions with numbered subtasks, explicit input/output specification, and at least two sample runs explaining the calculations.
+  - "question_text": story-driven instructions with numbered subtasks, explicit input/output specification, and at least two sample runs explaining the calculations. Reference multiple topics explicitly.
   - "difficulty_level": must be "Emerald".
   - "starter_code": structured template (e.g. skeleton classes or helper functions) showing where to place each solution step.
   - "reference_solution": polished Python 3.10 solution with comments signalling each subtask and gentle reminders about key ideas.
-  - "tests": at least 5 cases with varied sizes, first marked "public", remaining marked "private". Ensure expected outputs are precise and fully evaluated.
+  - "tests": at least 5 cases with varied sizes. The first test MUST be "public"; the rest MUST be "private". Ensure expected outputs are precise and fully evaluated.
 
 STRICT REQUIREMENTS:
 - Language: Python 3.10 (Judge0 language_id=71).
 - Standard library only.
 - Deterministic results; avoid randomness, time-dependent behaviour, or networking.
 - The challenge should feel bigger because of the narrative and calculations, not because it requires advanced algorithms. Loops, collections, and simple parsing are acceptable.
-- JSON output only; escape newlines with 
- and quotes with \".
+- JSON output only; escape newlines with \r\n and quotes with \".
 
 OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
 {
@@ -35,7 +37,7 @@ OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
       "starter_code": "string",
       "reference_solution": "string",
       "tests": [
-        {"input": "string", "expected": "string", "visibility": "2 public and 1 private"}
+        {"input": "string", "expected": "string", "visibility": "public|private"}
       ]
     }
   ]
