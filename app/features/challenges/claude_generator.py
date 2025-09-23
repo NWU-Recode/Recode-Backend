@@ -187,9 +187,8 @@ async def _collect_topic_rows(
     window_weeks: Optional[int],
     max_rows: Optional[int],
 ) -> List[Dict[str, Any]]:
-    query = client.table("topic").select(
-        "id, week, title, slug, detected_topic, detected_subtopics, subtopics, module_code_slidesdeck, created_at"
-    )
+    # select all columns to avoid PostgREST schema-cache errors if columns differ
+    query = client.table("topic").select("*")
     if module_code:
         query = query.eq("module_code_slidesdeck", module_code)
     try:
@@ -249,9 +248,8 @@ async def _fetch_topic_context(
     topic_rows: List[Dict[str, Any]] = []
 
     if slide_stack_id is not None:
-        resp = await client.table("slide_extractions").select(
-            "id, topic_id, detected_topic, detected_subtopics, module_code, week_number"
-        ).eq("id", slide_stack_id).limit(1).execute()
+        # select all columns to avoid schema mismatches
+        resp = await client.table("slide_extractions").select("*").eq("id", slide_stack_id).limit(1).execute()
         rows = resp.data or []
         if rows:
             row = rows[0]
@@ -259,6 +257,7 @@ async def _fetch_topic_context(
                 topic_id = str(row.get("topic_id"))
             if not module_value and row.get("module_code"):
                 module_value = row.get("module_code")
+            # detected_subtopics/detected_topic may not exist in schema; use safe getters
             prompt_topics.extend(_ensure_list(row.get("detected_subtopics")))
             detected_topic = row.get("detected_topic")
             if detected_topic:
@@ -280,9 +279,8 @@ async def _fetch_topic_context(
 
     if topic_id and all(str(r.get("id")) != topic_id for r in topic_rows):
         try:
-            t_resp = await client.table("topic").select(
-                "id, week, title, slug, detected_topic, detected_subtopics, subtopics, module_code_slidesdeck, created_at"
-            ).eq("id", topic_id).limit(1).execute()
+            # fetch full row by id
+            t_resp = await client.table("topic").select("*").eq("id", topic_id).limit(1).execute()
             t_rows = t_resp.data or []
             if t_rows:
                 topic_rows.append(t_rows[0])
@@ -372,7 +370,11 @@ def _load_template(kind: str) -> str:
     }
     name = templates.get(kind, "base.txt")
     path = base_dir / name
-    return path.read_text(encoding="utf-8")
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        # fall back to a simple prompt template when files are absent
+        return "Generate a set of programming questions for week {{week_number}} covering {{topic_title}}. Topics: {{topics_list}}."
 
 
 def _render_prompt(template: str, context: TopicContext) -> str:
@@ -498,16 +500,31 @@ async def _insert_challenge(
         except Exception:
             return None
 
-    existing = await _fetch_existing("idempotency_key", idempotency_key)
-    if existing is None:
+    async def _table_has_column(table: str, column: str) -> bool:
+        try:
+            resp = await client.table(table).select(column).limit(1).execute()
+            # if the call succeeded without raising, assume column exists
+            return True
+        except Exception:
+            return False
+
+    # Check whether the challenges table supports idempotency_key
+    supports_idempotency = await _table_has_column("challenges", "idempotency_key")
+    existing = None
+    if supports_idempotency:
+        existing = await _fetch_existing("idempotency_key", idempotency_key)
+        if existing is None:
+            existing = await _fetch_existing("slug", slug)
+            if existing and not existing.get("idempotency_key"):
+                try:
+                    update = await client.table("challenges").update({"idempotency_key": idempotency_key}).eq("id", existing.get("id")).execute()
+                    if update.data:
+                        existing = update.data[0]
+                except Exception:
+                    pass
+    else:
+        # schema doesn't support idempotency_key: fall back to slug-based de-duplication
         existing = await _fetch_existing("slug", slug)
-        if existing and not existing.get("idempotency_key"):
-            try:
-                update = await client.table("challenges").update({"idempotency_key": idempotency_key}).eq("id", existing.get("id")).execute()
-                if update.data:
-                    existing = update.data[0]
-            except Exception:
-                pass
     if existing:
         return existing
 
@@ -522,8 +539,9 @@ async def _insert_challenge(
         "week_number": context.week,
         "linked_module": context.module_code,
         "lecturer_creator": int(lecturer_id),
-        "idempotency_key": idempotency_key,
     }
+    if supports_idempotency:
+        payload["idempotency_key"] = idempotency_key
     resp = await client.table("challenges").insert(payload).execute()
     if not resp.data:
         raise ValueError(f"Failed to create challenge for tier {tier}")
