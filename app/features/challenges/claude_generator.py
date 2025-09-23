@@ -93,12 +93,68 @@ class TopicContext:
     prompt_topics: List[str]
     topic_ids_used: List[str] = field(default_factory=list)
     topic_titles_used: List[str] = field(default_factory=list)
+    topic_history: List[Dict[str, Any]] = field(default_factory=list)
+    topic_week_span: tuple[int, int] | None = None
 
     def joined_topics(self) -> str:
-        items = [t.strip() for t in self.prompt_topics if t and str(t).strip()]
+        raw_items = [t.strip() for t in self.prompt_topics if t and str(t).strip()]
+        extra_titles = [str(t).strip() for t in self.topic_titles_used if str(t).strip()]
+        items = raw_items + extra_titles
         if not items:
             items = DEFAULT_TOPICS
-        return ", ".join(dict.fromkeys(items))
+        unique: Dict[str, str] = {}
+        for item in items:
+            key = item.lower()
+            if key not in unique:
+                unique[key] = item
+        return ", ".join(unique.values())
+
+    def history_summary(self) -> str:
+        if not self.topic_history:
+            return f"- Week {self.week}: {self.topic_title}"
+        lines: List[str] = []
+        for entry in sorted(self.topic_history, key=lambda e: e.get("week") or 0, reverse=True):
+            week_value = entry.get("week")
+            if isinstance(week_value, int) and week_value > 0:
+                week_label = f"Week {week_value}"
+            else:
+                week_label = "Week"
+            title = str(entry.get("title") or "").strip()
+            keywords = [
+                str(k).strip()
+                for k in entry.get("keywords", [])
+                if str(k).strip()
+            ]
+            seen_kw = set()
+            dedup_keywords: List[str] = []
+            for kw in keywords:
+                key = kw.lower()
+                if key in seen_kw:
+                    continue
+                seen_kw.add(key)
+                dedup_keywords.append(kw)
+            details = title
+            if dedup_keywords:
+                if details:
+                    extras = [kw for kw in dedup_keywords if kw.lower() != details.lower()]
+                    if extras:
+                        details = f"{details} ({', '.join(extras)})"
+                else:
+                    details = ", ".join(dedup_keywords)
+            if not details:
+                details = "General review"
+            lines.append(f"- {week_label}: {details}")
+        return "\n".join(lines) if lines else f"- Week {self.week}: {self.topic_title}"
+
+    def week_window_label(self) -> str:
+        if self.topic_week_span:
+            start, end = self.topic_week_span
+            if start and end:
+                if start == end:
+                    return f"Week {start}"
+                return f"Weeks {start}-{end}"
+        return f"Week {self.week}"
+
 
 
 def _slugify(value: str) -> str:
@@ -295,20 +351,62 @@ async def _fetch_topic_context(
 
     topic_ids_used: List[str] = []
     topic_titles_used: List[str] = []
+    history_by_week: Dict[int, Dict[str, Any]] = {}
+    min_week_seen: Optional[int] = None
+    max_week_seen: Optional[int] = None
     for row in topic_rows:
         rid = row.get("id")
         if rid is not None:
             rid_str = str(rid)
             if rid_str not in topic_ids_used:
                 topic_ids_used.append(rid_str)
+        week_value = _safe_week_number(row.get("week"))
+        if week_value > 0:
+            if min_week_seen is None or week_value < min_week_seen:
+                min_week_seen = week_value
+            if max_week_seen is None or week_value > max_week_seen:
+                max_week_seen = week_value
         title_val = row.get("title") or row.get("detected_topic")
-        if title_val:
-            cleaned_title = _trim_week_prefix(str(title_val))
-            if cleaned_title and cleaned_title not in topic_titles_used:
-                topic_titles_used.append(cleaned_title)
-        prompt_topics.extend(_extract_keywords_from_topic_row(row))
+        cleaned_title = _trim_week_prefix(str(title_val)) if title_val else ""
+        if cleaned_title and cleaned_title not in topic_titles_used:
+            topic_titles_used.append(cleaned_title)
+        row_keywords_raw = _extract_keywords_from_topic_row(row)
+        prompt_topics.extend(row_keywords_raw)
+        dedup_keywords: List[str] = []
+        seen_kw = set()
+        for kw in row_keywords_raw:
+            normalised_kw = _normalise_topic_string(kw)
+            if not normalised_kw:
+                continue
+            key_kw = normalised_kw.lower()
+            if key_kw in seen_kw:
+                continue
+            seen_kw.add(key_kw)
+            dedup_keywords.append(normalised_kw)
+        if week_value > 0:
+            entry = history_by_week.setdefault(
+                week_value,
+                {"week": week_value, "title": None, "keywords": []},
+            )
+            if cleaned_title and not entry.get("title"):
+                entry["title"] = cleaned_title
+            for kw in dedup_keywords:
+                if kw and all(str(existing).lower() != kw.lower() for existing in entry["keywords"]):
+                    entry["keywords"].append(kw)
         if not module_value:
             module_value = row.get("module_code_slidesdeck") or module_value
+
+    if topic_titles_used:
+        for title in topic_titles_used:
+            if title and all(title.lower() != str(existing).lower() for existing in prompt_topics if isinstance(existing, str)):
+                prompt_topics.append(title)
+
+    topic_history = [history_by_week[week] for week in sorted(history_by_week, reverse=True)]
+    topic_week_span = (
+        (min_week_seen, max_week_seen)
+        if min_week_seen is not None and max_week_seen is not None
+        else None
+    )
 
     primary_row: Optional[Dict[str, Any]] = None
     if topic_id:
@@ -359,6 +457,8 @@ async def _fetch_topic_context(
         prompt_topics=cleaned_prompt,
         topic_ids_used=topic_ids_used,
         topic_titles_used=topic_titles_used,
+        topic_history=topic_history,
+        topic_week_span=topic_week_span,
     )
     return context
 
@@ -389,9 +489,14 @@ def _load_template(kind: str) -> str:
 
 def _render_prompt(template: str, context: TopicContext) -> str:
     prompt = template
+    topics_joined = context.joined_topics()
     prompt = prompt.replace("{{week_number}}", str(context.week))
     prompt = prompt.replace("{{topic_title}}", context.topic_title)
-    prompt = prompt.replace("{{topics_list}}", context.joined_topics())
+    prompt = prompt.replace("{{topic_window}}", context.week_window_label())
+    prompt = prompt.replace("{{topics_list}}", topics_joined)
+    prompt = prompt.replace("{{topic_history}}", context.history_summary())
+    topics_count = len([item for item in topics_joined.split(",") if item.strip()])
+    prompt = prompt.replace("{{topics_count}}", str(topics_count))
     return prompt
 
 
@@ -778,14 +883,20 @@ async def generate_tier_preview(
     context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code, tier=internal_tier)
     payload = await _call_bedrock(internal_tier, context)
     questions = _normalise_questions(internal_tier, payload)
+    topics_joined = context.joined_topics()
+    topics_count = len([item for item in topics_joined.split(",") if item.strip()])
     return {
         "topic_context": {
             "topic_id": context.topic_id,
             "topic_title": context.topic_title,
             "module_code": context.module_code,
-            "topics_list": context.joined_topics(),
+            "topics_list": topics_joined,
             "topic_ids_used": context.topic_ids_used,
             "topic_titles_used": context.topic_titles_used,
+            "topic_window": context.week_window_label(),
+            "topic_history": context.history_summary(),
+            "topics_count": topics_count,
+            "topic_history_items": context.topic_history,
         },
         "challenge_data": {
             "challenge_set_title": payload.get("challenge_set_title"),
@@ -832,14 +943,20 @@ async def generate_and_save_tier(
                     order_index=idx,
                 )
             )
+    topics_joined = context.joined_topics()
+    topics_count = len([item for item in topics_joined.split(",") if item.strip()])
     return {
         "topic_context": {
             "topic_id": context.topic_id,
             "topic_title": context.topic_title,
             "module_code": context.module_code,
-            "topics_list": context.joined_topics(),
+            "topics_list": topics_joined,
             "topic_ids_used": context.topic_ids_used,
             "topic_titles_used": context.topic_titles_used,
+            "topic_window": context.week_window_label(),
+            "topic_history": context.history_summary(),
+            "topics_count": topics_count,
+            "topic_history_items": context.topic_history,
         },
         "challenge": challenge,
         "questions": stored,
