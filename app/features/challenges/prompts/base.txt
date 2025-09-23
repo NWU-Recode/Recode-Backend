@@ -4,7 +4,10 @@ Keep the tone supportive and the problems approachable.
 CONTEXT:
 - Week number: {{week_number}}
 - Focus topic: {{topic_title}}
-- Helpful ideas to cover: {{topics_list}}
+- Topic window: {{topic_window}}
+- Recent topics to integrate (most recent first):
+{{topic_history}}
+- Helpful ideas to cover ({{topics_count}} topics): {{topics_list}}
 
 GOAL:
 - Generate EXACTLY FIVE Python challenges for this week.
@@ -18,9 +21,9 @@ GOAL:
   - "tests": array of objects {"input", "expected", "visibility"}. The first test MUST have visibility "public". Provide at least 3 tests per question; mark the remaining tests as "private".
 
 DIFFICULTY DISTRIBUTION (BEGINNER-ORIENTED):
-- 2 Bronze questions — single concept practice, easy inputs.
-- 2 Silver questions — combine two simple ideas, moderate description length.
-- 1 Gold question — longer problem statement but still solvable with conditionals/loops/basic collections.
+- 2 Bronze questions - single concept practice, easy inputs.
+- 2 Silver questions - combine two simple ideas, moderate description length.
+- 1 Gold question - longer problem statement but still solvable with conditionals/loops/basic collections.
 
 STRICT REQUIREMENTS:
 - Language: Python 3.10 (Judge0 language_id=71).
@@ -28,8 +31,7 @@ STRICT REQUIREMENTS:
 - Deterministic behaviour (no randomness, no current time usage, no interactive prompts beyond standard input).
 - Focus on clarity, incremental reasoning, and everyday contexts when possible.
 - Keep runtime under 2 seconds for reasonable input sizes.
-- JSON output only; escape newlines with 
- and quotes with \".
+- JSON output only; escape newlines with \r\n and quotes with \".
 
 OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
 {
@@ -42,7 +44,7 @@ OUTPUT FORMAT (STRICT JSON, NO MARKDOWN):
       "starter_code": "string",
       "reference_solution": "string",
       "tests": [
-        {"input": "string", "expected": "string", "visibility": "2 public and 1 private"}
+        {"input": "string", "expected": "string", "visibility": "public|private"}
       ]
     }
   ]
