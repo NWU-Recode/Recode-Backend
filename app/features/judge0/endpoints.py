@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import List
 
 
-from app.common.deps import get_current_user, CurrentUser  
+from app.common.deps import get_current_user, CurrentUser
 
 from app.features.judge0.schemas import (
     CodeSubmissionCreate,
@@ -19,21 +19,12 @@ from app.features.challenges.repository import challenge_repository
 from app.Core.config import get_settings
 import ssl, asyncio, time
 
-# Public router (no authentication required)
 public_router = APIRouter(prefix="/judge0", tags=["judge0-public"])
-
-# Protected router (authentication required)
 protected_router = APIRouter(prefix="/judge0", tags=["judge0-protected"])
 
-"""Judge0-focused endpoints (execution + token lifecycle).
-
-Submission management (listing, deleting, statistics) moved to `app.features.submissions.endpoints`.
-"""
-
-# PUBLIC ENDPOINTS (No authentication required)
 @public_router.get("/languages", response_model=List[LanguageInfo])
 async def get_supported_languages():
-    """Get list of supported programming languages"""
+    """Return the Judge0 language catalogue."""
     try:
         return await judge0_service.get_languages()
     except Exception as e:
@@ -41,7 +32,7 @@ async def get_supported_languages():
 
 @public_router.get("/statuses", response_model=List[Judge0Status])
 async def get_submission_statuses():
-    """Get list of possible submission statuses"""
+    """Return available Judge0 submission statuses."""
     try:
         return await judge0_service.get_statuses()
     except Exception as e:
@@ -49,7 +40,7 @@ async def get_submission_statuses():
 
 @public_router.get("/test")
 async def test_judge0_connection():
-    """Lightweight connectivity test against configured Judge0 URL."""
+    """Perform a lightweight connectivity test."""
     try:
         langs = await judge0_service.get_languages()
         return {"status": "connected", "count": len(langs)}
@@ -58,7 +49,7 @@ async def test_judge0_connection():
 
 @public_router.post("/submit", response_model=Judge0SubmissionResponse)
 async def submit_code(submission: CodeSubmissionCreate):
-    """Submit code for async execution (returns token)."""
+    """Submit code for asynchronous execution."""
     try:
         return await judge0_service.submit_code(submission)
     except Exception as e:
@@ -66,7 +57,7 @@ async def submit_code(submission: CodeSubmissionCreate):
 
 @public_router.post("/submit/wait", response_model=CodeExecutionResult, summary="Single-call waited execution (no persistence)")
 async def submit_code_wait(submission: CodeSubmissionCreate):
-    """Submit code with wait=true and return normalized result (no persistence)."""
+    """Submit code and wait for completion before returning the result."""
     try:
         waited = await judge0_service.submit_code_wait(submission)
         return judge0_service._to_code_execution_result(waited, submission.expected_output, submission.language_id)  # type: ignore
@@ -75,12 +66,8 @@ async def submit_code_wait(submission: CodeSubmissionCreate):
 
 @public_router.post("/execute", response_model=CodeExecutionResult)
 async def execute_code_sync(submission: CodeSubmissionCreate):
-    """Execute and return a normalized result (no persistence).
-
-    Uses Judge0 wait=true internally to avoid returning plain stdout strings.
-    """
+    """Execute code and return a normalized result without persistence."""
     try:
-        # Single-call wait then normalize to CodeExecutionResult
         waited = await judge0_service.submit_code_wait(submission)
         return judge0_service._to_code_execution_result(waited, submission.expected_output, submission.language_id)  # type: ignore
     except TimeoutError:
@@ -90,7 +77,7 @@ async def execute_code_sync(submission: CodeSubmissionCreate):
 
 @public_router.post("/execute/stdout", summary="Quick execute (stdout only)")
 async def execute_stdout_only(submission: QuickCodeSubmission):
-    """Execute code (not persisted) and return only stdout."""
+    """Execute code without persistence and return stdout only."""
     try:
         result = await judge0_service.execute_quick_code(submission)  # type: ignore
         return {"stdout": result.stdout}
@@ -111,7 +98,7 @@ async def execute_simple(submission: CodeSubmissionCreate):
 
 @public_router.post("/execute/batch", summary="Execute multiple submissions via batch API")
 async def execute_batch(submissions: List[CodeSubmissionCreate], timeout_s: int | None = 180):
-    """Submit a batch and poll until all complete; returns list of {token, result}."""
+    """Execute a batch and return a token-result mapping."""
     try:
         batch = await judge0_service.execute_batch(submissions, timeout_seconds=timeout_s)  # type: ignore
         return [{"token": tok, "result": res} for tok, res in batch]
@@ -124,7 +111,6 @@ async def execute_batch(submissions: List[CodeSubmissionCreate], timeout_s: int 
 @public_router.post("/run", summary="Simple run; returns stdout only")
 async def run_stdout_only(submission: QuickCodeSubmission):
     try:
-        # Wait until Judge0 completes; no read timeout configured in service layer
         result = await judge0_service.execute_quick_code(submission)  # type: ignore
         return {"stdout": result.stdout}
     except Exception as e:
@@ -137,10 +123,7 @@ class _RunTestsBody:
         self.language_id = language_id
 
 
-# -----------------------------
-# Submit then poll Supabase for result (sync service must be running on EC2)
-# -----------------------------
-_pg_pool = None  # lazy init; asyncpg imported on demand
+_pg_pool = None
 
 
 async def _get_pg_pool():
@@ -176,9 +159,7 @@ async def _poll_supabase_for_token(token: str, max_retries: int = 30, interval_s
 @public_router.post("/submit/poll", summary="Submit to Judge0 then poll Supabase for result")
 async def submit_then_poll(submission: CodeSubmissionCreate):
     try:
-        # send to Judge0 (no wait)
         resp = await judge0_service.submit_code(submission)
-        # poll Supabase for synced row by token
         result_row = await _poll_supabase_for_token(resp.token)
         return {"token": resp.token, "result": result_row}
     except HTTPException:
@@ -186,14 +167,9 @@ async def submit_then_poll(submission: CodeSubmissionCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"submit_then_poll failed: {str(e)}")
 
-# PROTECTED ENDPOINTS (Authentication required)
 @protected_router.post("/submit/full", response_model=Judge0SubmissionResponse, summary="(Auth) Submit and return token (no DB write)")
 async def submit_code_full(submission: CodeSubmissionCreate, current_user: CurrentUser = Depends(get_current_user)):
-    """Auth submit that returns a Judge0 token without writing to Supabase.
-
-    Storage of raw submission/result is handled by the EC2 sync service; question attempts
-    are handled by challenge endpoints.
-    """
+    """Submit code with authentication but without persisting the payload."""
     try:
         judge0_resp = await judge0_service.submit_code(submission)
         return judge0_resp
@@ -202,15 +178,10 @@ async def submit_code_full(submission: CodeSubmissionCreate, current_user: Curre
 
 @protected_router.get("/result/{token}", response_model=CodeExecutionResult)
 async def get_execution_result(token: str, current_user: CurrentUser = Depends(get_current_user)):
-    """Get execution result by token directly from Judge0 (no DB write).
-
-    Question attempts are managed by challenge endpoints that already store token + result.
-    """
+    """Fetch an execution result directly from Judge0 without persistence."""
     try:
         judge0_result = await judge0_service.get_submission_result(token)
-        # If language is present in payload, use it; else -1
         language_id = (judge0_result.language or {}).get("id", -1)
-        # When expected_output is unknown here, success falls back to Accepted status check
         success = judge0_service._compute_success(judge0_result.status.get("id"), judge0_result.stdout, None)  # type: ignore
         return CodeExecutionResult(
             stdout=judge0_result.stdout,
@@ -229,6 +200,4 @@ async def get_execution_result(token: str, current_user: CurrentUser = Depends(g
         raise HTTPException(status_code=500, detail={"error_code":"E_UNKNOWN","message":f"Failed to get result: {str(e)}"})
 
 # For backward compatibility
-router = public_router  # Default export is the public router
-
-# NOTE: Submission management endpoints moved to `submissions/endpoints.py`.
+router = public_router
