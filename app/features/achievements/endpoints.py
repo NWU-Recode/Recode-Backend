@@ -11,6 +11,7 @@ from .schemas import (
     CheckAchievementsRequest, CheckAchievementsResponse
 )
 from .service import achievements_service
+from app.features.achievements.badges import service as badges_service
 
 router = APIRouter(prefix="/achievements", tags=["achievements"])
 
@@ -46,24 +47,10 @@ async def update_elo(user_id: str, req: EloUpdateRequest, current_user: CurrentU
 @router.get("/users/{user_id}/badges", response_model=List[BadgeResponse])
 async def get_badges(user_id: str, current_user: CurrentUser = Depends(get_current_user)):
     try:
-        return await achievements_service.get_all_user_badges(user_id)
+        return await badges_service.get_all_user_badges(user_id)
     except Exception as e:
         raise _err(400, "E_INVALID_INPUT", str(e))
 
-#update bagdge list by adding new one
-@router.post("/users/{user_id}/badges", response_model=BadgeResponse)
-async def add_badge(user_id: str, req: BadgeRequest, current_user: CurrentUser = Depends(get_current_user)):
-    try:
-        return await achievements_service.add_badge(user_id, req)
-    except Exception as e:
-        raise _err(400, "E_INVALID_INPUT", str(e))
-
-@router.post("/users/{user_id}/badges/batch", response_model=BadgeBatchAddResponse)
-async def add_badges_batch(user_id: str, req: BadgeBatchAddRequest, current_user: CurrentUser = Depends(get_current_user)):
-    try:
-        return await achievements_service.add_badges_batch(user_id, req)
-    except Exception as e:
-        raise _err(400, "E_INVALID_INPUT", str(e))
     
 #Title Endpoints
 #Gets users active title for dashboard
