@@ -11,9 +11,6 @@ from .schemas import CodeSubmissionCreate, CodeExecutionResult
 class Judge0Repository:
     """SQLAlchemy-based repository for Judge0 operations."""
 
-    def __init__(self):
-        pass
-
     def get_submission_by_token(self, judge0_token: str) -> Optional[CodeSubmission]:
         """Get submission by Judge0 token."""
         db = next(get_db())
@@ -109,21 +106,18 @@ class Judge0Repository:
         """Delete submission and related results if user owns it."""
         db = next(get_db())
         try:
-            # Check ownership
             submission = db.query(CodeSubmission).filter(
                 CodeSubmission.id == submission_id,
                 CodeSubmission.user_id == user_id
             ).first()
-            
+
             if not submission:
                 return False
-                
-            # Delete results first (cascade should handle this, but being explicit)
+
             db.query(CodeResult).filter(
                 CodeResult.submission_id == submission_id
             ).delete()
-            
-            # Delete submission
+
             db.delete(submission)
             db.commit()
             return True
@@ -179,8 +173,5 @@ class Judge0Repository:
             raise RuntimeError(f"Failed to update submission status: {e}")
         finally:
             db.close()
-
-
-# Repository instance
 judge0_repository = Judge0Repository()
 

@@ -9,7 +9,6 @@ class AdminRepository:
         """Add a single enrolment"""
         client = await get_supabase()
 
-        # Convert UUIDs to strings for JSON serialization
         enrolment_serializable = {
             k: str(v) if isinstance(v, UUID) else v
             for k, v in enrolment.items()
@@ -22,10 +21,8 @@ class AdminRepository:
     async def remove_student(enrolment_id: UUID, lecturer_id: int):
         """Remove a student from a module"""
         client = await get_supabase()
-        # Convert UUID to string
         enrolment_id_str = str(enrolment_id)
 
-        # Ensure the lecturer owns the module
         result = await client.table("modules") \
             .select("id") \
             .eq("lecturer_id", lecturer_id) \

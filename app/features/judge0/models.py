@@ -6,12 +6,11 @@ import uuid
 from app.DB.base import Base
 
 class CodeSubmission(Base):
-    #Code submissions table
     __tablename__ = "code_submissions"
     __table_args__ = {"extend_existing": True}
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)  # Changed to Integer to match profiles.id
+    user_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)
     source_code = Column(Text, nullable=False)
     language_id = Column(Integer, nullable=False)
     stdin = Column(Text, nullable=True)
@@ -21,7 +20,6 @@ class CodeSubmission(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     
-    #Relationships
     results = relationship("CodeResult", back_populates="submission", cascade="all, delete-orphan")
     
     def __repr__(self):
@@ -38,7 +36,7 @@ class CodeResult(Base):
     stderr = Column(Text, nullable=True)
     compile_output = Column(Text, nullable=True)
     execution_time = Column(String(50), nullable=True)
-    memory_used = Column(Integer, nullable=True)  # in KB
+    memory_used = Column(Integer, nullable=True)
     status_id = Column(Integer, nullable=False)
     status_description = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
