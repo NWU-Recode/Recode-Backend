@@ -30,8 +30,6 @@ async def read_current_profile(
     The auth dependency returns a minimal CurrentUser (id/email/role). We need to
     fetch the persisted profile row to satisfy the full ProfileSchema contract.
     """
-    # Fetch full record by local student number (current_user.id)
-    from .service import get_profile_by_id  # local import to avoid circular at import time
     prof = await get_profile_by_id(current_user.id)
 
     if not prof:
@@ -46,7 +44,6 @@ async def update_current_profile(
 ) -> ProfileSchema:
     """Authenticated user: Update their own profile (cookie auth)."""
 
-    # Update the profile with provided fields
     updated = await update_profile(current_user.id, data)
 
     if not updated:

@@ -19,7 +19,6 @@ def get(key: str) -> Any | None:
     value, exp = item
     if now < exp:
         return value
-    # expired
     try:
         _STORE.pop(key, None)
     except Exception:

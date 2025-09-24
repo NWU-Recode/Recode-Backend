@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Test script for the AWS Bedrock Claude challenge generation workflow.
-This script tests the complete workflow without making actual AWS API calls.
+Test script for the AWS Bedrock challenge generation workflow.
+This script exercises the complete workflow without making actual AWS API calls.
 """
 
 import asyncio
@@ -18,7 +18,7 @@ from app.features.topic_detections.topics.topic_service import topic_service
 async def test_workflow():
     """Test the complete workflow."""
 
-    print("=== Testing AWS Bedrock Claude Challenge Generation Workflow ===\n")
+    print("=== Testing AWS Bedrock Challenge Generation Workflow ===\n")
 
     # 1. Test configuration loading
     print("1. Testing configuration loading...")
@@ -138,7 +138,7 @@ async def test_workflow():
     print("5. Testing Bedrock client setup...")
     try:
         import boto3
-        from app.features.challenges.ai.bedrock_client import bedrock
+        from app.features.challenges.model_runtime.bedrock_client import bedrock
 
         print("   ✓ Boto3 bedrock client created")
         print(f"   ✓ Client region: {bedrock.meta.region_name}")
@@ -158,7 +158,7 @@ async def test_workflow():
     print("\nNext steps:")
     print("1. Set AWS credentials in environment variables")
     print("2. Add sample data to slide_extraction table")
-    print("3. Test actual Claude API calls")
+    print("3. Test actual model API calls")
     print("4. Test complete challenge generation and database insertion")
 
 

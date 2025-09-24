@@ -228,23 +228,9 @@ class Judge0Service:
         waited = await self.submit_code_wait(submission, fields=fields)
         token = waited.token  # type: ignore[attr-defined]
         exec_result = self._to_code_execution_result(waited, submission.expected_output, submission.language_id)
-        # Persist submission row (status set based on final status id)
-        status_label = "completed" if exec_result.status_id not in [1, 2] else "processing"
-        # sub_create = SubmissionCreate(
-        #     source_code=submission.source_code,
-        #     language_id=submission.language_id,
-        #     stdin=submission.stdin,
-        #     expected_output=submission.expected_output,
-        #     # question_id injected by higher layer (QuestionService) if needed; left None here
-        # )
-        # stored_sub = await submission_service.store_submission(sub_create, user_id, token)
-        # Update status if needed
-        # Persist result row
-        # await submission_service.store_result(token, exec_result)
         return token, exec_result
     
     async def get_submission_result(self, token: str) -> Judge0ExecutionResult:
-        #Result by token.
         timeout = httpx.Timeout(connect=3, read=self.settings.judge0_timeout_s, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
@@ -360,7 +346,6 @@ class Judge0Service:
         if resp.status_code != 201:
             raise Exception(f"Batch submit failed: {resp.status_code} {resp.text[:200]}")
         data = resp.json()
-        # Accept either {"submission_tokens":[{"token":..}]} or list
         tokens: List[str] = []
         if isinstance(data, dict) and "submission_tokens" in data:
             for item in data["submission_tokens"]:
@@ -381,7 +366,6 @@ class Judge0Service:
         """Fetch multiple submissions by tokens (returns mapping token -> result)."""
         if not tokens:
             return {}
-        # Judge0 expects comma separated tokens
         token_param = ",".join(tokens)
         timeout = httpx.Timeout(connect=3, read=None, write=5, pool=5)
         limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
@@ -408,7 +392,6 @@ class Judge0Service:
         poll_interval: float = 1.0,
     ) -> List[tuple[str, CodeExecutionResult]]:
         """Submit a batch then poll until all finished; returns list aligned to original order."""
-        # Fast path: for small batches, prefer waited single-call executes to avoid batch API edge cases
         if len(submissions) <= 8:
             out: List[tuple[str, CodeExecutionResult]] = []
             for sub in submissions:
@@ -421,7 +404,6 @@ class Judge0Service:
         start = time.time()
         latest: Dict[str, CodeExecutionResult] = {}
         while pending and (timeout_seconds is None or time.time() - start < timeout_seconds):
-            # Try batch fetch first
             try:
                 batch = await self.get_batch_results(list(pending))
             except Exception:
@@ -437,7 +419,6 @@ class Judge0Service:
                         if tok in pending:
                             pending.discard(tok)
                             progressed = True
-            # For any still pending, try individual GETs (some Judge0 builds respond better individually)
             if pending:
                 for tok in list(pending):
                     try:
@@ -450,7 +431,6 @@ class Judge0Service:
                             pending.discard(tok)
                             progressed = True
                     except Exception:
-                        # ignore transient errors and keep polling
                         pass
             if not pending:
                 break

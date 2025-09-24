@@ -22,8 +22,8 @@ bedrock = boto3.client(
 )
 
 
-async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[str, Any]:
-    """Invoke the configured Claude model on AWS Bedrock and return a validated JSON payload."""
+async def invoke_model(prompt: str, max_tokens: Optional[int] = None) -> Dict[str, Any]:
+    """Invoke the configured Bedrock model and return a validated JSON payload."""
     if max_tokens is None:
         max_tokens = settings.bedrock_max_tokens
 
@@ -256,4 +256,4 @@ async def invoke_claude(prompt: str, max_tokens: Optional[int] = None) -> Dict[s
                     pass
         except Exception:
             pass
-        raise ValueError(f"Failed to parse Claude response: {exc}")
+        raise ValueError(f"Failed to parse model response: {exc}")

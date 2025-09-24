@@ -16,10 +16,9 @@ class UserRole(enum.Enum):
 class Profile(Base):
     __tablename__ = "profiles"
 
-    id = Column(Integer, primary_key=True, nullable=False)  # student_number as primary key
+    id = Column(Integer, primary_key=True, nullable=False)
     supabase_id = Column(
         UUID(as_uuid=True),
-        # ForeignKey("auth.users.id", ondelete="CASCADE"),  # Commented out for migration - managed manually in DB
         unique=True,
         nullable=False,
         index=True,
@@ -37,8 +36,6 @@ class Profile(Base):
     user_metadata = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    # Add constraint to ensure student number is exactly 8 digits
     __table_args__ = (
         CheckConstraint('id >= 10000000 AND id <= 99999999', name='check_student_number_8_digits'),
     )
