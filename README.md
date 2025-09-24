@@ -1,15 +1,15 @@
 # 🚀 Recode-Backend
 
-**Transform NWU lecture slides into interactive, NLP-driven coding exercises for semester-based gamified learning.**
+**Transform NWU lecture slides into interactive coding exercises for semester-based gamified learning.**
 
-Recode is a revolutionary educational platform that leverages natural language processing to convert traditional lecture materials into engaging, interactive coding challenges. Built with FastAPI and powered by Supabase, this backend service provides the foundation for a gamified learning experience that adapts to each student's progress.
+Recode is an educational platform that converts traditional lecture materials into engaging, interactive coding challenges. Built with FastAPI and powered by Supabase, this backend service provides the foundation for a gamified learning experience that adapts to each student's progress.
 
 
 ## 🎯 Project Overview
 
 Recode addresses the challenge of making computer science education more interactive and engaging by:
 - **Transforming static slides** into dynamic coding exercises
-- **Leveraging NLP** to understand and process educational content
+- **Summarising key points** from educational content automatically
 - **Creating gamified experiences** with semester-based progression
 - **Providing real-time feedback** and adaptive learning paths
 
@@ -130,7 +130,7 @@ The application uses the following key tables:
 
 ## 🎯 Key Features
 
-### 1. NLP Content Processing
+### 1. Automated Content Processing
 - **Slide Analysis**: Extract key concepts from lecture slides
 - **Code Generation**: Create relevant coding exercises
 - **Difficulty Scaling**: Adjust challenge complexity based on student level
@@ -169,7 +169,7 @@ The application uses the following key tables:
 - [ ] Content upload system
 
 ### Phase 2: Intelligence
-- [ ] Advanced NLP processing
+- [ ] Advanced content processing
 - [ ] Adaptive difficulty algorithms
 - [ ] Performance analytics dashboard
 

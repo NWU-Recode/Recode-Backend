@@ -5,6 +5,7 @@ from .schemas import EnrolmentCreate, EnrolmentBatch, EnrolmentResponse, UserRol
 from .service import AdminPanelService
 from app.common.deps import CurrentUser, require_admin, require_lecturer
 
+
 router = APIRouter(prefix="/admin_panel", tags=["Admin Panel"])
 service = AdminPanelService()
 
@@ -12,7 +13,7 @@ service = AdminPanelService()
 @router.post("/students", response_model=EnrolmentResponse)
 async def enrol_student(
     request: EnrolmentCreate,
-    user: CurrentUser = Depends(require_lecturer())
+    user: CurrentUser = Depends(require_lecturer_cookie())
 ):
     return await service.enrol_student(request, user.role, user.id)
 
@@ -72,11 +73,12 @@ async def list_students(
 ):
     return await service.list_students(module_id, user.role, user.id)
 
+
 # --- View module progress ---
 @router.get("/modules/{module_id}/progress")
 async def module_progress(
     module_id: UUID,
-    user: CurrentUser = Depends(require_lecturer())
+    user: CurrentUser = Depends(require_lecturer_cookie())
 ):
     return await service.get_module_progress(module_id, user.role, user.id)
 

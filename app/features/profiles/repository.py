@@ -24,7 +24,6 @@ class ProfileRepository:
     async def create_profile(self, supabase_id: str, data: ProfileCreate) -> dict:
         client = await get_supabase()
         record = {
-            # If student_number provided (provision after binding step), set as id; else let DB default/ fail fast if required
             **({"id": data.student_number} if getattr(data, "student_number", None) else {}),
             "supabase_id": supabase_id,
             "email": data.email,
@@ -124,7 +123,5 @@ class ProfileRepository:
         client = await get_supabase()
         resp = await self._exec(client.table("profiles").delete().eq("id", profile_id).execute(), op="profiles.delete")
         return bool(getattr(resp, "data", None) or getattr(resp, "count", None))
-
-    # Removed legacy student_number binding methods; now handled in DB trigger via auth user metadata.
 
 profile_repository = ProfileRepository()

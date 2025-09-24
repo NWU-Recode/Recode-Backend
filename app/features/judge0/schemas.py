@@ -58,10 +58,9 @@ class Judge0ExecutionResult(BaseModel):
     message: Optional[str] = None
     time: Optional[str] = None
     memory: Optional[int] = None
-    status: dict  # Contains id and description (always expected)
-    language: Optional[dict] = None  # May be missing on some responses
-    
-#Executiion Result 
+    status: dict
+    language: Optional[dict] = None
+
 class CodeExecutionResult(BaseModel):
     submission_id: Optional[UUID] = None
     stdout: Optional[str] = None

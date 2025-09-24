@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from jsonschema import ValidationError, validate
 
 from app.DB.supabase import get_supabase
-from app.features.challenges.ai.bedrock_client import invoke_claude
+from app.features.challenges.model_runtime.bedrock_client import invoke_model
 from app.features.challenges.templates.strings import get_fallback_payload
 
 DEFAULT_TOPICS = [
@@ -552,14 +552,14 @@ def _normalise_questions(kind: str, payload: Dict[str, Any]) -> List[Dict[str, A
     questions = payload.get("questions", [])
     if kind in {"common", "base"}:
         if len(questions) < 5:
-            raise ValueError("Claude response did not include 5 questions for base/common payload")
+            raise ValueError("Model response did not include 5 questions for base/common payload")
         selected = questions[:5]
         return [
             _normalise_question(kind, selected[i], BASE_DISTRIBUTION[i])
             for i in range(5)
         ]
     if not questions:
-        raise ValueError(f"Claude response did not include questions for tier {kind}")
+        raise ValueError(f"Model response did not include questions for tier {kind}")
     return [_normalise_question(kind, questions[0], kind.title())]
 
 
@@ -574,7 +574,7 @@ async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
     last_error: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
         try:
-            result = await invoke_claude(prompt)
+            result = await invoke_model(prompt)
             if isinstance(result, str):
                 result = json.loads(result)
             validate(instance=result, schema=QUESTION_SCHEMA)
@@ -582,7 +582,7 @@ async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
         except (json.JSONDecodeError, ValidationError, TypeError) as exc:
             last_error = exc
             logger.warning(
-                "Claude response validation failed (attempt %s/%s) for tier %s: %s",
+                "Model response validation failed (attempt %s/%s) for tier %s: %s",
                 attempt,
                 max_attempts,
                 kind,
@@ -591,14 +591,14 @@ async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
         except Exception as exc:
             last_error = exc
             logger.warning(
-                "Claude invocation failed (attempt %s/%s) for tier %s: %s",
+                "Model invocation failed (attempt %s/%s) for tier %s: %s",
                 attempt,
                 max_attempts,
                 kind,
                 exc,
             )
     logger.warning(
-        "Using fallback challenge template for tier %s after %s Claude failures. Last error: %s",
+        "Using fallback challenge template for tier %s after %s model failures. Last error: %s",
         kind,
         max_attempts,
         last_error,
@@ -751,7 +751,7 @@ async def _insert_question(
     return record
 
 
-class ClaudeChallengeGenerator:
+class ChallengePackGenerator:
     def __init__(self, week: int, slide_stack_id: Optional[int] = None, module_code: Optional[str] = None, lecturer_id: Optional[int] = None):
         self.week = week
         self.slide_stack_id = slide_stack_id
@@ -822,7 +822,7 @@ class ClaudeChallengeGenerator:
                     "topic_ids_used": context.topic_ids_used,
                 }
             except Exception as exc:
-                print(f"[claude-generator] Skipped {tier}: {exc}")
+                print(f"[challenge-generator] Skipped {tier}: {exc}")
                 return None
 
         results = await asyncio.gather(*(_generate_and_store(t) for t in tiers))
@@ -860,13 +860,13 @@ def _tier_from_kind(tier: str) -> str:
     return "base" if tier == "common" else tier
 
 
-async def generate_challenges_with_claude(
+async def generate_challenges_with_model(
     week: int,
     slide_stack_id: Optional[int] = None,
     module_code: Optional[str] = None,
     lecturer_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    generator = ClaudeChallengeGenerator(
+    generator = ChallengePackGenerator(
         week, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id
     )
     return await generator.generate()

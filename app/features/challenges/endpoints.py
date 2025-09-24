@@ -10,7 +10,7 @@ from .schemas import (
 )
 from .service import challenge_service
 from app.features.challenges.repository import challenge_repository
-from app.features.challenges.claude_generator import (
+from app.features.challenges.challenge_pack_generator import (
     generate_tier_preview,
     generate_and_save_tier,
 )

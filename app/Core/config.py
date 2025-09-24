@@ -32,7 +32,7 @@ class Settings:
             self.judge0_timeout_s = float(os.getenv("JUDGE0_TIMEOUT", "30"))
         except Exception:
             self.judge0_timeout_s = 30.0
-        # Hugging Face / AI generation
+        # Hugging Face content generation
         self.hf_api_token = os.getenv("HUGGINGFACE_API_TOKEN", "")
         self.hf_model_id = os.getenv("HF_MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")
         try:

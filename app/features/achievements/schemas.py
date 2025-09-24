@@ -7,12 +7,14 @@ from uuid import UUID
 #Achievements Schemas - for dashboard
 class AchievementsResponse(BaseModel):
     elo: int
+    gpa: Optional[float] = None
     badges: List[BadgeResponse]
     title: Optional[TitleResponse]
 
 #ELO
 class EloResponse(BaseModel):
     elo: int
+    gpa: Optional[float] = None
 
 class EloUpdateRequest(BaseModel):
     submission_id : str
@@ -67,5 +69,6 @@ class CheckAchievementsRequest(BaseModel):
 
 class CheckAchievementsResponse(BaseModel):
     updated_elo: int
+    gpa: Optional[float] = None
     unlocked_badges: Optional[List[BadgeResponse]]
     new_title: Optional[TitleResponse] = None

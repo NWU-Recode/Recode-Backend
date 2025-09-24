@@ -4,6 +4,8 @@ from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
 
+from app.features.submissions.schemas import ChallengeQuestionResultSchema
+
 class Challenge(BaseModel):
     id: UUID
     title: str
@@ -32,13 +34,15 @@ class ChallengeSubmitRequest(BaseModel):
 
 class ChallengeSubmitResponse(BaseModel):
     challenge_attempt_id: UUID
-    score: int
-    correct_count: int
+    challenge_id: UUID
     status: str
-    snapshot_question_ids: List[UUID]
-    passed_ids: List[UUID]
-    failed_ids: List[UUID]
-    missing_question_ids: Optional[List[UUID]] = None
+    gpa_score: int
+    gpa_max_score: int
+    elo_delta: int
+    passed_question_ids: List[UUID]
+    failed_question_ids: List[UUID]
+    missing_question_ids: List[UUID]
+    question_results: List[ChallengeQuestionResultSchema]
 
 class ChallengeAttemptQuestionStatus(BaseModel):
     question_id: UUID
