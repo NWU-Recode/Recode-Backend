@@ -72,4 +72,40 @@ class AchievementsRepository:
             "title": title,
         }
 
+class BadgeRepository:
+    def __init__(self, db_client):
+        self.db = db_client
+     
+    def get_user_badges(self, user_id: str) -> List[dict]:
+        # Use Supabase client consistently
+        response = self.db.table('user_badge').select("""
+            badges(id, name, description, badge_type::text, icon_url),
+            question_id,
+            awarded_at
+        """).eq('profile_id', user_id).order('awarded_at', desc=True).execute()
+        
+        # Flatten the structure
+        badges = []
+        for item in response.data:
+            badge_data = item['badges']
+            badge_data['question_id'] = item['question_id']  
+            badge_data['awarded_at'] = item['awarded_at']
+            badges.append(badge_data)
+        return badges
+     
+    def check_for_new_badge_after_submission(self, user_id: str, question_id: str) -> Optional[dict]:
+        response = self.db.table('user_badge').select("""
+            badges(id, name, description, badge_type::text, icon_url),
+            question_id,
+            awarded_at
+        """).eq('profile_id', user_id).eq('question_id', question_id).execute()
+        
+        if response.data:
+            badge_data = response.data[0]['badges']
+            badge_data['question_id'] = response.data[0]['question_id']
+            badge_data['awarded_at'] = response.data[0]['awarded_at']
+            return badge_data
+        return None
+
+
 achievements_repository = AchievementsRepository()

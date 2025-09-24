@@ -46,7 +46,7 @@ async def update_elo(user_id: str, req: EloUpdateRequest, current_user: CurrentU
 @router.get("/users/{user_id}/badges", response_model=List[BadgeResponse])
 async def get_badges(user_id: str, current_user: CurrentUser = Depends(get_current_user)):
     try:
-        return await achievements_service.get_badges(user_id)
+        return await achievements_service.get_all_user_badges(user_id)
     except Exception as e:
         raise _err(400, "E_INVALID_INPUT", str(e))
 
