@@ -91,6 +91,11 @@ app.include_router(dashboard_router, dependencies=protected_deps)
 app.include_router(slides_router, dependencies=protected_deps)
 app.include_router(submissions_router, dependencies=protected_deps)
 
+# Include routers(Vonani)
+app.include_router(admin_router)
+app.include_router(module_router)
+app.include_router(semester_router)
+
 
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
