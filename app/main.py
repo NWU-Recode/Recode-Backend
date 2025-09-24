@@ -1,4 +1,4 @@
-"""FastAPI heartbeat. Lean core."""
+"""FastAPI Heartbeat. Lean."""
 
 from __future__ import annotations
 
@@ -159,9 +159,8 @@ async def healthz() -> Dict[str, Any]:
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-	real_icon_path = os.path.join(static_dir, "favicon.ico")
-	if os.path.isfile(real_icon_path):
-		return FileResponse(real_icon_path, media_type="image/x-icon")
-	return PlainTextResponse("favicon.ico not found", status_code=404)
-
+    real_icon_path = os.path.join(static_dir, "favicon.ico")
+    if os.path.isfile(real_icon_path):
+        return FileResponse(real_icon_path, media_type="image/x-icon")
+    return PlainTextResponse("favicon.ico not found", status_code=404)
 
