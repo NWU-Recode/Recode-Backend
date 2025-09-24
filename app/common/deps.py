@@ -1,18 +1,17 @@
-"""Shared FastAPI dependencies for authn/authz & request context."""
+"""Shared FastAPI dependencies for authentication, authorization, and context."""
 
 from __future__ import annotations
 
 import logging
-from uuid import UUID
 from functools import lru_cache
-from typing import Callable, Iterable, Optional, Any
+from typing import Any, Callable
 
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 
 from app.DB.supabase import get_supabase
-from app.features.profiles.service import ensure_profile_provisioned as ensure_user_provisioned, get_profile_by_supabase_id
+from app.features.profiles.service import ensure_profile_provisioned as ensure_user_provisioned
 from app.Auth.deps import get_current_claims
 from app.Auth.service import refresh_tokens_if_needed, set_auth_cookies, ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
 
@@ -31,7 +30,6 @@ class CurrentUser(BaseModel):
 @lru_cache()
 def _admin_roles() -> set[str]:
     return {"admin", "superadmin"}
-
 
 async def get_current_user(
     request: Request,
@@ -92,7 +90,6 @@ async def get_current_user_from_cookie(
     cached: CurrentUser | None = getattr(request.state, "current_user", None)
     if cached is not None:
         return cached
-
     user_id = claims.get("sub")
     email = claims.get("email") or (claims.get("user_metadata") or {}).get("email") or ""
     if not user_id:
@@ -120,7 +117,6 @@ async def get_current_user_from_cookie(
     except Exception as e:
         logger.error("Error resolving user from cookie: %s", str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resolve user")
-
 
 
 async def get_current_user_with_refresh(
@@ -218,6 +214,7 @@ def require_admin_or_lecturer_cookie() -> Callable:
         if user.role == "admin":
             return user
         if user.role == "lecturer":
+
             return user
         raise HTTPException(status_code=403, detail="Not authorized as admin or lecturer")
 
