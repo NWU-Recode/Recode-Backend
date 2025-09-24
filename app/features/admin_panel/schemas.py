@@ -3,6 +3,7 @@ from uuid import UUID
 from datetime import datetime
 from typing import Optional, List
 
+# --- Enrolment Schemas ---
 class EnrolmentBase(BaseModel):
     semester_id: UUID
     student_id: int
@@ -23,3 +24,14 @@ class EnrolmentBatch(BaseModel):
     students: List[int]
     module_id: UUID
     semester_id: UUID
+
+# --- User role management schemas ---
+class UserRoleUpdate(BaseModel):
+    user_id: int
+    new_role: str
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    full_name: Optional[str]
+    role: str
