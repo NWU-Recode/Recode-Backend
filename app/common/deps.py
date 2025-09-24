@@ -1,18 +1,17 @@
-"""Shared FastAPI dependencies for authn/authz & request context."""
+"""Shared FastAPI dependencies for authentication, authorization, and context."""
 
 from __future__ import annotations
 
 import logging
-from uuid import UUID
 from functools import lru_cache
-from typing import Callable, Iterable, Optional, Any
+from typing import Any, Callable
 
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 
 from app.DB.supabase import get_supabase
-from app.features.profiles.service import ensure_profile_provisioned as ensure_user_provisioned, get_profile_by_supabase_id
+from app.features.profiles.service import ensure_profile_provisioned as ensure_user_provisioned
 from app.Auth.deps import get_current_claims
 from app.Auth.service import refresh_tokens_if_needed, set_auth_cookies, ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
 
@@ -23,33 +22,24 @@ security = HTTPBearer(auto_error=True)
 
 class CurrentUser(BaseModel):
     """Minimal user identity shared across endpoints."""
-    id: int  #student number
+    id: int
     email: EmailStr
     role: str
 
 
 @lru_cache()
-def _admin_roles() -> set[str]:  # future extensibility
+def _admin_roles() -> set[str]:
     return {"admin", "superadmin"}
-
 
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> CurrentUser:
-    """Resolve and return the current authenticated user (idempotent provisioning).
-
-    Steps:
-      1. Validate bearer token via Supabase Auth
-      2. Ensure matching row in local users table (auto-provision / reconcile)
-      3. Return typed minimal identity object
-      4. Log request with X-Request-Id if provided
-    """
+    """Resolve and return the current authenticated user."""
     import asyncio, os, time
     client = await get_supabase()
     token = credentials.credentials
     try:
-        # Clamp whoami to avoid 30s stalls
         t0 = time.perf_counter()
         whoami_timeout = float(os.getenv("AUTH_WHOAMI_TIMEOUT", "5"))
         auth_user = await asyncio.wait_for(client.auth.get_user(token), timeout=whoami_timeout)
@@ -67,7 +57,6 @@ async def get_current_user(
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User email missing in token")
 
-    # Ensure local provisioning (idempotent) and avoid a second fetch
     t1 = time.perf_counter()
     db_user = await ensure_user_provisioned(sup_user.id, email, (sup_user.user_metadata or {}).get("full_name"))
     t2 = time.perf_counter()
@@ -77,17 +66,15 @@ async def get_current_user(
 
     request_id = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
     if request_id:
-        # Attach to state for downstream usage
         request.state.request_id = request_id
     logger.info(
-        "auth_resolved user_id=%s email=%s role=%s request_id=%s path=%s",  # structured log compatible
+        "auth_resolved user_id=%s email=%s role=%s request_id=%s path=%s",
         current.id,
         current.email,
         current.role,
         request_id,
         request.url.path,
     )
-    # Span timings for hot path (whoami/provision)
     try:
         logger.info("auth_spans_ms whoami=%s provision=%s", None, int((t2 - t1) * 1000))
     except Exception:
@@ -99,28 +86,20 @@ async def get_current_user_from_cookie(
     request: Request,
     claims: dict[str, Any] = Depends(get_current_claims),
 ) -> CurrentUser:
-    """Verify a browser cookie (or bearer) token and return typed CurrentUser.
-
-    Optimizations:
-      * Caches the resolved CurrentUser on request.state.current_user
-      * Returns cached user if already resolved earlier in the dependency chain
-    """
+    """Resolve the current user from cookie- or bearer-based claims."""
     cached: CurrentUser | None = getattr(request.state, "current_user", None)
     if cached is not None:
         return cached
-
     user_id = claims.get("sub")
     email = claims.get("email") or (claims.get("user_metadata") or {}).get("email") or ""
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: missing subject")
 
     try:
-        # Ensure local provisioning (idempotent) and avoid redundant fetch
         db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
         role = (db_user.get("role") if isinstance(db_user, dict) else None) or "student"
 
         current = CurrentUser(id=db_user["id"], email=email, role=role)  # type: ignore[arg-type]
-        # Cache for downstream dependencies / endpoints
         request.state.current_user = current  # type: ignore[attr-defined]
 
         request_id = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
@@ -140,42 +119,31 @@ async def get_current_user_from_cookie(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resolve user")
 
 
-
 async def get_current_user_with_refresh(
     request: Request,
     response: Response,
     claims: dict[str, Any] = Depends(get_current_claims),
 ) -> CurrentUser:
-    """Enhanced dependency that handles automatic token refresh.
-    
-    This checks if the access token is close to expiring and automatically
-    refreshes it using the refresh token if available. Sets new cookies
-    with updated tokens.
-    """
+    """Resolve the current user and refresh expiring tokens when possible."""
     from fastapi import Response
-    
-    # Get current user from claims
+
     user_id = claims.get("sub")
     email = claims.get("email") or (claims.get("user_metadata") or {}).get("email") or ""
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: missing subject")
 
-    # Check if we should refresh the token
     access_token = request.cookies.get(ACCESS_COOKIE_NAME)
     refresh_token = request.cookies.get(REFRESH_COOKIE_NAME)
-    
+
     if access_token and refresh_token:
         try:
             new_tokens = await refresh_tokens_if_needed(access_token, refresh_token)
             if new_tokens:
-                # Set new cookies with refreshed tokens
                 set_auth_cookies(response, new_tokens)
                 logger.info(f"Auto-refreshed tokens for user {user_id}")
         except Exception as e:
-            # Log but don't fail the request - use existing token
             logger.warning(f"Failed to auto-refresh token for user {user_id}: {e}")
 
-    # Ensure local provisioning (idempotent) and avoid redundant fetch
     db_user = await ensure_user_provisioned(user_id, email, (claims.get("user_metadata") or {}).get("full_name"))
     role = (db_user.get("role") if isinstance(db_user, dict) else None) or "student"
 
@@ -195,12 +163,7 @@ async def get_current_user_with_refresh(
     return current
 
 def require_role(*roles: str, use_cookie: bool = False) -> Callable:
-    """Factory returning dependency enforcing that user has one of the roles.
-
-    Args:
-      roles: Allowed roles (case-insensitive). Empty -> no restriction.
-      use_cookie: If True, base resolution on cookie workflow; else bearer header.
-    """
+    """Return a dependency enforcing membership in the provided roles."""
     normalized = {r.lower() for r in roles if r}
 
     base_dep = get_current_user_from_cookie if use_cookie else get_current_user
@@ -219,7 +182,6 @@ def require_role(*roles: str, use_cookie: bool = False) -> Callable:
 def require_admin(use_cookie: bool = False) -> Callable:
     return require_role("admin", use_cookie=use_cookie)
 
-# Convenience cookie-based admin dependency
 def require_admin_cookie() -> Callable:
     from app.common.deps import get_current_user_from_cookie  # Lazy import to avoid circular dependency
 
@@ -234,8 +196,6 @@ def require_admin_cookie() -> Callable:
 def require_lecturer(use_cookie: bool = False) -> Callable:
     return require_role("lecturer", use_cookie=use_cookie)
 
-# Convenience cookie-based lecturer dependency
-#changed(vonani)
 def require_lecturer_cookie() -> Callable:
     async def dependency(
         user: CurrentUser = Depends(get_current_user_from_cookie)
@@ -245,7 +205,6 @@ def require_lecturer_cookie() -> Callable:
         return user
 
     return dependency
-#end changed(vonani)
 
 def require_admin_or_lecturer_cookie() -> Callable:
     from app.common.deps import get_current_user_from_cookie  # Lazy import to avoid circular dependency
@@ -253,9 +212,10 @@ def require_admin_or_lecturer_cookie() -> Callable:
     async def dependency(request: Request):
         user = await get_current_user_from_cookie(request)  # Await the async function
         if user.role == "admin":
-            return user  # Admin bypasses all restrictions
+            return user
         if user.role == "lecturer":
-            return user  # Lecturer access
+
+            return user
         raise HTTPException(status_code=403, detail="Not authorized as admin or lecturer")
 
     return dependency

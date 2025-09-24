@@ -1,6 +1,6 @@
 import asyncio
 import os
-from app.features.challenges import claude_generator
+from app.features.challenges import challenge_pack_generator
 from app.features.challenges.templates.strings import get_fallback_payload
 
 # Fake invoke that returns fallback payloads based on the prompt (tier)
@@ -17,7 +17,7 @@ async def _fake_invoke(prompt: str):
 async def main():
     # Patch the generator module to use the fake invoke
     try:
-        claude_generator.invoke_claude = _fake_invoke
+        challenge_pack_generator.invoke_model = _fake_invoke
     except Exception:
         pass
 
@@ -27,7 +27,12 @@ async def main():
     lecturer_id = int(os.environ.get("GEN_LECTURER_ID", "1"))
 
     print(f"Running generation for week={week}, module_code={module_code}, lecturer_id={lecturer_id}")
-    gen = claude_generator.ClaudeChallengeGenerator(week, slide_stack_id=None, module_code=module_code, lecturer_id=lecturer_id)
+    gen = challenge_pack_generator.ChallengePackGenerator(
+        week,
+        slide_stack_id=None,
+        module_code=module_code,
+        lecturer_id=lecturer_id,
+    )
     result = await gen.generate()
     print("Generation result:")
     print(result)

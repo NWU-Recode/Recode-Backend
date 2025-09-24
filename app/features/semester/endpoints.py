@@ -1,30 +1,48 @@
-from fastapi import APIRouter, Depends
+"""Endpoints for managing semesters."""
+
+from __future__ import annotations
+
 from typing import List
-from .schemas import SemesterCreate, SemesterResponse, ModuleResponse
+
+from fastapi import APIRouter, Depends
+
+from app.common.deps import (
+    CurrentUser,
+    get_current_user_from_cookie,
+    require_admin_cookie,
+)
+
+from .schemas import ModuleResponse, SemesterCreate, SemesterResponse
 from .service import SemesterService
-from app.common.deps import get_current_user, require_admin, CurrentUser
+
 
 router = APIRouter(prefix="/semesters", tags=["Semesters"])
 
-# Admin-only: create semester
+
 @router.post("/", response_model=SemesterResponse)
 def create_semester(
     semester: SemesterCreate,
-    current_user: CurrentUser = Depends(require_admin)
-):
+    current_user: CurrentUser = Depends(require_admin_cookie()),
+) -> SemesterResponse:
     return SemesterService.create_semester(semester)
 
-# Everyone: list semesters
-@router.get("/", response_model=List[SemesterResponse])
-def list_semesters():
-    return SemesterService.list_semesters()  # Service handles DB session
 
-# Everyone: get current semester
+@router.get("/", response_model=List[SemesterResponse])
+def list_semesters() -> List[SemesterResponse]:
+    return SemesterService.list_semesters()
+
+
 @router.get("/current", response_model=SemesterResponse)
-def current_semester(current_user: CurrentUser = Depends(get_current_user)):
+def current_semester(
+    current_user: CurrentUser = Depends(get_current_user_from_cookie),
+) -> SemesterResponse:
     return SemesterService.current_semester()
 
-# Students: get modules for a semester
-@router.get("/semesters/{semester_id}/modules", response_model=List[ModuleResponse])
-async def semester_modules(semester_id: str, current_user: str = Depends(get_current_user)):
+
+@router.get("/{semester_id}/modules", response_model=List[ModuleResponse])
+async def semester_modules(
+    semester_id: str,
+    current_user: CurrentUser = Depends(get_current_user_from_cookie),
+) -> List[ModuleResponse]:
     return SemesterService.get_user_modules(semester_id, current_user.id)
+
