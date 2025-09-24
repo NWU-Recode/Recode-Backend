@@ -1,42 +1,40 @@
-"""FastAPI application entrypoint."""
+"""FastAPI Heartbeat. Lean."""
 
 from __future__ import annotations
 
+from fastapi import FastAPI, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict
-
-from fastapi import Depends, FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.Auth.routes import router as auth_router
 from app.Core.config import get_settings
-from app.common.deps import get_current_user_from_cookie
-from app.common.middleware import SessionManagementMiddleware
-from app.features.admin_panel.endpoints import router as admin_router
+
+from app.Auth.routes import router as auth_router
+from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
+from app.features.judge0.endpoints import public_router as judge0_public_router
+from app.features.judge0.endpoints import protected_router as judge0_protected_router
 from app.features.challenges.endpoints import router as challenges_router
 from app.features.dashboard.endpoints import router as dashboard_router
-from app.features.judge0.endpoints import (
-    protected_router as judge0_protected_router,
-    public_router as judge0_public_router,
-)
-from app.features.module.endpoints import router as module_router
-from app.features.profiles.endpoints import router as profiles_router
-from app.features.semester.endpoints import router as semester_router
 from app.features.slides.endpoints import router as slides_router
-
+from app.features.submissions.endpoints import router as submissions_router
+from app.common.deps import get_current_user_from_cookie
+from app.common.middleware import SessionManagementMiddleware
+#just added(vonani)
+from app.features.admin_panel.endpoints import router as admin_router
+from app.features.module.endpoints import router as module_router
+from app.features.semester.endpoints import router as semester_router
+#end (vonani)
 
 app = FastAPI(title="Recode Backend")
 
-
-def _split_env_csv(name: str, default: str = "") -> list[str]:
+def _split_env_csv(name: str, default: str = ""):
     raw = os.getenv(name, default)
-    return [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
-
+    return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
 
 _FRONTEND_ORIGINS = _split_env_csv(
     "ALLOW_ORIGINS",
@@ -44,55 +42,46 @@ _FRONTEND_ORIGINS = _split_env_csv(
 )
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_FRONTEND_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+	CORSMiddleware,
+	allow_origins=_FRONTEND_ORIGINS,
+	allow_credentials=True,
+	allow_methods=["*"],
+	allow_headers=["*"],
 )
 
+# Add session management middleware for automatic token refresh
 app.add_middleware(SessionManagementMiddleware, auto_refresh=True)
 
-
+# Middleware: capture / propagate / generate X-Request-Id consistently
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):  # type: ignore[override]
-    import logging
-    import uuid
+	import uuid, logging
+	incoming = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
+	req_id = incoming or str(uuid.uuid4())
+	request.state.request_id = req_id
+	logger = logging.getLogger("request")
+	logger.info("request.start", extra={"request_id": req_id, "path": request.url.path, "method": request.method})
+	response = await call_next(request)
+	response.headers["X-Request-Id"] = req_id
+	logger.info("request.end", extra={"request_id": req_id, "path": request.url.path, "status_code": response.status_code})
+	return response
 
-    incoming = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
-    request_id = incoming or str(uuid.uuid4())
-    request.state.request_id = request_id
-
-    logger = logging.getLogger("request")
-    logger.info(
-        "request.start",
-        extra={"request_id": request_id, "path": request.url.path, "method": request.method},
-    )
-    response = await call_next(request)
-    response.headers["X-Request-Id"] = request_id
-    logger.info(
-        "request.end",
-        extra={"request_id": request_id, "path": request.url.path, "status_code": response.status_code},
-    )
-    return response
-
-
+# Tiny request timing middleware for quick visibility
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):  # type: ignore[override]
     from time import perf_counter
-
-    start = perf_counter()
-    response = await call_next(request)
-    duration_ms = int((perf_counter() - start) * 1000)
-    print(f"{request.method} {request.url.path} {duration_ms}ms {response.status_code}")
-    return response
-
-
+    t0 = perf_counter()
+    resp = await call_next(request)
+    dt = int((perf_counter() - t0) * 1000)
+    # Print once per request to spot 30s stalls
+    print(f"{request.method} {request.url.path} {dt}ms {resp.status_code}")
+    return resp
 _START_TIME = datetime.now(timezone.utc)
 _settings = get_settings()
 
+# Plug the veins
 app.include_router(auth_router)
-
+# Protect all non-auth routers with cookie-based auth by default
 protected_deps = [Depends(get_current_user_from_cookie)]
 app.include_router(profiles_router, dependencies=protected_deps)
 app.include_router(judge0_public_router)
@@ -100,25 +89,24 @@ app.include_router(judge0_protected_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
 app.include_router(slides_router, dependencies=protected_deps)
-app.include_router(admin_router, dependencies=protected_deps)
-app.include_router(module_router, dependencies=protected_deps)
-app.include_router(semester_router, dependencies=protected_deps)
+app.include_router(submissions_router, dependencies=protected_deps)
+
 
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+	app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.get("/", tags=["meta"], summary="API Root")
-async def root() -> Dict[str, str]:
-    return {
-        "name": "Recode Backend",
-        "status": "ok",
-        "docs": "/docs",
-        "redoc": "/redoc",
-        "health": "/healthz",
-    }
+async def root():
+	return {
+		"name": "Recode Backend",
+		"status": "ok",
+		"docs": "/docs",
+		"redoc": "/redoc",
+		"health": "/healthz"
+	}
 
 @app.get("/healthz", tags=["meta"], summary="Liveness / readiness probe")
 async def healthz() -> Dict[str, Any]:
@@ -175,5 +163,4 @@ async def favicon():
     if os.path.isfile(real_icon_path):
         return FileResponse(real_icon_path, media_type="image/x-icon")
     return PlainTextResponse("favicon.ico not found", status_code=404)
-
 
