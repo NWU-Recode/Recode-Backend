@@ -13,7 +13,7 @@ service = AdminPanelService()
 @router.post("/students", response_model=EnrolmentResponse)
 async def enrol_student(
     request: EnrolmentCreate,
-    user: CurrentUser = Depends(require_lecturer_cookie())
+    user: CurrentUser = Depends(require_lecturer())
 ):
     return await service.enrol_student(request, user.role, user.id)
 
@@ -78,7 +78,7 @@ async def list_students(
 @router.get("/modules/{module_id}/progress")
 async def module_progress(
     module_id: UUID,
-    user: CurrentUser = Depends(require_lecturer_cookie())
+    user: CurrentUser = Depends(require_lecturer())
 ):
     return await service.get_module_progress(module_id, user.role, user.id)
 
