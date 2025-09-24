@@ -1,10 +1,14 @@
 import asyncio
-from app.features.challenges import claude_generator
-from app.features.challenges.claude_generator import _fetch_topic_context, generate_tier_preview, _call_bedrock
+from app.features.challenges import challenge_pack_generator
+from app.features.challenges.challenge_pack_generator import (
+    _fetch_topic_context,
+    generate_tier_preview,
+    _call_bedrock,
+)
 from app.features.challenges.templates.strings import get_fallback_payload
-from app.features.challenges.ai import bedrock_client
+from app.features.challenges.model_runtime import bedrock_client
 
-# Monkeypatch the Bedrock/Claude client to return the fallback payload
+# Monkeypatch the Bedrock model client to return the fallback payload
 async def _fake_invoke(prompt: str):
     # determine kind by simplistic check
     if "emerald" in prompt.lower():
@@ -18,11 +22,11 @@ async def _fake_invoke(prompt: str):
 
 async def main():
     week = 1
-    # Patch the bedrock invoke to avoid external calls
-    # claude_generator imported invoke_claude directly at module import time,
+    # Patch the Bedrock invoke to avoid external calls
+    # challenge_pack_generator imported invoke_model directly at module import time,
     # so replace the name in that module to ensure the fake is used.
     try:
-        claude_generator.invoke_claude = _fake_invoke
+        challenge_pack_generator.invoke_model = _fake_invoke
     except Exception:
         pass
     # fetch context
