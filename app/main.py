@@ -21,6 +21,7 @@ from app.features.judge0.endpoints import protected_router as judge0_protected_r
 from app.features.challenges.endpoints import router as challenges_router
 from app.features.dashboard.endpoints import router as dashboard_router
 from app.features.slides.endpoints import router as slides_router
+from app.features.submissions.endpoints import router as submissions_router
 from app.common.deps import get_current_user_from_cookie
 from app.common.middleware import SessionManagementMiddleware
 #just added(vonani)
@@ -88,6 +89,7 @@ app.include_router(judge0_protected_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
 app.include_router(slides_router, dependencies=protected_deps)
+app.include_router(submissions_router, dependencies=protected_deps)
 
 
 
