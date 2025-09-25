@@ -15,20 +15,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.Core.config import get_settings
 
 from app.Auth.routes import router as auth_router
+from app.features.slidesDownload.endpoint import router as slides_download_router  # Your slides endpoint
+from app.features.slides.endpoints import router as slides_router  # Legacy slides
 from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
 from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
 from app.features.challenges.endpoints import router as challenges_router
 from app.features.dashboard.endpoints import router as dashboard_router
-from app.features.slides.endpoints import router as slides_router
 from app.features.submissions.endpoints import router as submissions_router
 from app.common.deps import get_current_user_from_cookie
 from app.common.middleware import SessionManagementMiddleware
-#just added(vonani)
+# vonani routers
 from app.features.admin_panel.endpoints import router as admin_router
 from app.features.module.endpoints import router as module_router
+from app.features.students.endpoints import router as student_router
 from app.features.semester.endpoints import router as semester_router
-#end (vonani)
+
 
 app = FastAPI(title="Recode Backend")
 
@@ -42,91 +44,86 @@ _FRONTEND_ORIGINS = _split_env_csv(
 )
 
 app.add_middleware(
-	CORSMiddleware,
-	allow_origins=_FRONTEND_ORIGINS,
-	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=_FRONTEND_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Add session management middleware for automatic token refresh
+# Session middleware
 app.add_middleware(SessionManagementMiddleware, auto_refresh=True)
 
-# Middleware: capture / propagate / generate X-Request-Id consistently
+# Middleware: request id
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next):  # type: ignore[override]
-	import uuid, logging
-	incoming = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
-	req_id = incoming or str(uuid.uuid4())
-	request.state.request_id = req_id
-	logger = logging.getLogger("request")
-	logger.info("request.start", extra={"request_id": req_id, "path": request.url.path, "method": request.method})
-	response = await call_next(request)
-	response.headers["X-Request-Id"] = req_id
-	logger.info("request.end", extra={"request_id": req_id, "path": request.url.path, "status_code": response.status_code})
-	return response
+async def request_id_middleware(request: Request, call_next):
+    import uuid, logging
+    incoming = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
+    req_id = incoming or str(uuid.uuid4())
+    request.state.request_id = req_id
+    logger = logging.getLogger("request")
+    logger.info("request.start", extra={"request_id": req_id, "path": request.url.path, "method": request.method})
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = req_id
+    logger.info("request.end", extra={"request_id": req_id, "path": request.url.path, "status_code": response.status_code})
+    return response
 
-# Tiny request timing middleware for quick visibility
+# Middleware: timing
 @app.middleware("http")
-async def timing_middleware(request: Request, call_next):  # type: ignore[override]
+async def timing_middleware(request: Request, call_next):
     from time import perf_counter
     t0 = perf_counter()
     resp = await call_next(request)
     dt = int((perf_counter() - t0) * 1000)
-    # Print once per request to spot 30s stalls
     print(f"{request.method} {request.url.path} {dt}ms {resp.status_code}")
     return resp
+
 _START_TIME = datetime.now(timezone.utc)
 _settings = get_settings()
 
-# Plug the veins
+# Routers
 app.include_router(auth_router)
-# Protect all non-auth routers with cookie-based auth by default
 protected_deps = [Depends(get_current_user_from_cookie)]
 app.include_router(profiles_router, dependencies=protected_deps)
 app.include_router(judge0_public_router)
 app.include_router(judge0_protected_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
-app.include_router(slides_router, dependencies=protected_deps)
+app.include_router(slides_router, dependencies=protected_deps)           # Legacy slides
+app.include_router(slides_download_router, dependencies=protected_deps)  # Your new slides endpoint
 app.include_router(submissions_router, dependencies=protected_deps)
-
-# Include routers(Vonani)
+# vonani
 app.include_router(admin_router)
 app.include_router(module_router)
 app.include_router(semester_router)
+app.include_router(student_router)
 
-
-
+# Static files
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
-	app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-
+# Root & health
 @app.get("/", tags=["meta"], summary="API Root")
 async def root():
-	return {
-		"name": "Recode Backend",
-		"status": "ok",
-		"docs": "/docs",
-		"redoc": "/redoc",
-		"health": "/healthz"
-	}
+    return {
+        "name": "Recode Backend",
+        "status": "ok",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "health": "/healthz"
+    }
 
 @app.get("/healthz", tags=["meta"], summary="Liveness / readiness probe")
 async def healthz() -> Dict[str, Any]:
-    """Vitals with lightweight DB ping."""
     now = datetime.now(timezone.utc)
     uptime_seconds = (now - _START_TIME).total_seconds()
-
     db_status: str = "unknown"
     db_latency_ms: float | None = None
-
     try:
         import time
         from app.DB.session import engine
         start = time.perf_counter()
-        # AUTOCOMMIT isolation for a 1-row ping
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             conn.execute(text("SELECT 1"))
         db_latency_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -161,11 +158,9 @@ async def healthz() -> Dict[str, Any]:
         "tags": tags,
     }
 
-
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     real_icon_path = os.path.join(static_dir, "favicon.ico")
     if os.path.isfile(real_icon_path):
         return FileResponse(real_icon_path, media_type="image/x-icon")
     return PlainTextResponse("favicon.ico not found", status_code=404)
-
