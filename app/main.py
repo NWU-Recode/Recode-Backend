@@ -30,8 +30,10 @@ from app.features.admin_panel.endpoints import router as admin_router
 from app.features.module.endpoints import router as module_router
 from app.features.semester.endpoints import router as semester_router
 #end (vonani)
+from app.features.module.routes import router as modules_router
 
 app = FastAPI(title="Recode Backend")
+app.include_router(modules_router)
 
 def _split_env_csv(name: str, default: str = ""):
     raw = os.getenv(name, default)
@@ -178,3 +180,14 @@ async def favicon():
 	return PlainTextResponse("favicon.ico not found", status_code=404)
 
 
+try:
+    from app.features.students.endpoints import router as students_router
+    app.include_router(students_router)
+except Exception:
+    pass
+
+try:
+    from app.features.lecturers.endpoints import router as lecturers_router
+    app.include_router(lecturers_router)
+except Exception:
+    pass
