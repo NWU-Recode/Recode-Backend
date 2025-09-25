@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+
+jobs:
+  test_and_healthcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Health check (server boots)
+        run: |
+          set -e
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+          UV_PID=$!
+          # Wait up to ~12s for boot (quick loop = fast feedback)
+          for i in {1..12}; do
+            if curl -fsS http://127.0.0.1:8000/docs >/dev/null; then
+              echo "Server is up"; break
+            fi
+            sleep 1
+          done
+          # If still not up, fail
+          curl -fsS http://127.0.0.1:8000/docs >/dev/null
+          kill $UV_PID
