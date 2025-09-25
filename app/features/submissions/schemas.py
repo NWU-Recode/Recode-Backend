@@ -35,6 +35,7 @@ class TestRunResultSchema(BaseModel):
     passed: bool
     stdout: Optional[str] = None
     stderr: Optional[str] = None
+    compile_output: Optional[str] = None
     status_id: int
     status_description: str
     token: Optional[str] = None

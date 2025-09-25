@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -198,19 +199,49 @@ class AchievementsService:
 
     async def check_achievements(self, user_id: str, req: CheckAchievementsRequest) -> CheckAchievementsResponse:
         summary = await self._load_attempt_summary(req.submission_id, user_id)
+        if not isinstance(summary.metadata, dict):
+            summary.metadata = {}
+        if req.performance:
+            summary.metadata["performance"] = req.performance
+        if req.elo_delta_override is not None:
+            summary.metadata["elo_delta_override"] = req.elo_delta_override
+        if req.badge_tiers:
+            summary.metadata["badge_tiers"] = list(req.badge_tiers)
+
         elo_record = await self._ensure_user_elo_record(user_id)
         old_elo = _safe_int(elo_record.get("elo_points"), default=BASE_ELO)
-        delta = self._compute_elo_delta(summary)
+        delta = req.elo_delta_override if req.elo_delta_override is not None else self._compute_elo_delta(summary)
         new_elo = max(0, old_elo + delta)
         gpa = await self._compute_running_gpa(user_id)
         await self.repo.update_user_elo(user_id, elo_points=new_elo, gpa=gpa)
         await self._maybe_log_elo_event(user_id, summary, delta, new_elo, gpa)
-        badges = await self._evaluate_badges(user_id, req.submission_id)
+
+        badge_defs = await self.repo.list_badge_definitions()
+        owned_rows = await self.repo.get_badges_for_user(user_id)
+        owned_ids = {row.get("badge_id") or (row.get("badge") or {}).get("id") for row in owned_rows}
+
+        tier_badges = await self._award_badges_for_tiers(user_id, summary, req.badge_tiers or [], badge_defs, owned_ids)
+        topic_badges = await self._award_topic_mastery_badge(user_id, summary, badge_defs, owned_ids)
+        speed_badges = await self._award_speed_badge(user_id, summary, badge_defs, owned_ids)
+        other_badges = await self._evaluate_badges(user_id, req.submission_id)
+
+        combined: List[BadgeResponse] = []
+        seen_ids = set()
+        for badge in tier_badges + topic_badges + speed_badges + (other_badges or []):
+            badge_id = getattr(badge, "badge_id", None) if badge else None
+            if badge_id is None:
+                continue
+            key = str(badge_id)
+            if key in seen_ids:
+                continue
+            combined.append(badge)
+            seen_ids.add(key)
+
         title_resp = await self.check_title_after_elo_update(user_id, old_elo)
         return CheckAchievementsResponse(
             updated_elo=new_elo,
             gpa=gpa,
-            unlocked_badges=badges or None,
+            unlocked_badges=combined or None,
             new_title=title_resp if title_resp.title_changed else None,
         )
 
@@ -274,6 +305,10 @@ class AchievementsService:
             "resubmissions": attempt.get("resubmissions") or attempt.get("retry_count"),
             "duration_seconds": attempt.get("duration_seconds"),
             "tier": tier,
+            "tests_total": _safe_int(attempt.get("tests_total"), default=_safe_int(attempt.get("total_questions"), default=0)),
+            "tests_passed": _safe_int(attempt.get("tests_passed"), default=_safe_int(attempt.get("correct_count"), default=0)),
+            "challenge_id": str(challenge_id) if challenge_id else None,
+            "topic_id": (challenge or {}).get("topic_id") or attempt.get("topic_id"),
         }
         return AttemptSummary(
             attempt_id=str(submission_id),
@@ -335,6 +370,13 @@ class AchievementsService:
             "gpa_snapshot": gpa,
             "recorded_at": datetime.utcnow().isoformat() + "Z",
         }
+        meta = summary.metadata if isinstance(summary.metadata, dict) else {}
+        performance = meta.get("performance") if isinstance(meta.get("performance"), dict) else None
+        if performance:
+            payload["performance"] = performance
+        override = meta.get("elo_delta_override")
+        if override is not None:
+            payload["elo_override"] = override
         try:
             await self.repo.log_elo_event(payload)
         except Exception:  # pragma: no cover - logging best effort
@@ -366,21 +408,25 @@ class AchievementsService:
                 continue
             counts[tier] = counts.get(tier, 0) + 1
         return counts
-    async def _award_badges_for_tiers(self, user_id: str, summary: AttemptSummary, tiers: List[str]) -> List[BadgeResponse]:
+    async def _award_badges_for_tiers(
+        self,
+        user_id: str,
+        summary: AttemptSummary,
+        tiers: List[str],
+        badge_defs: List[Dict[str, Any]],
+        owned_ids: set,
+    ) -> List[BadgeResponse]:
         if not tiers:
             return []
         counts = await self._tier_completion_counts(user_id)
-        badge_defs = await self.repo.list_badge_definitions()
         slug_map: Dict[str, Dict[str, Any]] = {}
         for definition in badge_defs:
             slug = _normalise_slug(definition.get("slug") or definition.get("code") or definition.get("name"))
             if slug and definition.get("id"):
                 slug_map[slug] = definition
-        owned_rows = await self.repo.get_badges_for_user(user_id)
-        owned_ids = {row.get("badge_id") or (row.get("badge") or {}).get("id") for row in owned_rows}
         awarded: List[BadgeResponse] = []
-        for tier in tiers:
-            slug = _normalise_slug(tier)
+        for tier_value in tiers:
+            slug = _normalise_slug(tier_value)
             if not slug:
                 continue
             definition = slug_map.get(slug)
@@ -395,21 +441,115 @@ class AchievementsService:
             threshold = criteria.get("required_passes") or _TIER_COMPLETION_THRESHOLDS.get(slug, 1)
             if counts.get(slug, 0) < threshold:
                 continue
-            badge_id = definition.get("id")
-            if badge_id in owned_ids or badge_id is None:
-                continue
-            row = await self.repo.add_badge_to_user(
-                user_id,
-                badge_id,
-                challenge_id=summary.challenge_id,
-                attempt_id=summary.attempt_id,
-                source_submission_id=summary.attempt_id,
-            )
-            if row:
-                owned_ids.add(badge_id)
-                awarded.append(self._serialise_badge_insert(row, definition))
+            badge = await self._award_single_badge(user_id, summary, definition, owned_ids)
+            if badge:
+                awarded.append(badge)
         return awarded
 
+    async def _award_topic_mastery_badge(
+        self,
+        user_id: str,
+        summary: AttemptSummary,
+        badge_defs: List[Dict[str, Any]],
+        owned_ids: set,
+    ) -> List[BadgeResponse]:
+        topic_id = summary.metadata.get("topic_id") if isinstance(summary.metadata, dict) else None
+        if not topic_id:
+            performance = summary.metadata.get("performance") if isinstance(summary.metadata, dict) else None
+            topic_id = (performance or {}).get("topic_id") if isinstance(performance, dict) else None
+        if not topic_id:
+            return []
+        success_count = await self._count_topic_successes(user_id, topic_id)
+        if success_count < 3:
+            return []
+        definition = self._find_badge_definition(badge_defs, ["topic-mastery", "topic_mastery"])
+        if not definition:
+            return []
+        badge = await self._award_single_badge(user_id, summary, definition, owned_ids)
+        return [badge] if badge else []
+
+    async def _award_speed_badge(
+        self,
+        user_id: str,
+        summary: AttemptSummary,
+        badge_defs: List[Dict[str, Any]],
+        owned_ids: set,
+    ) -> List[BadgeResponse]:
+        duration = summary.metadata.get("duration_seconds") if isinstance(summary.metadata, dict) else None
+        if duration is None:
+            return []
+        attempts = await self.repo.list_attempts_for_challenge(summary.challenge_id)
+        durations = [
+            _safe_int(attempt.get("duration_seconds"), default=0)
+            for attempt in attempts
+            if _safe_int(attempt.get("duration_seconds"), default=0) > 0
+        ]
+        if not durations:
+            return []
+        durations.sort()
+        threshold_index = max(0, int(math.ceil(len(durations) * 0.1)) - 1)
+        threshold_value = durations[threshold_index]
+        if duration > threshold_value:
+            return []
+        definition = self._find_badge_definition(badge_defs, ["speed-demon", "speed_demon"])
+        if not definition:
+            return []
+        badge = await self._award_single_badge(user_id, summary, definition, owned_ids)
+        return [badge] if badge else []
+
+    async def _award_single_badge(
+        self,
+        user_id: str,
+        summary: AttemptSummary,
+        definition: Dict[str, Any],
+        owned_ids: set,
+    ) -> Optional[BadgeResponse]:
+        badge_id = definition.get("id")
+        if badge_id is None or badge_id in owned_ids:
+            return None
+        row = await self.repo.add_badge_to_user(
+            user_id,
+            badge_id,
+            challenge_id=summary.challenge_id,
+            attempt_id=summary.attempt_id,
+            source_submission_id=summary.attempt_id,
+        )
+        if not row:
+            return None
+        owned_ids.add(badge_id)
+        return self._serialise_badge_insert(row, definition)
+
+    def _find_badge_definition(self, definitions: List[Dict[str, Any]], slug_candidates: List[str]) -> Optional[Dict[str, Any]]:
+        normalised = [_normalise_slug(candidate) for candidate in slug_candidates]
+        for definition in definitions:
+            def_slug = _normalise_slug(definition.get("slug") or definition.get("code") or definition.get("name"))
+            if def_slug and def_slug in normalised:
+                return definition
+        return None
+
+    async def _count_topic_successes(self, user_id: str, topic_id: Any) -> int:
+        attempts = await self.repo.list_submitted_attempts(user_id)
+        count = 0
+        for attempt in attempts:
+            candidate_topic = attempt.get("topic_id")
+            if candidate_topic is None:
+                challenge_meta = attempt.get("challenge") or {}
+                candidate_topic = challenge_meta.get("topic_id")
+            if str(candidate_topic) != str(topic_id):
+                continue
+            total = _extract_snapshot_count(attempt.get("snapshot_questions"))
+            if total <= 0:
+                total = _safe_int(attempt.get("tests_total"), default=0)
+            if total <= 0:
+                total = _safe_int(attempt.get("total_questions"), default=0)
+            if total <= 0:
+                continue
+            tests_passed = _safe_int(attempt.get("tests_passed"), default=0)
+            correct = _safe_int(attempt.get("correct_count"), default=tests_passed)
+            ratio = _normalise_ratio(max(correct, tests_passed), total)
+            if ratio >= 0.85:
+                count += 1
+        return count
 
     async def _evaluate_badges(self, user_id: str, submission_id: str) -> List[BadgeResponse]:
         summary = await self._load_attempt_summary(submission_id, user_id)

@@ -150,8 +150,37 @@ class ChallengeRepository:
                 "points": q.get("points", 1),
                 "order_index": idx,
                 "version": 1,
+                "attempts_used": int(q.get("attempts_used") or 0),
             })
         return snapshot
+
+    async def record_question_attempts(
+        self,
+        attempt_id: str,
+        increments: Dict[str, int],
+        *,
+        max_attempts: int | None = None,
+    ) -> None:
+        if not increments:
+            return
+        client = await get_supabase()
+        resp = client.table("challenge_attempts").select("id, snapshot_questions").eq("id", attempt_id).single().execute()
+        data = getattr(resp, "data", None) or {}
+        snapshot = data.get("snapshot_questions") or []
+        updated = False
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for item in snapshot:
+            qid = str(item.get("question_id")) if item.get("question_id") is not None else None
+            if qid is None or qid not in increments:
+                continue
+            attempts_used = int(item.get("attempts_used") or 0) + int(increments[qid])
+            if max_attempts is not None:
+                attempts_used = min(max_attempts, attempts_used)
+            item["attempts_used"] = attempts_used
+            item["last_attempted_at"] = now_iso
+            updated = True
+        if updated:
+            client.table("challenge_attempts").update({"snapshot_questions": snapshot}).eq("id", attempt_id).execute()
 
     async def get_snapshot(self, attempt: Dict[str, Any]) -> List[Dict[str, Any]]:
         snap = attempt.get("snapshot_questions") or []

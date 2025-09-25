@@ -78,6 +78,19 @@ class AchievementsRepository:
         data = getattr(resp, "data", None)
         return data or []
 
+    async def list_attempts_for_challenge(self, challenge_id: str) -> List[Dict[str, Any]]:
+        client = await self._client()
+        query = (
+            client.table("challenge_attempts")
+            .select("*")
+            .eq("challenge_id", challenge_id)
+            .eq("status", "submitted")
+            .execute()
+        )
+        resp = await self._execute(query, op="challenge_attempts.by_challenge")
+        data = getattr(resp, "data", None)
+        return data or []
+
     # --- Elo --------------------------------------------------------------
 
     async def get_user_elo(self, user_id: str) -> Optional[Dict[str, Any]]:
