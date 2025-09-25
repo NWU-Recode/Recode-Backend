@@ -1,112 +1,90 @@
-# app/features/students/endpoints.py
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from fastapi import APIRouter, Depends, Query
+from typing import Optional, List
+from datetime import date
+from app.features.students.schemas import StudentProfile, ModuleProgress, BadgeInfo, StudentProgress,StudentProfileUpdate
+from app.features.students import service, service_analytics, repository_analytics
+from app.common.deps import get_current_user, require_lecturer, require_admin
 
-from app.DB.session import get_db
-from app.common.deps import get_current_user_from_cookie, require_role
-from app.features.profiles.models import Profile
-from app.features.submissions.models import Submission
-from app.features.badges.models import BadgeAward
+router = APIRouter(prefix="/student", tags=["Student"])
 
-router = APIRouter(prefix="/students", tags=["students"])
+@router.get("/me", response_model=StudentProfile)
+async def student_me(current=Depends(get_current_user)):
+    return await service.get_student_profile(current.id)
 
-@router.get("/ping")
-def students_ping():
-    return {"ok": True, "who": "students"}
+@router.patch("/me", response_model=StudentProfile)
+async def student_update(profile_update: StudentProfileUpdate, current=Depends(get_current_user)):
+    updated_profile = await service.update_student_profile(current.id, profile_update)
+    return updated_profile
 
-@router.get("/me")
-async def student_me(current_user = Depends(get_current_user_from_cookie)):
-    # return the current user claims so you can inspect fields
-    return {"current_user": current_user}
+@router.get("/me/modules", response_model=list[ModuleProgress])
+async def student_modules(current=Depends(get_current_user)):
+    return await service.get_student_modules(current.id)
 
-@router.get("/me")
-def get_my_profile(
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user_from_cookie),
+@router.get("/me/badges", response_model=list[BadgeInfo])
+async def student_badges(current=Depends(get_current_user)):
+    return await service.get_student_badges(current.id)
+
+@router.get("/me/progress", response_model=dict)
+async def student_progress(current=Depends(get_current_user)):
+    progress = await service_analytics.compute_student_progress(current.id)
+    elo = await service_analytics.compute_elo(current.id)
+    progress["elo"] = elo
+    return progress
+
+@router.get("/me/analytics")
+async def student_analytics(
+    current=Depends(get_current_user),
+    module_id: Optional[str] = Query(None, description="Filter by module"),
+    start_date: Optional[date] = Query(None, description="Start date for analytics"),
+    end_date: Optional[date] = Query(None, description="End date for analytics"),
 ):
     """
-    Return the profile for the logged-in student (by email).
-    get_current_user_from_cookie provides `email` and `role`.
+    Returns student analytics (submissions, challenges, ELO/GPA) in chart-ready format.
+    Optional filters: module_id, start_date, end_date
     """
-    profile = db.query(Profile).filter(Profile.email == current_user.email).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    return profile
 
+    # Fetch all student submissions
+    submissions = await repository_analytics.fetch_submissions(current.id)
+    
+    # Optional: filter by module_id
+    if module_id:
+        submissions = [s for s in submissions if s.get("module_id") == module_id]
 
-@router.get("/me/slides")
-def get_my_slides(
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user_from_cookie),
-):
-    """
-    Returns list of slides for all modules the student is enrolled in.
-    Uses the Profile -> modules relationship added earlier.
-    """
-    profile = db.query(Profile).filter(Profile.email == current_user.email).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
+    # Optional: filter by date range
+    if start_date:
+        submissions = [s for s in submissions if s.get("submitted_at") and s["submitted_at"].date() >= start_date]
+    if end_date:
+        submissions = [s for s in submissions if s.get("submitted_at") and s["submitted_at"].date() <= end_date]
 
-    slides_out = []
-    for m in profile.modules:
-        for s in getattr(m, "slides", []):
-            slides_out.append({"module_id": m.id, "module_code": m.code, "slide_id": s.id, "title": s.title, "url": f"/uploads/slides/{s.filename}"})
-    return slides_out
+    # Aggregate challenge stats
+    total_attempts = len(submissions)
+    total_passed = sum(1 for s in submissions if s.get("status_id") == 3)  # assuming 3 = completed
+    total_failed = total_attempts - total_passed
 
+    # Optional: group by week for charting
+    weekly_stats = {}
+    for s in submissions:
+        if not s.get("submitted_at"):
+            continue
+        week = s["submitted_at"].isocalendar()[1]  # ISO week number
+        if week not in weekly_stats:
+            weekly_stats[week] = {"attempts": 0, "passed": 0, "failed": 0}
+        weekly_stats[week]["attempts"] += 1
+        if s.get("status_id") == 3:
+            weekly_stats[week]["passed"] += 1
+        else:
+            weekly_stats[week]["failed"] += 1
 
-@router.get("/me/challenges")
-def get_my_challenges(
-    db: Session = Depends(get_db),
-    current_user = Depends(require_role("student")),
-):
-    """
-    Proxy to existing challenge service or endpoint.
-    If you have a service function to retrieve challenges for a student, call it here.
-    Example: return get_challenges_for_student(profile.id)
-    """
-    # A fallback approach that retrieves student challenges by first finding the user's profile via email, then fetching their challenges using a service function.
-    return {"detail": "Use existing challenge endpoints/service - call them from here or consume existing /challenges endpoints."}
+    # Fetch ELO/GPA
+    elo_data = await repository_analytics.fetch_user_elo(current.id)
+    elo = elo_data.get("current_elo", 1000)
+    gpa = elo_data.get("gpa", 0.0)
 
-
-@router.get("/me/performance")
-def get_my_performance(
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user_from_cookie),
-):
-    """
-    Return average quiz/challenge score and badges for the student.
-    """
-    profile = db.query(Profile).filter(Profile.email == current_user.email).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-
-    avg_score = db.query(func.avg(Submission.score)).filter(Submission.student_id == profile.id).scalar() or 0.0
-    avg_score = float(round(avg_score, 2))
-
-    badges = db.query(BadgeAward).filter(BadgeAward.profile_id == profile.id).all()
-    # return simplified badge data
-    badges_out = [{"id": b.id, "badge_id": getattr(b, "badge_id", None), "awarded_at": getattr(b, "awarded_at", None)} for b in badges]
-
-    return {"avg_score": avg_score, "badges": badges_out}
-
-@router.get("/me/profile")
-def my_profile(db: Session = Depends(get_db), current_user = Depends(get_current_user_from_cookie)):
-    # Adjust key: here we expect current_user.email to exist
-    email = getattr(current_user, "email", None)
-    if not email:
-        raise HTTPException(status_code=400, detail="No email in auth claims")
-    profile = db.query(Profile).filter(Profile.email == email).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    return profile
-
-@router.get("/challenges/{challenge_id}/stats")
-def challenge_stats(challenge_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user_from_cookie)):
-    subs = db.query(Submission).filter(Submission.challenge_id == challenge_id).all()
-    total_attempts = len(subs)
-    unique_students = len({s.student_id for s in subs})
-    avg_score = float(db.query(func.avg(Submission.score)).filter(Submission.challenge_id == challenge_id).scalar() or 0.0)
-    # compute per-student avg & avg completion using started_at/submitted_at if present
-    return {"challenge_id": challenge_id, "total_attempts": total_attempts, "unique_students": unique_students, "avg_score": round(avg_score,2)}
-
+    return {
+        "total_attempts": total_attempts,
+        "total_passed": total_passed,
+        "total_failed": total_failed,
+        "weekly_stats": weekly_stats,
+        "elo": elo,
+        "gpa": gpa
+    }
