@@ -61,9 +61,9 @@ class Settings:
         except Exception:
             self.bedrock_top_k = 250
         try:
-            self.bedrock_stop_sequences = json.loads(os.getenv("BEDROCK_STOP_SEQUENCES", '["```","</json>","\\n\\n"]'))
+            self.bedrock_stop_sequences = json.loads(os.getenv("BEDROCK_STOP_SEQUENCES", '[]'))
         except Exception:
-            self.bedrock_stop_sequences = ["```", "</json>", "\n\n"]
+            self.bedrock_stop_sequences = ["```", "</json>",]
         self.app_name = "Recode Backend"
         self.debug = os.getenv("DEBUG", "False").lower() == "true"
         self.dev_auto_confirm = os.getenv("DEV_AUTO_CONFIRM", "false").lower() == "true"

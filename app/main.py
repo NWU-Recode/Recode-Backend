@@ -40,7 +40,7 @@ def _split_env_csv(name: str, default: str = ""):
 
 _FRONTEND_ORIGINS = _split_env_csv(
     "ALLOW_ORIGINS",
-    "http://localhost:5173,http://localhost:3000",
+    "https://recode-frontend.vercel.app,http://localhost:5173,http://localhost:3000",
 )
 
 app.add_middleware(
