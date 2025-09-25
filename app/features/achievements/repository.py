@@ -165,6 +165,7 @@ class AchievementsRepository:
         badge_id: Any,
         challenge_id: Optional[str] = None,
         attempt_id: Optional[str] = None,
+        source_submission_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         payload: Dict[str, Any] = {
             "user_id": user_id,
@@ -174,7 +175,11 @@ class AchievementsRepository:
             payload["challenge_id"] = challenge_id
         if attempt_id is not None:
             payload["challenge_attempt_id"] = attempt_id
-        payload.setdefault("date_earned", datetime.now(timezone.utc).isoformat())
+        if source_submission_id is not None:
+            payload["source_submission_id"] = source_submission_id
+        ts = datetime.now(timezone.utc).isoformat()
+        payload.setdefault("awarded_at", ts)
+        payload.setdefault("date_earned", ts)
         client = await self._client()
         query = client.table("user_badges").insert(payload).execute()
         resp = await self._execute(query, op="user_badges.insert")
@@ -189,6 +194,7 @@ class AchievementsRepository:
         badge_ids: Iterable[Any],
         challenge_id: Optional[str],
         attempt_id: Optional[str],
+        source_submission_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         payloads: List[Dict[str, Any]] = []
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -197,11 +203,14 @@ class AchievementsRepository:
                 "user_id": user_id,
                 "badge_id": badge_id,
                 "date_earned": now_iso,
+                "awarded_at": now_iso,
             }
             if challenge_id is not None:
                 payload["challenge_id"] = challenge_id
             if attempt_id is not None:
                 payload["challenge_attempt_id"] = attempt_id
+            if source_submission_id is not None:
+                payload["source_submission_id"] = source_submission_id
             payloads.append(payload)
         if not payloads:
             return []

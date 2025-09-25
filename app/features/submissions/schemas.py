@@ -6,8 +6,6 @@ from pydantic import BaseModel, Field
 
 
 class QuestionTestSchema(BaseModel):
-    """Representation of a single stored test case for a question."""
-
     id: Optional[str] = None
     question_id: str
     input: str
@@ -17,8 +15,6 @@ class QuestionTestSchema(BaseModel):
 
 
 class QuestionBundleSchema(BaseModel):
-    """Full payload returned to the frontend for a question + its tests."""
-
     challenge_id: str
     question_id: str
     title: str
@@ -28,12 +24,12 @@ class QuestionBundleSchema(BaseModel):
     tier: Optional[str] = None
     language_id: int
     points: int
+    max_time_ms: Optional[int] = None
+    max_memory_kb: Optional[int] = None
     tests: List[QuestionTestSchema]
 
 
 class TestRunResultSchema(BaseModel):
-    """Result of executing a single Judge0-backed test."""
-
     test_id: Optional[str] = None
     visibility: Literal["public", "private"]
     passed: bool
@@ -43,19 +39,20 @@ class TestRunResultSchema(BaseModel):
     status_description: str
     token: Optional[str] = None
     execution_time: Optional[str] = None
+    execution_time_seconds: Optional[float] = None
+    execution_time_ms: Optional[float] = None
     memory_used: Optional[int] = None
+    memory_used_kb: Optional[int] = None
+    score_awarded: int = 0
+    gpa_contribution: int = 0
 
 
 class QuestionEvaluationRequest(BaseModel):
-    """User supplied code to evaluate against a question's tests."""
-
     source_code: str
     language_id: Optional[int] = None
 
 
 class QuestionEvaluationResponse(BaseModel):
-    """Aggregated grading outcome for a question."""
-
     challenge_id: str
     question_id: str
     tier: Optional[str] = None
@@ -63,26 +60,37 @@ class QuestionEvaluationResponse(BaseModel):
     gpa_weight: int
     gpa_awarded: int
     elo_awarded: int
+    elo_base: int
+    elo_efficiency_bonus: int
     public_passed: bool
+    tests_passed: int
+    tests_total: int
+    average_execution_time_ms: Optional[float] = None
+    average_memory_used_kb: Optional[float] = None
+    badge_tier_awarded: Optional[str] = None
     tests: List[TestRunResultSchema]
 
 
 class ChallengeQuestionResultSchema(QuestionEvaluationResponse):
-    """Extends evaluation response with submission metadata for challenge grading."""
-
     pass
 
 
 class ChallengeSubmissionBreakdown(BaseModel):
-    """High level grading aggregates for a challenge submission."""
-
     challenge_id: str
     attempt_id: str
     gpa_score: int
     gpa_max_score: int
     elo_delta: int
+    base_elo_total: int
+    efficiency_bonus_total: int
+    tests_total: int
+    tests_passed_total: int
+    average_execution_time_ms: Optional[float] = None
+    average_memory_used_kb: Optional[float] = None
+    time_used_seconds: Optional[int] = None
+    time_limit_seconds: Optional[int] = None
     passed_questions: List[str] = Field(default_factory=list)
     failed_questions: List[str] = Field(default_factory=list)
     missing_questions: List[str] = Field(default_factory=list)
+    badge_tiers_awarded: List[str] = Field(default_factory=list)
     question_results: List[ChallengeQuestionResultSchema] = Field(default_factory=list)
-

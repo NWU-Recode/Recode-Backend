@@ -25,6 +25,15 @@ logger = logging.getLogger("achievements.service")
 
 BASE_ELO = 1200
 
+_TIER_COMPLETION_THRESHOLDS = {
+    "bronze": 3,
+    "silver": 3,
+    "gold": 2,
+    "platinum": 2,
+    "emerald": 1,
+    "diamond": 1,
+}
+
 
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
@@ -331,6 +340,77 @@ class AchievementsService:
         except Exception:  # pragma: no cover - logging best effort
             self.log.debug("failed to log elo event", exc_info=True)
 
+
+    async def _tier_completion_counts(self, user_id: str) -> Dict[str, int]:
+        attempts = await self.repo.list_submitted_attempts(user_id)
+        counts: Dict[str, int] = {}
+        for attempt in attempts:
+            tier = _normalise_slug(attempt.get("tier") or (attempt.get("challenge") or {}).get("tier")) or "plain"
+            total = _extract_snapshot_count(attempt.get("snapshot_questions"))
+            if total <= 0:
+                total = _safe_int(attempt.get("total_questions"), default=0)
+            tests_total = _safe_int(attempt.get("tests_total"), default=0)
+            if tests_total > 0:
+                total = tests_total
+            correct = _safe_int(attempt.get("correct_count"), default=0)
+            tests_passed = _safe_int(attempt.get("tests_passed"), default=0)
+            ratio = _normalise_ratio(correct, total if total > 0 else 1)
+            success = False
+            if total > 0 and correct >= total:
+                success = True
+            if tests_total > 0 and tests_passed >= tests_total:
+                success = True
+            if ratio >= 0.999:
+                success = True
+            if not success:
+                continue
+            counts[tier] = counts.get(tier, 0) + 1
+        return counts
+    async def _award_badges_for_tiers(self, user_id: str, summary: AttemptSummary, tiers: List[str]) -> List[BadgeResponse]:
+        if not tiers:
+            return []
+        counts = await self._tier_completion_counts(user_id)
+        badge_defs = await self.repo.list_badge_definitions()
+        slug_map: Dict[str, Dict[str, Any]] = {}
+        for definition in badge_defs:
+            slug = _normalise_slug(definition.get("slug") or definition.get("code") or definition.get("name"))
+            if slug and definition.get("id"):
+                slug_map[slug] = definition
+        owned_rows = await self.repo.get_badges_for_user(user_id)
+        owned_ids = {row.get("badge_id") or (row.get("badge") or {}).get("id") for row in owned_rows}
+        awarded: List[BadgeResponse] = []
+        for tier in tiers:
+            slug = _normalise_slug(tier)
+            if not slug:
+                continue
+            definition = slug_map.get(slug)
+            if not definition:
+                continue
+            criteria = definition.get("criteria") or definition.get("metadata") or {}
+            if isinstance(criteria, str):
+                try:
+                    criteria = json.loads(criteria)
+                except Exception:  # pragma: no cover
+                    criteria = {}
+            threshold = criteria.get("required_passes") or _TIER_COMPLETION_THRESHOLDS.get(slug, 1)
+            if counts.get(slug, 0) < threshold:
+                continue
+            badge_id = definition.get("id")
+            if badge_id in owned_ids or badge_id is None:
+                continue
+            row = await self.repo.add_badge_to_user(
+                user_id,
+                badge_id,
+                challenge_id=summary.challenge_id,
+                attempt_id=summary.attempt_id,
+                source_submission_id=summary.attempt_id,
+            )
+            if row:
+                owned_ids.add(badge_id)
+                awarded.append(self._serialise_badge_insert(row, definition))
+        return awarded
+
+
     async def _evaluate_badges(self, user_id: str, submission_id: str) -> List[BadgeResponse]:
         summary = await self._load_attempt_summary(submission_id, user_id)
         badge_defs = await self.repo.list_badge_definitions()
@@ -346,6 +426,7 @@ class AchievementsService:
             badge_ids=new_ids,
             challenge_id=summary.challenge_id,
             attempt_id=summary.attempt_id,
+            source_submission_id=summary.attempt_id,
         )
         if not inserted_rows:
             for badge_id in new_ids:
@@ -355,6 +436,7 @@ class AchievementsService:
                         badge_id,
                         challenge_id=summary.challenge_id,
                         attempt_id=summary.attempt_id,
+                        source_submission_id=summary.attempt_id,
                     )
                 except Exception:  # pragma: no cover - constraint violation etc
                     row = None
@@ -460,3 +542,6 @@ class AchievementsService:
 achievements_service = AchievementsService()
 
 __all__ = ["achievements_service", "AchievementsService", "BASE_ELO"]
+
+
+

@@ -65,10 +65,14 @@ class TitleUpdateRequest(BaseModel):
 
 #Achievements Trigger
 class CheckAchievementsRequest(BaseModel):
-    submission_id:str
+    submission_id: str
+    elo_delta_override: Optional[int] = None
+    badge_tiers: Optional[List[str]] = None
+    performance: Optional[Dict[str, float | int]] = None
 
 class CheckAchievementsResponse(BaseModel):
     updated_elo: int
     gpa: Optional[float] = None
     unlocked_badges: Optional[List[BadgeResponse]]
     new_title: Optional[TitleResponse] = None
+
