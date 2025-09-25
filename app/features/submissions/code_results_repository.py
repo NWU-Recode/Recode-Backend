@@ -38,7 +38,7 @@ class CodeResultsRepository:
             "completed_at": now_iso,
         }
         try:
-            resp = client.table("code_submissions").insert(payload).execute()
+            resp = await client.table("code_submissions").insert(payload).execute()
         except Exception:
             return None
         data = getattr(resp, "data", None)
@@ -72,7 +72,7 @@ class CodeResultsRepository:
             return
         client = await self._client()
         try:
-            client.table("code_results").insert(records).execute()
+            await client.table("code_results").insert(records).execute()
         except Exception:
             return
 

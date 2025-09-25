@@ -14,7 +14,7 @@ class ChallengeRepository:
         if cached is not None:
             return cached
         client = await get_supabase()
-        resp = client.table("challenges").select("*").eq("id", challenge_id).single().execute()
+        resp = await client.table("challenges").select("*").eq("id", challenge_id).single().execute()
         data = resp.data or None
         if data is not None:
             cache.set(key, data)
@@ -26,14 +26,14 @@ class ChallengeRepository:
         if cached is not None:
             return cached
         client = await get_supabase()
-        resp = client.table("questions").select("*").eq("challenge_id", challenge_id).execute()
+        resp = await client.table("questions").select("*").eq("challenge_id", challenge_id).execute()
         data = resp.data or []
         cache.set(key, data)
         return data
 
     async def get_open_attempt(self, challenge_id: str, student_number: int) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
-        resp = (
+        resp = await (
             client.table("challenge_attempts")
             .select("*")
             .eq("challenge_id", challenge_id)
@@ -48,7 +48,7 @@ class ChallengeRepository:
 
     async def start_attempt(self, challenge_id: str, student_number: int) -> Dict[str, Any]:
         client = await get_supabase()
-        resp = client.table("challenge_attempts").insert({
+        resp = await client.table("challenge_attempts").insert({
             "challenge_id": challenge_id,
             "user_id": student_number,  # Supabase stores student_number in user_id column (integer)
             "status": "open",
@@ -73,7 +73,7 @@ class ChallengeRepository:
                 if deadline_at:
                     ddt = datetime.fromisoformat(str(deadline_at).replace("Z", "+00:00"))
                     if now > ddt:
-                        client.table("challenge_attempts").update({"status": "expired"}).eq("id", existing["id"]).execute()
+                        await client.table("challenge_attempts").update({"status": "expired"}).eq("id", existing["id"]).execute()
                         existing["status"] = "expired"
                         return existing
             except Exception:
@@ -82,7 +82,7 @@ class ChallengeRepository:
             # Create base attempt with started/deadline
             started_at = now.isoformat()
             deadline_at = (now + timedelta(days=7)).isoformat()
-            resp = client.table("challenge_attempts").insert({
+            resp = await client.table("challenge_attempts").insert({
                 "challenge_id": challenge_id,
                 "user_id": student_number,  # Supabase stores student_number in user_id column (integer)
                 "status": "open",
@@ -102,7 +102,7 @@ class ChallengeRepository:
         if not existing.get("deadline_at"):
             patch["deadline_at"] = (now + timedelta(days=7)).isoformat()
         if patch:
-            upd = client.table("challenge_attempts").update(patch).eq("id", existing["id"]).execute()
+            upd = await client.table("challenge_attempts").update(patch).eq("id", existing["id"]).execute()
             if upd.data:
                 existing = upd.data[0]
         return existing
@@ -113,7 +113,7 @@ class ChallengeRepository:
         if cached is not None:
             return cached
         client = await get_supabase()
-        resp = (
+        resp = await (
             client.table("challenges")
             .select("*")
             .order("week_number")
@@ -126,7 +126,7 @@ class ChallengeRepository:
 
     async def list_user_attempts(self, student_number: int) -> List[Dict[str, Any]]:
         client = await get_supabase()
-        resp = client.table("challenge_attempts").select("*").eq("user_id", student_number).execute()  # Supabase stores student_number in user_id column (integer)
+        resp = await client.table("challenge_attempts").select("*").eq("user_id", student_number).execute()  # Supabase stores student_number in user_id column (integer)
         return resp.data or []
 
     async def _build_snapshot(self, challenge_id: str) -> List[Dict[str, Any]]:
@@ -164,7 +164,7 @@ class ChallengeRepository:
         if not increments:
             return
         client = await get_supabase()
-        resp = client.table("challenge_attempts").select("id, snapshot_questions").eq("id", attempt_id).single().execute()
+        resp = await client.table("challenge_attempts").select("id, snapshot_questions").eq("id", attempt_id).single().execute()
         data = getattr(resp, "data", None) or {}
         snapshot = data.get("snapshot_questions") or []
         updated = False
@@ -180,35 +180,70 @@ class ChallengeRepository:
             item["last_attempted_at"] = now_iso
             updated = True
         if updated:
-            client.table("challenge_attempts").update({"snapshot_questions": snapshot}).eq("id", attempt_id).execute()
+            await client.table("challenge_attempts").update({"snapshot_questions": snapshot}).eq("id", attempt_id).execute()
 
     async def get_snapshot(self, attempt: Dict[str, Any]) -> List[Dict[str, Any]]:
         snap = attempt.get("snapshot_questions") or []
         return snap
 
-    async def finalize_attempt(self, attempt_id: str, score: int, correct_count: int) -> Dict[str, Any]:
+    async def finalize_attempt(
+        self,
+        attempt_id: str,
+        score: int,
+        correct_count: int,
+        *,
+        duration_seconds: Optional[int] = None,
+        tests_total: Optional[int] = None,
+        tests_passed: Optional[int] = None,
+        elo_delta: Optional[int] = None,
+        efficiency_bonus: Optional[int] = None,
+    ) -> Dict[str, Any]:
         client = await get_supabase()
-        resp = (
-            client.table("challenge_attempts")
-            .update({
+        payload: Dict[str, Any] = {
+            "score": score,
+            "correct_count": correct_count,
+            "status": "submitted",
+            "submitted_at": "now()",
+        }
+        optional_fields = {
+            "duration_seconds": duration_seconds,
+            "tests_total": tests_total,
+            "tests_passed": tests_passed,
+            "elo_delta": elo_delta,
+            "efficiency_bonus": efficiency_bonus,
+        }
+        for key, value in optional_fields.items():
+            if value is not None:
+                payload[key] = value
+        try:
+            resp = await (
+                client.table("challenge_attempts")
+                .update(payload)
+                .eq("id", attempt_id)
+                .execute()
+            )
+        except Exception:
+            minimal_payload = {
                 "score": score,
                 "correct_count": correct_count,
                 "status": "submitted",
                 "submitted_at": "now()",
-            })
-            .eq("id", attempt_id)
-            .execute()
-        )
-        if not resp.data:
+            }
+            resp = await (
+                client.table("challenge_attempts")
+                .update(minimal_payload)
+                .eq("id", attempt_id)
+                .execute()
+            )
+        if not getattr(resp, "data", None):
             raise RuntimeError("Failed to finalize challenge attempt")
         return resp.data[0]
-
     # --- Milestone helpers (plain challenge progress) ---
     async def count_plain_completed(self, student_number: int) -> int:
         """Return number of submitted plain (weekly) challenges for user."""
         client = await get_supabase()
         # tier stored as enum -> cast to text compare
-        resp = (
+        resp = await (
             client.table("challenge_attempts")
             .select("id, challenge:challenges(tier)")
             .eq("user_id", student_number)  # Supabase stores student_number in user_id column (integer)
@@ -232,7 +267,7 @@ class ChallengeRepository:
     async def total_plain_planned(self) -> int:
         """Total number of planned plain challenges (configured)."""
         client = await get_supabase()
-        resp = client.table("challenges").select("id").eq("tier", "plain").execute()
+        resp = await client.table("challenges").select("id").eq("tier", "plain").execute()
         return len(resp.data or [])
 
     async def publish_for_week(self, week_number: int) -> Dict[str, int]:
@@ -241,22 +276,21 @@ class ChallengeRepository:
         week_tag = f"w{week_number:02d}"
         updated = 0
         try:
-            resp = client.table("challenges").select("id, slug, status, week_number").eq("week_number", week_number).execute()
+            resp = await client.table("challenges").select("id, slug, status, week_number").eq("week_number", week_number).execute()
             rows = resp.data or []
         except Exception:
             rows = []
         ids = [str(r.get("id")) for r in rows if r.get("id")]
         if not ids:
-            resp_all = client.table("challenges").select("id, slug").execute()
+            resp_all = await client.table("challenges").select("id, slug").execute()
             rows_all = resp_all.data or []
             ids = [str(r.get("id")) for r in rows_all if week_tag in str(r.get("slug", ""))]
         for cid in ids:
-            update_resp = client.table("challenges").update({"status": "published"}).eq("id", cid).execute()
+            update_resp = await client.table("challenges").update({"status": "published"}).eq("id", cid).execute()
             if update_resp.data:
                 updated += 1
         return {"updated": updated}
 
 challenge_repository = ChallengeRepository()
-
 
 

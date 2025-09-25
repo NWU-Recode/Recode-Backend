@@ -13,7 +13,7 @@ class SubmissionsRepository:
 
     async def get_question(self, question_id: str) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
-        resp = client.table(self._QUESTION_TABLE).select("*").eq("id", question_id).limit(1).execute()
+        resp = await client.table(self._QUESTION_TABLE).select("*").eq("id", question_id).limit(1).execute()
         rows = resp.data or []
         return rows[0] if rows else None
 
@@ -22,7 +22,7 @@ class SubmissionsRepository:
         tests: List[Dict[str, Any]] = []
         for table in self._TEST_TABLES:
             try:
-                resp = (
+                resp = await (
                     client.table(table)
                     .select("*")
                     .eq("question_id", question_id)

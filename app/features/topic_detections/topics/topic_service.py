@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
-import uuid
-import os
 import re
-from supabase import create_client, Client
-
-from app.Core.config import get_settings
+from app.DB.supabase import get_supabase
 
 from app.features.topic_detections.topics.repository import TopicRepository
 
@@ -16,15 +12,6 @@ def _slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 class TopicService:
-    def __init__(self):
-        settings = get_settings()
-        # Prefer service role key server-side to bypass RLS issues
-        key = settings.supabase_service_role_key or settings.supabase_anon_key
-        self.supabase: Client = create_client(
-            settings.supabase_url,
-            key
-        )
-
     @staticmethod
     async def create_from_slides(
         slides_url: str,
@@ -80,9 +67,10 @@ class TopicService:
         )
 
     async def resolve_module_id_by_code(self, module_code: str) -> Optional[str]:
+        client = await get_supabase()
         # Directly resolve modules.id from modules.code
         try:
-            resp = self.supabase.table("modules").select("id").eq("code", str(module_code)).limit(1).execute()
+            resp = await client.table("modules").select("id").eq("code", str(module_code)).limit(1).execute()
             rows = resp.data or []
             if rows:
                 rid = rows[0].get("id")
@@ -93,9 +81,10 @@ class TopicService:
         return None
 
     async def get_topics_from_slide_extraction(self, slide_stack_id: int) -> List[str]:
+        client = await get_supabase()
         #Fetch topics from slide_extraction table for a given slide_stack_id.
         try:
-            response = self.supabase.table("slide_extractions").select(
+            response = await client.table("slide_extractions").select(
                 "detected_topic, detected_subtopics"
             ).eq("id", slide_stack_id).execute()
 
@@ -127,15 +116,16 @@ class TopicService:
             print(f"Error fetching topics from slide_extraction: {e}")
             return []
 
-  
-   
+
+
     async def get_slide_extraction_by_week(self, week_number: int, module_code: Optional[str] = None) -> List[Dict[str, Any]]:
+        client = await get_supabase()
         # Get all slide extractions for a specific week and optional module_code (not id)
         try:
-            query = self.supabase.table("slide_extractions").select("id, module_id, week_number, detected_topic, detected_subtopics, module_code").eq("week_number", week_number)
+            query = client.table("slide_extractions").select("id, module_id, week_number, detected_topic, detected_subtopics, module_code").eq("week_number", week_number)
             if module_code is not None:
                 query = query.eq("module_code", str(module_code))
-            response = query.execute()
+            response = await query.execute()
             return response.data if response.data else []
         except Exception as e:
             print(f"Error fetching slide extractions for week {week_number}: {e}")
@@ -162,11 +152,12 @@ class TopicService:
         return list(set(all_topics))
 
     async def get_topics_for_module_week(self, module_code: str, week_number: int) -> List[str]:
+        client = await get_supabase()
         # Exact query: select topics for given module_code and week number.
         try:
             rows: List[Dict[str, Any]] = []
-            base = self.supabase.table("slide_extractions").select("detected_topic, detected_subtopics")
-            resp = base.eq("module_code", str(module_code)).eq("week_number", week_number).execute()
+            base = client.table("slide_extractions").select("detected_topic, detected_subtopics")
+            resp = await base.eq("module_code", str(module_code)).eq("week_number", week_number).execute()
             rows = resp.data or []
             topics: List[str] = []
             for row in rows:
@@ -191,8 +182,9 @@ class TopicService:
 
     async def update_slide_extraction_id(self, topic_uuid: str, slide_extraction_id: int) -> None:
         """Update the slide_extraction_id for a topic."""
+        client = await get_supabase()
         try:
-            await self.supabase.table("topic").update({
+            await client.table("topic").update({
                 "slide_extraction_id": slide_extraction_id
             }).eq("id", topic_uuid).execute()
         except Exception as e:
