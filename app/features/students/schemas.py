@@ -15,6 +15,13 @@ class StudentProfile(BaseModel):
     is_active: bool
     last_sign_in: Optional[datetime]
 
+class StudentProfileUpdate(BaseModel):
+    email: Optional[EmailStr]
+    full_name: Optional[str]
+    avatar_url: Optional[str]
+    phone: Optional[str]
+    bio: Optional[str]
+
 # -------------------
 # Modules / Dashboard
 # -------------------
