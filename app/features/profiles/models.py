@@ -2,11 +2,14 @@ from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, Inte
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy import Enum
+from sqlalchemy.orm import relationship
 import uuid
 import enum
 from datetime import datetime
 
 from app.DB.base import Base
+
+modules = relationship("Module", secondary="student_module", back_populates="students")
 
 class UserRole(enum.Enum):
     admin = "admin"
@@ -51,3 +54,9 @@ class User(Base):
     role = Column(Enum(UserRole), nullable=False)
     display_name = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+lecturer_profile = relationship(
+    "LecturerProfile",
+    back_populates="user",
+    uselist=False
+)
