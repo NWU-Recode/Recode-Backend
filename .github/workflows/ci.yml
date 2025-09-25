@@ -27,13 +27,20 @@ jobs:
 
             - name: Health check (server boots)
               env:
-                  # Frontend origin(s) — CORS reads from env
-                  ALLOW_ORIGINS: https://recode-frontend.vercel.app
-                  # Optional: provide to enable Auth in CI. If omitted, your lazy-import keeps app booting.
-                  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-                  SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-                  # Optional flags your settings module might use
-                  APP_ENV: ci
+                  # CORS origins (origin only, no path)
+                  ALLOW_ORIGINS: "https://recode-frontend.vercel.app"
+
+                  # Optional — enable Auth in CI if you provide these
+                  SUPABASE_URL: "${{ secrets.SUPABASE_URL }}"
+                  SUPABASE_SERVICE_KEY: "${{ secrets.SUPABASE_SERVICE_KEY }}"
+
+                  # Optional — only if your app expects a DB URL
+                  # Prefer a dedicated DB secret; don't reuse SUPABASE_URL here.
+                  DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+
+                  # General app env
+                  APP_ENV: "ci"
+                  PYTHONUNBUFFERED: "1"
               run: |
                   set -euo pipefail
 
