@@ -220,3 +220,15 @@ def require_admin_or_lecturer_cookie() -> Callable:
 
     return dependency
 
+def require_student(use_cookie: bool = False) -> Callable:
+    return require_role("student", use_cookie=use_cookie)
+
+def require_student_cookie() -> Callable:
+    async def dependency(
+        user: CurrentUser = Depends(get_current_user_from_cookie)
+    ):
+        if user.role != "student":
+            raise HTTPException(status_code=403, detail="Not authorized as student")
+        return user
+
+    return dependency
