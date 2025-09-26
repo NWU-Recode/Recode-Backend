@@ -4,6 +4,8 @@ from typing import List
 
 from app.common.deps import get_current_user, CurrentUser
 
+from datetime import datetime
+
 from app.features.judge0.schemas import (
     CodeSubmissionCreate,
     CodeSubmissionResponse,
@@ -12,12 +14,14 @@ from app.features.judge0.schemas import (
     Judge0Status,
     Judge0SubmissionResponse,
     QuickCodeSubmission,
+    Judge0SubmissionResponseWithMeta,
 )
 from app.features.judge0.service import judge0_service
 from app.adapters.judge0_client import run_many
 from app.features.challenges.repository import challenge_repository
 from app.Core.config import get_settings
-import ssl, asyncio, time
+from app.features.submissions.code_results_repository import code_results_repository
+import ssl, asyncio, time, logging
 
 public_router = APIRouter(prefix="/judge0", tags=["judge0-public"])
 protected_router = APIRouter(prefix="/judge0", tags=["judge0-protected"])
@@ -149,7 +153,8 @@ async def _poll_supabase_for_token(token: str, max_retries: int = 30, interval_s
     pool = await _get_pg_pool()
     for _ in range(max_retries):
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM submissions WHERE token = $1", token)
+            # The project migrated to using code_submissions with token column
+            row = await conn.fetchrow("SELECT * FROM code_submissions WHERE token = $1", token)
         if row and (row.get("status_id") or 0) > 2:
             return dict(row)
         await asyncio.sleep(interval_s)
@@ -160,19 +165,78 @@ async def _poll_supabase_for_token(token: str, max_retries: int = 30, interval_s
 async def submit_then_poll(submission: CodeSubmissionCreate):
     try:
         resp = await judge0_service.submit_code(submission)
-        result_row = await _poll_supabase_for_token(resp.token)
-        return {"token": resp.token, "result": result_row}
+        try:
+            result_row = await _poll_supabase_for_token(resp.token)
+            return {"token": resp.token, "result": result_row}
+        except Exception as db_exc:
+            # If Supabase/Postgres is unreachable (DNS/getaddrinfo or connection errors),
+            # fall back to polling Judge0 directly so the endpoint remains functional.
+            logger = logging.getLogger(__name__)
+            logger.warning("Supabase polling failed (%s). Falling back to direct Judge0 polling.", str(db_exc))
+            # Poll Judge0 directly for the submission result with a reasonable timeout
+            token = resp.token
+            start = time.time()
+            timeout_seconds = 60
+            poll_interval = 1.0
+            while time.time() - start < timeout_seconds:
+                try:
+                    judge0_result = await judge0_service.get_submission_result(token)
+                except Exception as e:
+                    # If Judge0 itself is temporarily unreachable, wait and retry
+                    logger.debug("Failed to fetch Judge0 submission result: %s", str(e))
+                    await asyncio.sleep(poll_interval)
+                    continue
+                status_id = judge0_result.status.get("id") if judge0_result.status else None
+                if status_id not in [1, 2]:
+                    # Convert Judge0ExecutionResult into a plain dict similar enough to DB row
+                    out = {
+                        "token": token,
+                        "status_id": status_id,
+                        "status_description": (judge0_result.status or {}).get("description", "unknown"),
+                        "stdout": judge0_result.stdout,
+                        "stderr": judge0_result.stderr,
+                        "time": judge0_result.time,
+                        "memory": judge0_result.memory,
+                        "language": judge0_result.language,
+                    }
+                    # Persist submission and result into code_submissions/code_results so later components can use them
+                    try:
+                        # create a submission row; user_id is unknown for public endpoint so use 0
+                        sub_id = await code_results_repository.create_submission(
+                            user_id=0,
+                            language_id=judge0_result.language.get("id") if judge0_result.language else -1,
+                            source_code=submission.source_code,
+                            token=token,
+                        )
+                        if sub_id:
+                            await code_results_repository.insert_results(sub_id, [out])
+                    except Exception:
+                        # Don't block the response if DB write fails; log and continue
+                        logging.getLogger(__name__).exception("Failed to persist Judge0 submission/result")
+                    return {"token": token, "result": out}
+                await asyncio.sleep(poll_interval)
+            raise HTTPException(status_code=408, detail="Submission processing timed out (fallback polling)")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"submit_then_poll failed: {str(e)}")
 
-@protected_router.post("/submit/full", response_model=Judge0SubmissionResponse, summary="(Auth) Submit and return token (no DB write)")
+@protected_router.post("/submit/full", response_model=Judge0SubmissionResponseWithMeta, summary="(Auth) Submit and return token (no DB write)")
 async def submit_code_full(submission: CodeSubmissionCreate, current_user: CurrentUser = Depends(get_current_user)):
     """Submit code with authentication but without persisting the payload."""
     try:
         judge0_resp = await judge0_service.submit_code(submission)
-        return judge0_resp
+        # Provide a deterministic submission_id and created_at where possible
+        # Use the same derivation as in _to_code_execution_result
+        token = judge0_resp.token
+        # compute stable small int from token
+        try:
+            import hashlib
+            submission_id = int(hashlib.sha256(token.encode()).hexdigest()[:8], 16)
+        except Exception:
+            submission_id = None
+        created_at = datetime.utcnow()
+        return Judge0SubmissionResponseWithMeta(token=token, submission_id=submission_id, created_at=created_at)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code (full): {str(e)}")
 
@@ -181,19 +245,9 @@ async def get_execution_result(token: str, current_user: CurrentUser = Depends(g
     """Fetch an execution result directly from Judge0 without persistence."""
     try:
         judge0_result = await judge0_service.get_submission_result(token)
-        language_id = (judge0_result.language or {}).get("id", -1)
-        success = judge0_service._compute_success(judge0_result.status.get("id"), judge0_result.stdout, None)  # type: ignore
-        return CodeExecutionResult(
-            stdout=judge0_result.stdout,
-            stderr=judge0_result.stderr,
-            compile_output=judge0_result.compile_output,
-            execution_time=judge0_result.time,
-            memory_used=judge0_result.memory,
-            status_id=judge0_result.status.get("id", -1),
-            status_description=judge0_result.status.get("description", "unknown"),
-            language_id=language_id,
-            success=success
-        )
+        # Use the service helper to produce a CodeExecutionResult with submission_id/created_at
+        exec_result = judge0_service._to_code_execution_result(judge0_result, None, None)
+        return exec_result
     except HTTPException:
         raise
     except Exception as e:
@@ -201,3 +255,4 @@ async def get_execution_result(token: str, current_user: CurrentUser = Depends(g
 
 # For backward compatibility
 router = public_router
+

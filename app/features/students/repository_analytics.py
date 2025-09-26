@@ -3,7 +3,7 @@ from app.DB.supabase import get_supabase
 
 async def fetch_submissions(user_id: int) -> List[dict]:
     client = await get_supabase()
-    resp = await client.table("submissions").select("*").eq("user_id", user_id).execute()
+    resp = await client.table("code_submissions").select("*").eq("user_id", user_id).execute()
     return resp.data or []
 
 async def fetch_code_submissions(user_id: int) -> List[dict]:

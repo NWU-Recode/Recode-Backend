@@ -28,17 +28,4 @@ class Module(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     semester = relationship("Semester", back_populates="modules")
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    code = Column(String, nullable=False)
-    name = Column(String, nullable=False)
-    description = Column(Text)
-    semester_id = Column(UUID(as_uuid=True), ForeignKey("semesters.id"), nullable=False)
-    lecturer_id = Column(Integer, ForeignKey("lecturers.id"), nullable=False)
-    code_language = Column(String)
-    credits = Column(SmallInteger)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    semester = relationship("Semester", back_populates="modules")
     students = relationship("User", secondary=student_module_table, back_populates="modules")

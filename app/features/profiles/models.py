@@ -9,7 +9,8 @@ from datetime import datetime
 
 from app.DB.base import Base
 
-modules = relationship("Module", secondary="student_module", back_populates="students")
+# relationship definitions for User must be attributes on the mapped class.
+# They will be defined on the User class below.
 
 class UserRole(enum.Enum):
     admin = "admin"
@@ -55,8 +56,13 @@ class User(Base):
     display_name = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-lecturer_profile = relationship(
-    "LecturerProfile",
-    back_populates="user",
-    uselist=False
-)
+    # relationships
+    # Modules a user (student) is enrolled in. student_module table
+    # links users.id to modules.id
+    modules = relationship("Module", secondary="student_module", back_populates="students")
+
+    # Note: LecturerProfile relationship was removed because no mapped
+    # LecturerProfile class exists in the codebase. If you later add a
+    # LecturerProfile model, reintroduce this relationship (after both
+    # classes are defined) or configure it dynamically to avoid import-time
+    # mapper resolution errors.
