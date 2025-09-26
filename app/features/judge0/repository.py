@@ -11,12 +11,12 @@ from .schemas import CodeSubmissionCreate, CodeExecutionResult
 class Judge0Repository:
     """SQLAlchemy-based repository for Judge0 operations."""
 
-    def get_submission_by_token(self, judge0_token: str) -> Optional[CodeSubmission]:
+    def get_submission_by_token(self, token: str) -> Optional[CodeSubmission]:
         """Get submission by Judge0 token."""
         db = next(get_db())
         try:
             return db.query(CodeSubmission).filter(
-                CodeSubmission.judge0_token == judge0_token
+                CodeSubmission.token == token
             ).first()
         finally:
             db.close()
@@ -46,7 +46,7 @@ class Judge0Repository:
         finally:
             db.close()
 
-    def create_submission(self, submission: CodeSubmissionCreate, user_id: UUID, judge0_token: str) -> CodeSubmission:
+    def create_submission(self, submission: CodeSubmissionCreate, user_id: UUID, token: str) -> CodeSubmission:
         """Create new submission record."""
         db = next(get_db())
         try:
@@ -56,8 +56,8 @@ class Judge0Repository:
                 language_id=submission.language_id,
                 stdin=submission.stdin,
                 expected_output=submission.expected_output,
-                judge0_token=judge0_token,
-                status="submitted",
+                token=token,
+                status_id=None,
                 created_at=datetime.now(timezone.utc)
             )
             db.add(submission_data)
@@ -151,7 +151,7 @@ class Judge0Repository:
         finally:
             db.close()
 
-    def update_submission_status(self, submission_id: UUID, status: str, completed_at: Optional[datetime] = None) -> bool:
+    def update_submission_status(self, submission_id: UUID, status_id: Optional[int], finished_at: Optional[datetime] = None) -> bool:
         """Update submission status and completion time."""
         db = next(get_db())
         try:
@@ -162,9 +162,9 @@ class Judge0Repository:
             if not submission:
                 return False
                 
-            submission.status = status
-            if completed_at:
-                submission.completed_at = completed_at
+            submission.status_id = status_id
+            if finished_at:
+                submission.finished_at = finished_at
                 
             db.commit()
             return True
@@ -174,4 +174,5 @@ class Judge0Repository:
         finally:
             db.close()
 judge0_repository = Judge0Repository()
+
 

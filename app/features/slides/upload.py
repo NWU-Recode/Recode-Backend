@@ -14,7 +14,6 @@ from app.features.topic_detections.topics.repository import TopicRepository
 from datetime import datetime, timezone
 from app.adapters.nlp_spacy import extract_primary_topic
 from app.features.topic_detections.slide_extraction.repository_supabase import slide_extraction_supabase_repository
-from app.DB.supabase import get_supabase
 
 
 async def _maybe_await(val):
@@ -63,6 +62,7 @@ async def upload_slide_bytes(
     sup_extraction_id: int | None = None
     detected = None
     topic_row = None
+    sup_row = None
     try:
         if original_filename.lower().endswith(".pptx"):
             slides_map = extract_pptx_text(BytesIO(file_bytes))
@@ -80,41 +80,45 @@ async def upload_slide_bytes(
             except Exception:
                 logging.getLogger("slides").exception("Primary topic extraction failed; falling back to filename/topic param")
 
-            # If detection still generic (e.g., 'Coding'), try lightweight pattern and academic keyword heuristics
+            # Only filter noisy subtopics when the primary is a CS topic; preserve non-CS primaries/subtopics
             try:
                 text_all = "\n".join(slide_texts).lower()
-                if not primary or primary == "Coding":
-                    # Try matching curated phrase patterns from PHRASES to pick a CS-friendly slug
-                    try:
-                        from app.adapters.nlp_spacy import PHRASES, _slug
-                        for key, (_, patterns) in PHRASES.items():
-                            for rx in patterns:
-                                if rx.search(text_all):
-                                    primary = _slug(key)
-                                    break
-                            if primary and primary != "Coding":
-                                break
-                    except Exception:
-                        # If importing PHRASES fails, continue to other heuristics
-                        pass
+                from app.adapters.nlp_spacy import PHRASES
 
-                if not primary or primary == "Coding":
-                    # Academic subjects fallback
-                    academic_subjects = [
-                        "history", "biology", "chemistry", "physics", "geography", "literature",
-                        "mathematics", "economics", "psychology", "sociology", "philosophy",
-                        "politics", "art", "music", "language", "anthropology"
-                    ]
-                    for subj in academic_subjects:
-                        if subj in text_all:
-                            primary = subj
-                            break
+                CS_ALLOWED = set(PHRASES.keys()) | {"data-structures", "variables-and-loops", "control-flow", "functions-and-recursion", "algorithms"}
 
-                # Final normalize
-                if primary:
-                    primary = to_topic_slug(primary)
+                def _is_cs_candidate(tok: str) -> bool:
+                    # exact allowed keys
+                    if tok in CS_ALLOWED:
+                        return True
+                    # common CS substrings
+                    substrings = (
+                        "list", "array", "tuple", "string", "dict", "dictionary", "set",
+                        "stack", "queue", "graph", "tree", "loop", "for-loop", "while",
+                        "function", "recursion", "sort", "search", "algorithm", "complexity",
+                        "variable", "operator", "conditional",
+                    )
+                    for s in substrings:
+                        if s in tok:
+                            return True
+                    return False
+
+                primary_norm = to_topic_slug(primary) if primary else None
+
+                # If primary looks like CS, filter subtopics. Otherwise preserve adapter output.
+                if primary_norm and _is_cs_candidate(primary_norm):
+                    filtered_subs: list[str] = []
+                    for s in subtopics:
+                        s_norm = to_topic_slug(s)
+                        if _is_cs_candidate(s_norm):
+                            filtered_subs.append(s_norm)
+                    subtopics = filtered_subs
+                    primary = primary_norm
+                else:
+                    # Keep non-CS primary and its subtopics as returned by the adapter
+                    primary = primary_norm or to_topic_slug(primary or key.topic_slug or "Coding")
             except Exception:
-                logging.getLogger("slides").debug("Secondary heuristics for topic detection failed")
+                logging.getLogger("slides").debug("Filtering/normalization of topic/subtopics failed")
             
             # Persist slide extraction to Supabase first (so extraction row exists)
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -134,29 +138,58 @@ async def upload_slide_bytes(
             extraction_id = sup_extraction_id
 
             # Create Topic and reference the extraction (create topic after extraction)
+            # Create Topic in a strict manner; if TopicService can't create it, try repository.create directly
             topic_uuid = None
-            # Create Topic in a strict manner; let errors bubble up to the caller
-            topic = await TopicService.create_from_slides(
-                slides_url=f"supabase://slides/{key.object_key}",
-                week=key.week,
-                slide_texts=slide_texts,
-                slides_key=key.object_key,
-                detected_topic=primary,
-                detected_subtopics=subtopics,
-                slide_extraction_id=sup_extraction_id,
-                module_code=module_code,
-            )
-            topic_row = topic
-            topic_uuid = topic.get("id") if topic else None
+            topic_row = None
+            try:
+                topic = await TopicService.create_from_slides(
+                    slides_url=f"supabase://slides/{key.object_key}",
+                    week=key.week,
+                    slide_texts=slide_texts,
+                    slides_key=key.object_key,
+                    detected_topic=primary,
+                    detected_subtopics=subtopics,
+                    slide_extraction_id=sup_extraction_id,
+                    module_code=module_code,
+                )
+                topic_row = topic
+            except Exception:
+                # Try a direct repository create as a fallback to ensure a topic row exists
+                logging.getLogger("slides").exception("TopicService.create_from_slides failed, attempting direct create")
+                try:
+                    topic_row = await TopicRepository.create(
+                        week=key.week,
+                        slug=f"w{key.week:02d}-{to_topic_slug(primary or key.topic_slug or 'topic')}",
+                        title=f"Week {key.week}: {(primary or 'Topic').replace('-', ' ').title()}",
+                        subtopics=subtopics,
+                        slides_key=key.object_key,
+                        detected_topic=primary,
+                        detected_subtopics=subtopics,
+                        slide_extraction_id=sup_extraction_id,
+                        module_code_slidesdeck=module_code,
+                        module_id=None,
+                    )
+                except Exception:
+                    logging.getLogger("slides").exception("Direct TopicRepository.create also failed")
+                    # Surface error to caller rather than silently continuing
+                    raise
+
+            topic_uuid = topic_row.get("id") if topic_row else None
 
             # If we have both extraction and topic, update the extraction row to point to the topic
             # Update the extraction row to set topic_id; if this fails raise an error
             if sup_extraction_id and topic_uuid:
                 client = await get_supabase()
-                await client.table("slide_extractions").update({"topic_id": topic_uuid}).eq("id", sup_extraction_id).execute()
+                resp = await client.table("slide_extractions").update({"topic_id": topic_uuid}).eq("id", sup_extraction_id).execute()
+                # supabase-py returns dict-like responses; ensure data exists
+                data = getattr(resp, "data", None) or (resp.get("data") if isinstance(resp, dict) else None)
+                if not data:
+                    logging.getLogger("slides").error("Failed to update slide_extractions.topic_id for id=%s with topic_id=%s", sup_extraction_id, topic_uuid)
+                    raise RuntimeError("Failed to update slide_extractions.topic_id")
     except Exception as e:
-        # Non-fatal: extraction/topic detection is best-effort, but log for visibility
+        # Surface extraction/topic errors to caller so callers can decide fail vs. continue
         logging.getLogger("slides").exception("Slide extraction/topic detection failed: %s", str(e))
+        raise
 
     # Ensure detection variables exist for non-pptx or failure paths
     slide_texts = locals().get("slide_texts", [])

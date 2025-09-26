@@ -30,7 +30,7 @@ async def upload_slide(
         data = await file.read()
         # Parse optional inputs from filename if not provided
         parsed_week, parsed_topic = parse_week_topic_from_filename(file.filename)
-        tn = topic_name or parsed_topic or "Topic"
+        tn = topic_name or parsed_topic or "Coding"
         if given_at_iso:
             given_at_dt = datetime.fromisoformat(given_at_iso)
         elif parsed_week:
@@ -71,7 +71,7 @@ async def batch_upload_slides(
                 data = await file.read()
                 # Parse optional inputs from filename if not provided
                 parsed_week, parsed_topic = parse_week_topic_from_filename(file.filename)
-                tn = topic_name or parsed_topic or "Topic"
+                tn = topic_name or parsed_topic or "Coding"
                 if parsed_week:
                     # Map week number to a date within that week relative to semester start
                     target_date = SEMESTER_START + timedelta(weeks=max(1, min(12, parsed_week)) - 1)

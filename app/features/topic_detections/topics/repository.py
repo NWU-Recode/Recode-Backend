@@ -56,7 +56,21 @@ class TopicRepository:
             payload["module_code_slidesdeck"] = module_code_slidesdeck
         if module_id is not None:
             payload["module_id"] = module_id
-        resp = await client.table(TopicRepository.table).insert(payload).execute()
-        if not getattr(resp, "data", None):
-            raise RuntimeError("Failed to create topic")
-        return resp.data[0]
+        try:
+            resp = await client.table(TopicRepository.table).insert(payload).execute()
+            if not getattr(resp, "data", None):
+                raise RuntimeError("Failed to create topic")
+            return resp.data[0]
+        except APIError as e:
+            # If the project DB schema is missing optional columns (older deployments),
+            # PostgREST will return an error mentioning the missing column. Attempt a
+            # conservative retry by removing optional detected_* fields and try again.
+            msg = getattr(e, 'args', [None])[0]
+            if msg and ('detected_subtopics' in str(msg) or 'detected_topic' in str(msg)):
+                for k in ('detected_subtopics', 'detected_topic'):
+                    payload.pop(k, None)
+                resp = await client.table(TopicRepository.table).insert(payload).execute()
+                if not getattr(resp, "data", None):
+                    raise RuntimeError("Failed to create topic on retry without optional fields")
+                return resp.data[0]
+            raise

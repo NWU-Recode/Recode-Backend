@@ -5,25 +5,37 @@ from sqlalchemy.sql import func
 import uuid
 from app.DB.base import Base
 
+
 class CodeSubmission(Base):
     __tablename__ = "code_submissions"
     __table_args__ = {"extend_existing": True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=True, index=True)
     source_code = Column(Text, nullable=False)
-    language_id = Column(Integer, nullable=False)
+    language_id = Column(Integer, nullable=True)
     stdin = Column(Text, nullable=True)
     expected_output = Column(Text, nullable=True)
-    judge0_token = Column(String(255), unique=True, nullable=True, index=True)
-    status = Column(String(50), default="pending", nullable=False)
+    token = Column(String(255), unique=True, nullable=True, index=True)
+    status_id = Column(Integer, nullable=True)
+    stdout = Column(Text, nullable=True)
+    stderr = Column(Text, nullable=True)
+    time = Column(String(50), nullable=True)
+    wall_time = Column(String(50), nullable=True)
+    memory = Column(Integer, nullable=True)
+    compile_output = Column(Text, nullable=True)
+    message = Column(Text, nullable=True)
+    exit_code = Column(Integer, nullable=True)
+    exit_signal = Column(Integer, nullable=True)
+    number_of_runs = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
     
     results = relationship("CodeResult", back_populates="submission", cascade="all, delete-orphan")
     
     def __repr__(self):
-        return f"<CodeSubmission(id={self.id}, status={self.status})>"
+        return f"<CodeSubmission(id={self.id}, status_id={self.status_id})>"
+
 
 class CodeResult(Base):
     """Code execution results table"""

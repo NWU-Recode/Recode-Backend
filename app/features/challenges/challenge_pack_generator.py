@@ -691,14 +691,26 @@ async def _insert_challenge(
 
 
 async def _insert_tests(client, question_id: Any, tests: List[Dict[str, str]]) -> None:
+    # Persist generated tests into the canonical `question_tests` table.
+    # Map fields: input -> input, expected -> expected_output, visibility preserved, valid defaults to True.
     for test in tests:
         payload = {
             "question_id": question_id,
             "input": test.get("input", ""),
-            "expected": test.get("expected", ""),
+            "expected_output": test.get("expected", ""),
             "visibility": test.get("visibility", "public"),
+            "valid": True,
         }
-        await client.table("tests").insert(payload).execute()
+        # Try inserting into question_tests; fall back to legacy `tests` table if question_tests doesn't exist.
+        try:
+            await client.table("question_tests").insert(payload).execute()
+        except Exception:
+            await client.table("tests").insert({
+                "question_id": question_id,
+                "input": test.get("input", ""),
+                "expected": test.get("expected", ""),
+                "visibility": test.get("visibility", "public"),
+            }).execute()
 
 
 async def _insert_question(

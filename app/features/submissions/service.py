@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import math
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from statistics import mean
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from app.features.judge0.schemas import CodeSubmissionCreate, CodeExecutionResult
 from app.features.judge0.service import judge0_service
+from app.features.challenges.repository import challenge_repository
 from app.features.submissions.code_results_repository import code_results_repository
 from app.features.submissions.repository import submissions_repository
 from app.features.submissions.schemas import (
@@ -48,6 +50,19 @@ _BASE_ELO_BY_TIER = {
 }
 
 
+_TIME_LIMIT_BY_TIER = {
+    "base": 3600,
+    "plain": 3600,
+    "common": 3600,
+    "bronze": 3600,
+    "silver": 3600,
+    "gold": 3600,
+    "ruby": 5400,
+    "emerald": 7200,
+    "diamond": 10800,
+}
+
+
 @dataclass
 class _GradingWeights:
     gpa_by_tier: Dict[str, int]
@@ -74,6 +89,38 @@ _GRADING_WEIGHTS = _GradingWeights(
 )
 
 _ADVANCED_TIERS = {"ruby", "emerald", "diamond"}
+
+
+def _time_limit_for_tier(tier: Optional[str]) -> Optional[int]:
+    if not tier:
+        return _TIME_LIMIT_BY_TIER.get("base")
+    key = str(tier).lower()
+    return _TIME_LIMIT_BY_TIER.get(key, _TIME_LIMIT_BY_TIER.get("base"))
+
+
+def _parse_iso_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _late_multiplier(duration_seconds: Optional[int], limit_seconds: Optional[int]) -> float:
+    if duration_seconds is None or limit_seconds is None:
+        return 1.0
+    return 0.7 if duration_seconds > limit_seconds else 1.0
+
+
+@dataclass
+class ChallengeSubmissionResult:
+    attempt: Dict[str, Any]
+    challenge: Dict[str, Any]
+    breakdown: ChallengeSubmissionBreakdown
+    duration_seconds: Optional[int]
+    time_limit_seconds: Optional[int]
+    late_multiplier: float
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -283,7 +330,7 @@ class SubmissionsService:
                 user_id=user_id,
                 language_id=lang,
                 source_code=source_code,
-                judge0_token=judge0_token,
+                token=judge0_token,
                 test_records=test_records,
             )
         except Exception:
@@ -451,3 +498,5 @@ class SubmissionsService:
 submissions_service = SubmissionsService()
 
 __all__ = ["submissions_service", "SubmissionsService", "MAX_SCORING_ATTEMPTS"]
+
+

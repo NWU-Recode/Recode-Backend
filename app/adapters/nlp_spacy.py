@@ -629,6 +629,33 @@ def extract_primary_topic(slide_texts: List[str]) -> Tuple[str, List[str]]:
 
     primary, subs = _get_best_primary_and_subs()
 
+    # Heuristic override: if the combined logic picked the broad
+    # "variables-and-loops" but the text clearly focuses on tuples,
+    # prefer the specific data-structure 'tuples' as the primary topic.
+    # This fixes cases where slides repeatedly mention "tuple(s)" but
+    # also include incidental "variables" or "loops" wording.
+    try:
+        text_all = "\n".join(slide_texts).lower()
+        # check for explicit tuple mentions in text or subs
+        tuple_mentioned = "tuple" in text_all or "tuples" in text_all or any(s in ("tuple", "tuples") for s in subs)
+        if primary == "variables-and-loops" and tuple_mentioned:
+            primary = "tuples"
+            # Rebuild subs: prefer keeping tuple-related and then variables/loops
+            new_subs = []
+            # include 'tuple' only as primary, avoid duplicating in subs
+            # prefer variables and loops as helpful subs if present
+            for cand in ("variables", "for-loops", "while-loops", "loops"):
+                if cand not in new_subs and cand in text_all:
+                    new_subs.append(cand)
+            # fill remaining subs from previous subs excluding tuple variants
+            for s in subs:
+                if s not in ("tuple", "tuples") and s not in new_subs and len(new_subs) < 3:
+                    new_subs.append(s)
+            subs = new_subs[:3]
+    except Exception:
+        # Non-fatal; fall back to original primary/subs
+        pass
+
     logging.getLogger("nlp").debug("Combined topic extraction -> %s, %s", primary, subs)
     return primary, subs
 

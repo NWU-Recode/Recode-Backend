@@ -153,8 +153,8 @@ async def _poll_supabase_for_token(token: str, max_retries: int = 30, interval_s
     pool = await _get_pg_pool()
     for _ in range(max_retries):
         async with pool.acquire() as conn:
-            # The project migrated to using code_submissions with token column
-            row = await conn.fetchrow("SELECT * FROM code_submissions WHERE token = $1", token)
+                # Look up by the token column in code_submissions
+                row = await conn.fetchrow("SELECT * FROM code_submissions WHERE token = $1", token)
         if row and (row.get("status_id") or 0) > 2:
             return dict(row)
         await asyncio.sleep(interval_s)
@@ -165,6 +165,18 @@ async def _poll_supabase_for_token(token: str, max_retries: int = 30, interval_s
 async def submit_then_poll(submission: CodeSubmissionCreate):
     try:
         resp = await judge0_service.submit_code(submission)
+        # Persist a minimal submission row immediately so pollers can find it deterministically.
+        try:
+            # Public endpoint: user unknown -> use 0
+            await code_results_repository.create_submission(
+                user_id=0,
+                language_id=submission.language_id or -1,
+                source_code=submission.source_code,
+                token=resp.token,
+            )
+        except Exception:
+            # Don't fail the request if persistence is unavailable; polling fallback handles direct Judge0 polling and persistence.
+            logging.getLogger(__name__).exception("Failed to create initial code_submissions row (non-fatal)")
         try:
             result_row = await _poll_supabase_for_token(resp.token)
             return {"token": resp.token, "result": result_row}
@@ -206,7 +218,7 @@ async def submit_then_poll(submission: CodeSubmissionCreate):
                             user_id=0,
                             language_id=judge0_result.language.get("id") if judge0_result.language else -1,
                             source_code=submission.source_code,
-                            token=token,
+                                token=token,
                         )
                         if sub_id:
                             await code_results_repository.insert_results(sub_id, [out])
@@ -229,13 +241,30 @@ async def submit_code_full(submission: CodeSubmissionCreate, current_user: Curre
         # Provide a deterministic submission_id and created_at where possible
         # Use the same derivation as in _to_code_execution_result
         token = judge0_resp.token
-        # compute stable small int from token
-        try:
-            import hashlib
-            submission_id = int(hashlib.sha256(token.encode()).hexdigest()[:8], 16)
-        except Exception:
-            submission_id = None
         created_at = datetime.utcnow()
+        submission_id = None
+        # Attempt to persist a submission row for this authenticated user so other services/workers
+        # can pick it up via DB polling.
+        try:
+            sub_id = await code_results_repository.create_submission(
+                user_id=current_user.id,
+                language_id=submission.language_id or -1,
+                source_code=submission.source_code,
+                token=token,
+            )
+            if sub_id:
+                submission_id = sub_id
+        except Exception:
+            logging.getLogger(__name__).exception("Failed to persist authenticated submission (non-fatal)")
+
+        # If we couldn't create a DB row, fall back to returning a deterministic small id derived from token
+        if submission_id is None:
+            try:
+                import hashlib
+                submission_id = int(hashlib.sha256(token.encode()).hexdigest()[:8], 16)
+            except Exception:
+                submission_id = None
+
         return Judge0SubmissionResponseWithMeta(token=token, submission_id=submission_id, created_at=created_at)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit code (full): {str(e)}")
