@@ -47,13 +47,18 @@ async def generate_challenge(
     slide_stack_id = payload.slide_stack_id
 
     if payload.persist:
-        result = await generate_and_save_tier(
-            tier_key,
-            week_number,
-            slide_stack_id=slide_stack_id,
-            module_code=resolved_code,
-            lecturer_id=int(getattr(current_user, "id", 0) or 0),
-        )
+        try:
+            result = await generate_and_save_tier(
+                tier_key,
+                week_number,
+                slide_stack_id=slide_stack_id,
+                module_code=resolved_code,
+                lecturer_id=int(getattr(current_user, "id", 0) or 0),
+            )
+        except Exception as exc:
+            import traceback, logging
+            logging.getLogger(__name__).exception("Failed to generate and save challenge")
+            raise HTTPException(status_code=500, detail={"error_code": "E_GENERATION_FAILED", "message": str(exc)})
         challenge_info = result.get("challenge") if isinstance(result, dict) else None
         if isinstance(challenge_info, dict):
             idem = challenge_info.get("idempotency_key")
@@ -84,6 +89,55 @@ async def get_semester_overview(current_user: CurrentUser = Depends(get_current_
         return await semester_orchestrator.get_release_overview(str(current_user.id))
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error_code":"E_UNKNOWN","message":str(e)})
+
+
+@router.get("/published/{week_number}")
+async def get_published_challenges(week_number: int):
+    """Return published challenge bundles for a given week.
+
+    Response: list of { challenge: <challenge row>, questions: [question rows...] }
+    For base/plain challenges we return up to 5 questions (snapshot). For other tiers we return 1 question.
+    """
+    if week_number <= 0:
+        raise HTTPException(status_code=400, detail={"error_code": "E_INVALID_WEEK", "message": "week must be > 0"})
+    try:
+        rows = await challenge_repository.list_published_for_week(week_number)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"error_code": "E_DB_ERROR", "message": str(exc)})
+
+    client = await get_supabase()
+    bundles = []
+    for ch in rows:
+        cid = ch.get("id")
+        if not cid:
+            continue
+        # determine how many questions to fetch
+        tier = ch.get("tier") or ch.get("kind")
+        # plain challenges (tier stored as 'plain') should return 5 questions snapshot
+        limit = 5 if str(tier).lower() in {"plain", "base", "common"} else 1
+        try:
+            qresp = await client.table("questions").select("*").eq("challenge_id", cid).order("id").limit(limit).execute()
+            questions = qresp.data or []
+        except Exception:
+            questions = []
+        bundles.append({"challenge": ch, "questions": questions})
+    return bundles
+
+
+@router.get("/published/{week_number}")
+async def get_published_challenges_for_week(week_number: int, current_user: CurrentUser = Depends(get_current_user)):
+    """Return all published challenges for the given week as bundles (challenge + questions).
+
+    - plain (base) challenges return up to 5 questions (snapshot)
+    - other tiers return a single question per challenge
+    """
+    if week_number <= 0:
+        raise HTTPException(status_code=400, detail={"error_code": "E_INVALID_WEEK", "message": "week must be > 0"})
+    try:
+        bundles = await challenge_repository.fetch_published_bundles_for_week(week_number)
+        return {"week": week_number, "bundles": bundles}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"error_code": "E_FETCH_FAILED", "message": str(exc)})
 
 
 # -----------------------------

@@ -24,24 +24,32 @@ class WeekReleaseState:
 
 class SemesterOrchestrator:
     async def get_release_overview(self, user_id: str) -> Dict[str, Any]:
+        # Fetch all challenges and normalize tiers so 'plain' is presented as 'base'
         challenges = await challenge_repository.list_challenges()
-        plain = [c for c in challenges if (c.get("tier") == "plain" or c.get("tier") == Tier.plain.value)]
-        ruby = [c for c in challenges if (c.get("tier") == "ruby" or c.get("tier") == Tier.ruby.value)]
-        emerald = [c for c in challenges if (c.get("tier") == "emerald" or c.get("tier") == Tier.emerald.value)]
+        def _normalize_tier(ch: Dict[str, Any]) -> str:
+            t = (ch.get("tier") or "").strip().lower()
+            if t in {"plain", "common", "base"}:
+                return "base"
+            return t or "base"
+
+        base_challenges = [c for c in challenges if _normalize_tier(c) == "base"]
+        ruby = [c for c in challenges if _normalize_tier(c) == "ruby"]
+        emerald = [c for c in challenges if _normalize_tier(c) == "emerald"]
 
         # Summaries per user
         attempts = await challenge_repository.list_user_attempts(user_id)
         by_ch = {str(a.get("challenge_id")): a for a in attempts if a}
 
-        plain_attempt_scores: List[AttemptScore] = []
-        for c in plain:
+        base_attempt_scores: List[AttemptScore] = []
+        for c in base_challenges:
             cid = str(c.get("id"))
             att = by_ch.get(cid)
             if not att or att.get("status") != "submitted":
                 continue
             correct = bool((att.get("correct_count") or 0) >= 3)  # heuristic if not computed
             # sum 5 questions -> total=5 for averaging; correctness used only as boolean in blend here
-            plain_attempt_scores.append(AttemptScore(tier=Tier.plain, correct=correct, total=5))
+            # Tier enum uses 'plain' as the challenge-tier label
+            base_attempt_scores.append(AttemptScore(tier=Tier.plain, correct=correct, total=5))
 
         ruby_correct = False
         for c in ruby:
@@ -60,19 +68,27 @@ class SemesterOrchestrator:
         diamond_correct = False  # reserved for future diamond support
 
         agg = recompute_semester_mark(
-            plain_attempts=plain_attempt_scores,
+            plain_attempts=base_attempt_scores,
             ruby_correct=ruby_correct,
             emerald_correct=emerald_correct,
             diamond_correct=diamond_correct,
         )
 
-        completed_plain = sum(1 for a in attempts if a.get("status") == "submitted")
-        total_plain = len(plain)
+        # completed plain should count submitted attempts for base challenges
+        completed_plain = 0
+        for a in attempts:
+            if a.get("status") == "submitted":
+                # determine the challenge tier for this attempt
+                ch = a.get("challenge") or {}
+                t = (ch.get("tier") if isinstance(ch, dict) else None) or (ch[0].get("tier") if isinstance(ch, list) and ch else None)
+                if (str(t).strip().lower() in {"plain", "base", "common"}) or t is None:
+                    completed_plain += 1
+        total_plain = len(base_challenges)
         unlocks = determine_milestones(completed_plain, total_plain)
 
         return {
             "counts": {
-                "plain": total_plain,
+                "base": total_plain,
                 "ruby": len(ruby),
                 "emerald": len(emerald),
             },

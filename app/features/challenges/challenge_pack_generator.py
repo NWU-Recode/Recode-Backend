@@ -9,7 +9,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from jsonschema import ValidationError, validate
+try:
+    from jsonschema import ValidationError, validate
+except Exception:  # pragma: no cover - optional runtime dependency
+    class ValidationError(Exception):
+        pass
+
+    def validate(instance, schema):
+        # jsonschema not installed in this environment; skip validation but log a warning at runtime.
+        import logging
+        logging.getLogger(__name__).warning("jsonschema not available: skipping model response validation")
+        return None
 
 from app.DB.supabase import get_supabase
 from app.features.challenges.model_runtime.bedrock_client import invoke_model
@@ -619,11 +629,18 @@ async def _insert_challenge(
         raise ValueError("lecturer_id is required to insert challenge")
 
     module_part = _slugify(context.module_code or "module")
+    # Use 'base' as the user-facing tier; legacy DB may use 'plain' for slugging
     tier_slug = "plain" if tier == "base" else _slugify(tier)
     slug = f"{module_part}-w{context.week:02d}-{tier_slug}"
-    kind_value = "common" if tier == "base" else tier
-    tier_value = "plain" if tier == "base" else tier
+    # Map to schema: weekly vs special
+    is_weekly = tier == "base"
+    challenge_type_value = "weekly" if is_weekly else "special"
+    # For special challenges we set tier to the tier name (ruby/emerald/etc.)
+    # Keep DB-level sentinel as 'plain' for legacy storage only when inserting;
+    # but API consumers will see 'base' due to normalization in repository.
+    tier_value = None if is_weekly else ("plain" if tier == "base" else tier)
 
+    # Always compute an idempotency key for the challenge (used for dedup and returned to client).
     key_source = "|".join([
         str(context.topic_id or ""),
         str(context.module_code or ""),
@@ -633,7 +650,15 @@ async def _insert_challenge(
     idempotency_key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()[:16]
 
     async def _fetch_existing(field: str, value: Any) -> Optional[Dict[str, Any]]:
+        # Only attempt to fetch by a field if value is present
         if value in {None, ""}:
+            return None
+        # Prevent querying for columns that may not exist in the PostgREST schema cache
+        try:
+            has_col = await _table_has_column("challenges", field)
+        except Exception:
+            has_col = False
+        if not has_col:
             return None
         try:
             resp = await client.table("challenges").select("*").eq(field, value).limit(1).execute()
@@ -668,26 +693,88 @@ async def _insert_challenge(
         # schema doesn't support idempotency_key: fall back to slug-based de-duplication
         existing = await _fetch_existing("slug", slug)
     if existing:
+        # Ensure the existing row payload includes the computed idempotency_key so callers can see it.
+        try:
+            if isinstance(existing, dict):
+                existing.setdefault("idempotency_key", idempotency_key)
+        except Exception:
+            pass
         return existing
 
     payload = {
         "title": challenge_title,
         "description": challenge_description,
-        "slug": slug,
         "status": "draft",
-        "tier": tier_value,
-        "kind": kind_value,
-        "topic_id": context.topic_id,
-        "week_number": context.week,
-        "linked_module": context.module_code,
-        "lecturer_creator": int(lecturer_id),
+        # map to provided schema: module_id (uuid) expected
     }
+
+    # Resolve module_id from module_code if available
+    module_id_value = None
+    try:
+        if context.module_code:
+            mresp = await client.table("modules").select("id").eq("code", context.module_code).limit(1).execute()
+            mrows = mresp.data or []
+            if mrows:
+                module_id_value = mrows[0].get("id")
+    except Exception:
+        module_id_value = None
+
+    if module_id_value:
+        payload["module_id"] = module_id_value
+    else:
+        # Keep a reference to the module code in a fallback field if module_id isn't resolvable
+        payload.setdefault("module_code", context.module_code)
+
+    # Set challenge_type and weekly/special-specific fields
+    payload["challenge_type"] = challenge_type_value
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    # release_date and due_date
+    payload["release_date"] = now.isoformat()
+    payload["due_date"] = (now + timedelta(days=7)).isoformat()
+
+    if is_weekly:
+        payload["week_number"] = int(context.week or 0) or None
+        # weekly per schema requires tier null and trigger_event null (omit them)
+    else:
+        # special challenges: include tier and a trigger_event marker
+        payload["tier"] = tier if tier is not None else None
+        payload["week_number"] = None
+        payload["trigger_event"] = {"auto_generated": True, "week": context.week}
+    # Only include optional columns if the DB table supports them
+    try:
+        if await _table_has_column("challenges", "idempotency_key"):
+            payload["idempotency_key"] = idempotency_key
+    except Exception:
+        pass
+    try:
+        if await _table_has_column("challenges", "slug"):
+            payload.setdefault("slug", slug)
+    except Exception:
+        pass
+    try:
+        if await _table_has_column("challenges", "topic_id") and context.topic_id:
+            payload["topic_id"] = context.topic_id
+    except Exception:
+        pass
+    try:
+        if await _table_has_column("challenges", "lecturer_creator") and lecturer_id is not None:
+            payload["lecturer_creator"] = int(lecturer_id)
+    except Exception:
+        pass
     if supports_idempotency:
         payload["idempotency_key"] = idempotency_key
     resp = await client.table("challenges").insert(payload).execute()
     if not resp.data:
         raise ValueError(f"Failed to create challenge for tier {tier}")
-    return resp.data[0]
+    record = resp.data[0]
+    # Attach idempotency_key to the returned record dictionary (even if it couldn't be persisted).
+    try:
+        if isinstance(record, dict):
+            record.setdefault("idempotency_key", idempotency_key)
+    except Exception:
+        pass
+    return record
 
 
 async def _insert_tests(client, question_id: Any, tests: List[Dict[str, str]]) -> None:
@@ -699,7 +786,8 @@ async def _insert_tests(client, question_id: Any, tests: List[Dict[str, str]]) -
             "input": test.get("input", ""),
             "expected_output": test.get("expected", ""),
             "visibility": test.get("visibility", "public"),
-            "valid": True,
+            # Only include slug in payload if the DB table actually supports it
+            # "slug": slug,
         }
         # Try inserting into question_tests; fall back to legacy `tests` table if question_tests doesn't exist.
         try:

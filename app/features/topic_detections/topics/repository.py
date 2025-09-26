@@ -62,10 +62,35 @@ class TopicRepository:
                 raise RuntimeError("Failed to create topic")
             return resp.data[0]
         except APIError as e:
+            # If we hit a duplicate slug error (unique constraint), fetch
+            # the existing topic and return it — makes creation idempotent.
+            # PostgREST sometimes returns a dict, sometimes a string; normalise
+            msg = getattr(e, 'args', [None])[0]
+            msg_str = str(msg).lower() if msg is not None else ""
+            if ("23505" in msg_str) or ("duplicate key" in msg_str) or ("ix_topic_slug" in msg_str):
+                try:
+                    # Try lookup by slug first
+                    existing = await client.table(TopicRepository.table).select("*").eq("slug", slug).limit(1).execute()
+                    if getattr(existing, 'data', None):
+                        return existing.data[0]
+                    # If not found by slug, perhaps the unique constraint was on week or slides_key
+                    # Try to find by week if provided
+                    if 'week' in payload:
+                        existing = await client.table(TopicRepository.table).select("*").eq("week", payload['week']).limit(1).execute()
+                        if getattr(existing, 'data', None):
+                            return existing.data[0]
+                    # Try slides_key if provided
+                    if 'slides_key' in payload:
+                        existing = await client.table(TopicRepository.table).select("*").eq("slides_key", payload['slides_key']).limit(1).execute()
+                        if getattr(existing, 'data', None):
+                            return existing.data[0]
+                except Exception:
+                    # Fall through to other handling if select fails
+                    pass
+
             # If the project DB schema is missing optional columns (older deployments),
             # PostgREST will return an error mentioning the missing column. Attempt a
             # conservative retry by removing optional detected_* fields and try again.
-            msg = getattr(e, 'args', [None])[0]
             if msg and ('detected_subtopics' in str(msg) or 'detected_topic' in str(msg)):
                 for k in ('detected_subtopics', 'detected_topic'):
                     payload.pop(k, None)
@@ -73,4 +98,6 @@ class TopicRepository:
                 if not getattr(resp, "data", None):
                     raise RuntimeError("Failed to create topic on retry without optional fields")
                 return resp.data[0]
+
+            # Otherwise re-raise the original error
             raise

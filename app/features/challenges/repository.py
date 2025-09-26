@@ -17,6 +17,13 @@ class ChallengeRepository:
         resp = await client.table("challenges").select("*").eq("id", challenge_id).single().execute()
         data = resp.data or None
         if data is not None:
+            # Normalize tier for API responses: treat 'plain'/'common' as 'base'
+            try:
+                t = (data.get("tier") or "").strip().lower()
+                if t in {"plain", "common"}:
+                    data["tier"] = "base"
+            except Exception:
+                pass
             cache.set(key, data)
         return data
 
@@ -121,6 +128,16 @@ class ChallengeRepository:
             .execute()
         )
         data = resp.data or []
+        # Normalize returned tiers for API consumers
+        try:
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                t = (item.get("tier") or "").strip().lower()
+                if t in {"plain", "common"}:
+                    item["tier"] = "base"
+        except Exception:
+            pass
         cache.set(key, data)
         return data
 
@@ -290,6 +307,87 @@ class ChallengeRepository:
             if update_resp.data:
                 updated += 1
         return {"updated": updated}
+
+    async def list_published_for_week(self, week_number: int) -> List[Dict[str, Any]]:
+        """Return all challenges with status='published' for the given week.
+
+        Falls back to slug-based detection if week_number field isn't populated for rows.
+        """
+        client = await get_supabase()
+        week_tag = f"w{week_number:02d}"
+        try:
+            resp = await client.table("challenges").select("*").eq("week_number", week_number).eq("status", "published").execute()
+            rows = resp.data or []
+        except Exception:
+            rows = []
+        if not rows:
+            # fallback: look for slug containing week tag among published challenges
+            try:
+                resp_all = await client.table("challenges").select("*").eq("status", "published").execute()
+                all_rows = resp_all.data or []
+                rows = [r for r in all_rows if week_tag in str(r.get("slug", ""))]
+            except Exception:
+                rows = []
+        # Normalize tier field for API responses
+        try:
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                t = (r.get("tier") or r.get("kind") or "").strip().lower()
+                if t in {"plain", "common"}:
+                    r["tier"] = "base"
+        except Exception:
+            pass
+        return rows
+
+    async def fetch_published_bundles_for_week(self, week_number: int) -> List[Dict[str, Any]]:
+        """Return list of published challenge bundles for the given week.
+
+        Each bundle contains the challenge row and its questions. For tier 'plain' (base)
+        return up to 5 questions (snapshot design). For other tiers return the single
+        canonical question(s) (generator produces 1 question for ruby/emerald in current design).
+        """
+        client = await get_supabase()
+        # fetch published challenges for the week
+        try:
+            resp = await client.table("challenges").select("*").eq("week_number", week_number).eq("status", "published").order("id").execute()
+            rows = resp.data or []
+        except Exception:
+            # fallback: try by slug week tag
+            week_tag = f"w{week_number:02d}"
+            resp_all = await client.table("challenges").select("*").eq("status", "published").execute()
+            rows = [r for r in (resp_all.data or []) if week_tag in str(r.get("slug", ""))]
+
+        bundles: List[Dict[str, Any]] = []
+        for ch in rows:
+            cid = ch.get("id")
+            if not cid:
+                continue
+            # fetch questions: for plain return up to 5 (snapshot); for others return questions associated
+            try:
+                q_resp = await client.table("questions").select("*").eq("challenge_id", cid).execute()
+                questions = q_resp.data or []
+            except Exception:
+                questions = []
+            tier = ch.get("tier") or ch.get("kind") or "plain"
+            if tier == "plain":
+                # ensure deterministic ordering and limit to 5
+                questions = sorted(questions, key=lambda q: str(q.get("id")))[:5]
+            else:
+                # for non-plain, prefer the first question if multiple
+                questions = questions[:1]
+            bundles.append({"challenge": ch, "questions": questions})
+        # Normalize tiers in the returned challenge bundles
+        try:
+            for b in bundles:
+                ch = b.get("challenge") or {}
+                if isinstance(ch, dict):
+                    t = (ch.get("tier") or ch.get("kind") or "").strip().lower()
+                    if t in {"plain", "common"}:
+                        ch["tier"] = "base"
+        except Exception:
+            pass
+        return bundles
 
 challenge_repository = ChallengeRepository()
 

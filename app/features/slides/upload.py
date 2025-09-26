@@ -20,6 +20,70 @@ async def _maybe_await(val):
     return await val if inspect.isawaitable(val) else val
 
 
+async def create_topic_from_extraction(
+    extraction_row: dict,
+    module_code: str,
+):
+    """Create a topic row from an existing persisted extraction and update the extraction.topic_id.
+
+    Returns the topic row dict.
+    """
+    if not extraction_row:
+        raise ValueError("extraction_row is required")
+
+    # Unpack required fields
+    sup_extraction_id = extraction_row.get("id")
+    slides_map = extraction_row.get("slides", {})
+    slide_texts = [line for _, lines in sorted(slides_map.items()) for line in lines]
+    detected_topic = extraction_row.get("detected_topic")
+    detected_subtopics = extraction_row.get("detected_subtopics") or []
+    slides_key = extraction_row.get("slides_key")
+    week = extraction_row.get("week_number")
+
+    # Try TopicService then fallback to TopicRepository (same logic as single upload)
+    try:
+        topic = await TopicService.create_from_slides(
+            slides_url=f"supabase://slides/{slides_key}",
+            week=week,
+            slide_texts=slide_texts,
+            slides_key=slides_key,
+            detected_topic=detected_topic,
+            detected_subtopics=detected_subtopics,
+            slide_extraction_id=sup_extraction_id,
+            module_code=module_code,
+        )
+        topic_row = topic
+    except Exception:
+        logging.getLogger("slides").exception("TopicService.create_from_slides failed in batch, attempting direct create")
+        try:
+            topic_row = await TopicRepository.create(
+                week=week,
+                slug=f"w{week:02d}-{to_topic_slug(detected_topic or 'topic')}",
+                title=f"Week {week}: {(detected_topic or 'Topic').replace('-', ' ').title()}",
+                subtopics=detected_subtopics,
+                slides_key=slides_key,
+                detected_topic=detected_topic,
+                detected_subtopics=detected_subtopics,
+                slide_extraction_id=sup_extraction_id,
+                module_code_slidesdeck=module_code,
+                module_id=None,
+            )
+        except Exception:
+            logging.getLogger("slides").exception("Direct TopicRepository.create also failed in batch")
+            raise
+
+    topic_uuid = topic_row.get("id") if topic_row else None
+    if sup_extraction_id and topic_uuid:
+        client = await get_supabase()
+        resp = await client.table("slide_extractions").update({"topic_id": topic_uuid}).eq("id", sup_extraction_id).execute()
+        data = getattr(resp, "data", None) or (resp.get("data") if isinstance(resp, dict) else None)
+        if not data:
+            logging.getLogger("slides").error("Failed to update slide_extractions.topic_id in batch for id=%s with topic_id=%s", sup_extraction_id, topic_uuid)
+            raise RuntimeError("Failed to update slide_extractions.topic_id in batch")
+
+    return topic_row
+
+
 async def upload_slide_bytes(
     file_bytes: bytes,
     original_filename: str,
@@ -28,6 +92,7 @@ async def upload_slide_bytes(
     semester_start_date,     # date
     module_code: str,
     signed_url_ttl_sec: int = 900,
+    create_topic: bool = True,
 ) -> Dict[str, Any]:
     key = build_slide_object_key(original_filename, topic_name, given_at_dt, semester_start_date)
     content_type = mimetypes.guess_type(original_filename)[0] or "application/octet-stream"
@@ -137,55 +202,56 @@ async def upload_slide_bytes(
             sup_extraction_id = sup_row.get("id")
             extraction_id = sup_extraction_id
 
-            # Create Topic and reference the extraction (create topic after extraction)
-            # Create Topic in a strict manner; if TopicService can't create it, try repository.create directly
             topic_uuid = None
             topic_row = None
-            try:
-                topic = await TopicService.create_from_slides(
-                    slides_url=f"supabase://slides/{key.object_key}",
-                    week=key.week,
-                    slide_texts=slide_texts,
-                    slides_key=key.object_key,
-                    detected_topic=primary,
-                    detected_subtopics=subtopics,
-                    slide_extraction_id=sup_extraction_id,
-                    module_code=module_code,
-                )
-                topic_row = topic
-            except Exception:
-                # Try a direct repository create as a fallback to ensure a topic row exists
-                logging.getLogger("slides").exception("TopicService.create_from_slides failed, attempting direct create")
+            # Create topic only when requested (batch flow will call topic creation in a second phase)
+            if create_topic:
+                # Create Topic in a strict manner; if TopicService can't create it, try repository.create directly
                 try:
-                    topic_row = await TopicRepository.create(
+                    topic = await TopicService.create_from_slides(
+                        slides_url=f"supabase://slides/{key.object_key}",
                         week=key.week,
-                        slug=f"w{key.week:02d}-{to_topic_slug(primary or key.topic_slug or 'topic')}",
-                        title=f"Week {key.week}: {(primary or 'Topic').replace('-', ' ').title()}",
-                        subtopics=subtopics,
+                        slide_texts=slide_texts,
                         slides_key=key.object_key,
                         detected_topic=primary,
                         detected_subtopics=subtopics,
                         slide_extraction_id=sup_extraction_id,
-                        module_code_slidesdeck=module_code,
-                        module_id=None,
+                        module_code=module_code,
                     )
+                    topic_row = topic
                 except Exception:
-                    logging.getLogger("slides").exception("Direct TopicRepository.create also failed")
-                    # Surface error to caller rather than silently continuing
-                    raise
+                    # Try a direct repository create as a fallback to ensure a topic row exists
+                    logging.getLogger("slides").exception("TopicService.create_from_slides failed, attempting direct create")
+                    try:
+                        topic_row = await TopicRepository.create(
+                            week=key.week,
+                            slug=f"w{key.week:02d}-{to_topic_slug(primary or key.topic_slug or 'topic')}",
+                            title=f"Week {key.week}: {(primary or 'Topic').replace('-', ' ').title()}",
+                            subtopics=subtopics,
+                            slides_key=key.object_key,
+                            detected_topic=primary,
+                            detected_subtopics=subtopics,
+                            slide_extraction_id=sup_extraction_id,
+                            module_code_slidesdeck=module_code,
+                            module_id=None,
+                        )
+                    except Exception:
+                        logging.getLogger("slides").exception("Direct TopicRepository.create also failed")
+                        # Surface error to caller rather than silently continuing
+                        raise
 
-            topic_uuid = topic_row.get("id") if topic_row else None
+                topic_uuid = topic_row.get("id") if topic_row else None
 
-            # If we have both extraction and topic, update the extraction row to point to the topic
-            # Update the extraction row to set topic_id; if this fails raise an error
-            if sup_extraction_id and topic_uuid:
-                client = await get_supabase()
-                resp = await client.table("slide_extractions").update({"topic_id": topic_uuid}).eq("id", sup_extraction_id).execute()
-                # supabase-py returns dict-like responses; ensure data exists
-                data = getattr(resp, "data", None) or (resp.get("data") if isinstance(resp, dict) else None)
-                if not data:
-                    logging.getLogger("slides").error("Failed to update slide_extractions.topic_id for id=%s with topic_id=%s", sup_extraction_id, topic_uuid)
-                    raise RuntimeError("Failed to update slide_extractions.topic_id")
+                # If we have both extraction and topic, update the extraction row to point to the topic
+                # Update the extraction row to set topic_id; if this fails raise an error
+                if sup_extraction_id and topic_uuid:
+                    client = await get_supabase()
+                    resp = await client.table("slide_extractions").update({"topic_id": topic_uuid}).eq("id", sup_extraction_id).execute()
+                    # supabase-py returns dict-like responses; ensure data exists
+                    data = getattr(resp, "data", None) or (resp.get("data") if isinstance(resp, dict) else None)
+                    if not data:
+                        logging.getLogger("slides").error("Failed to update slide_extractions.topic_id for id=%s with topic_id=%s", sup_extraction_id, topic_uuid)
+                        raise RuntimeError("Failed to update slide_extractions.topic_id")
     except Exception as e:
         # Surface extraction/topic errors to caller so callers can decide fail vs. continue
         logging.getLogger("slides").exception("Slide extraction/topic detection failed: %s", str(e))
