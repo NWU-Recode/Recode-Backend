@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List, Dict, Any
 from app.features.challenges.repository import challenge_repository
 from app.DB.supabase import get_supabase
-
+from .repository import *
 class DashboardService:
     async def get_dashboard(self, user_id: str) -> List[Dict[str, Any]]:
         challenges = await challenge_repository.list_challenges()
@@ -50,5 +50,8 @@ class DashboardService:
                 "progress": progress,
             })
         return result
+    
+def student_dashboard_service(student_id: int, db):
+    return get_student_dashboard_from_db(student_id, db)
 
 dashboard_service = DashboardService()
