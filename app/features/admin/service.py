@@ -90,7 +90,7 @@ class ModuleService:
     async def enrol_students_batch(module_id: UUID, student_ids: List[int], lecturer_id: int, semester_id: Optional[UUID] = None) -> List[dict]:
         module = await ModuleRepository.get_module(module_id)
         if not module or module.get("lecturer_id") != lecturer_id:
-            return []
+            return {"created": [], "skipped": [], "failed": []}
         return await ModuleRepository.add_enrolments_batch(module_id, student_ids, semester_id)
 
     @staticmethod

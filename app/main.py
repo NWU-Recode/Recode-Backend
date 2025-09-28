@@ -26,8 +26,7 @@ from app.features.submissions.endpoints import router as submissions_router
 from app.common.deps import get_current_user_from_cookie
 from app.common.middleware import SessionManagementMiddleware
 # vonani routers
-from app.features.admin_panel.endpoints import router as admin_router
-from app.features.module.endpoints import router as module_router
+from app.features.admin.endpoints import router as admin_router
 from app.features.students.endpoints import router as student_router
 from app.features.semester.endpoints import router as semester_router
 
@@ -94,7 +93,6 @@ app.include_router(slides_download_router, dependencies=protected_deps)  # Your 
 app.include_router(submissions_router, dependencies=protected_deps)
 # vonani
 app.include_router(admin_router)
-app.include_router(module_router)
 app.include_router(semester_router)
 app.include_router(student_router)
 

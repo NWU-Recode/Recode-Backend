@@ -1,6 +1,6 @@
 from app.DB.session import SessionLocal
 from .models import Semester
-from app.features.module.models import Module
+from app.features.admin.models import Module
 
 
 class SemesterRepository:

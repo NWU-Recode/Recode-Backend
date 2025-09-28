@@ -171,16 +171,24 @@ class ModuleRepository:
         return rows[0] if rows else None
 
     @staticmethod
-    async def add_enrolments_batch(module_id: UUID, student_ids: List[int], semester_id: Optional[UUID] = None, status: str = "active") -> List[dict]:
-        client = await get_supabase()
-        rows_payload = []
+    async def add_enrolments_batch(module_id: UUID, student_ids: List[int], semester_id: Optional[UUID] = None, status: str = "active") -> dict:
+        """
+        Idempotent batch enrolment: for each student, try add_enrolment_if_not_exists.
+        Returns a summary dict with created/skipped/failed lists for transparency.
+        """
+        created = []
+        skipped = []
+        failed = []
         for sid in student_ids:
-            row = {"module_id": str(module_id), "student_id": sid, "status": status}
-            if semester_id:
-                row["semester_id"] = str(semester_id)
-            rows_payload.append(row)
-        rows = await _exec(client.table("enrolments").insert(rows_payload))
-        return rows or []
+            try:
+                res = await ModuleRepository.add_enrolment_if_not_exists(module_id, sid, semester_id, status)
+                if res.get("created"):
+                    created.append(res.get("row") or {"student_id": sid})
+                else:
+                    skipped.append({"student_id": sid, "reason": res.get("reason")})
+            except Exception as e:
+                failed.append({"student_id": sid, "error": str(e)})
+        return {"created": created, "skipped": skipped, "failed": failed}
 
     @staticmethod
     async def assign_lecturer(module_id: UUID, lecturer_profile_id: int) -> Optional[dict]:

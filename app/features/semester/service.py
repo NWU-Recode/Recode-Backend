@@ -2,7 +2,7 @@ from typing import List
 from app.DB.session import SessionLocal  
 from .repository import SemesterRepository
 from .schemas import ModuleResponse, SemesterCreate, SemesterResponse
-from app.features.module.models import Module  
+from app.features.admin.models import Module  
 
 class SemesterService:
 

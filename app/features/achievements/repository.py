@@ -161,16 +161,31 @@ class AchievementsRepository:
 
     async def get_badges_for_user(self, user_id: str) -> List[Dict[str, Any]]:
         client = await self._client()
-        query = (
-            client.table("user_badges")
-            .select("*, badge:badges(*)")
-            .eq("user_id", user_id)
-            .order("date_earned", desc=True)
-            .execute()
-        )
-        resp = await self._execute(query, op="user_badges.list")
-        data = getattr(resp, "data", None)
-        return data or []
+        # Some deployments use `user_badges` table, others `user_badge` - try both.
+        for table_name in ("user_badges", "user_badge"):
+            try:
+                query = (
+                    client.table(table_name)
+                    .select("*, badge:badges(*)")
+                    .eq("user_id", user_id)
+                    .order("date_earned", desc=True)
+                    .execute()
+                )
+            except Exception:
+                continue
+            resp = await self._execute(query, op=f"{table_name}.list")
+            data = getattr(resp, "data", None)
+            if data:
+                # Normalize returned shape to always include badge key under `badge`
+                normalized: List[Dict[str, Any]] = []
+                for row in data:
+                    if isinstance(row, dict):
+                        # compatibility: some rows include `badges` or nested `badge`
+                        if "badges" in row and "badge" not in row:
+                            row["badge"] = row.get("badges")
+                        normalized.append(row)
+                return normalized
+        return []
 
     async def add_badge_to_user(
         self,
@@ -194,8 +209,17 @@ class AchievementsRepository:
         payload.setdefault("awarded_at", ts)
         payload.setdefault("date_earned", ts)
         client = await self._client()
-        query = client.table("user_badges").insert(payload).execute()
-        resp = await self._execute(query, op="user_badges.insert")
+        # Try inserting into either user_badges or user_badge depending on schema
+        for table_name in ("user_badges", "user_badge"):
+            try:
+                query = client.table(table_name).insert(payload).execute()
+            except Exception:
+                continue
+            resp = await self._execute(query, op=f"{table_name}.insert")
+            data = getattr(resp, "data", None)
+            if data:
+                return data[0] if isinstance(data, list) else data
+        return None
         data = getattr(resp, "data", None)
         if data:
             return data[0] if isinstance(data, list) else data
@@ -228,12 +252,25 @@ class AchievementsRepository:
         if not payloads:
             return []
         client = await self._client()
-        query = client.table("user_badges").insert(payloads).execute()
-        resp = await self._execute(query, op="user_badges.batch_insert")
-        data = getattr(resp, "data", None)
-        if isinstance(data, list):
-            return data
-        return []
+        # Try batch insert into both possible table names
+        for table_name in ("user_badges", "user_badge"):
+            try:
+                query = client.table(table_name).insert(payloads).execute()
+            except Exception:
+                continue
+            resp = await self._execute(query, op=f"{table_name}.batch_insert")
+            data = getattr(resp, "data", None)
+            if isinstance(data, list) and data:
+                return data
+        # Fallback: try inserting one-by-one
+        inserted: List[Dict[str, Any]] = []
+        for p in payloads:
+            row = await self.add_badge_to_user(
+                p.get("user_id"), p.get("badge_id"), p.get("challenge_id"), p.get("challenge_attempt_id"), p.get("source_submission_id")
+            )
+            if row:
+                inserted.append(row)
+        return inserted
 
 
 achievements_repository = AchievementsRepository()
