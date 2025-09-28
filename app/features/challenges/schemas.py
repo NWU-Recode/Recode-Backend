@@ -93,10 +93,10 @@ class ChallengeSchema(BaseModel):
 
 class ChallengeGenerateRequest(BaseModel):
     module_code: Optional[str] = None
-    module_id: Optional[int] = None
     week_number: int
-    slide_stack_id: Optional[int] = None
-    persist: bool = False
+    
+    class Config:
+        extra = "forbid"
 
 
 class WeekSchema(BaseModel):

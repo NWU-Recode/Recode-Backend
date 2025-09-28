@@ -22,19 +22,27 @@ async def run():
     week_files = [f for f in pptx_files if f.startswith('Week')]
     week_files.sort(key=get_week_num)
 
-    semester_start = date(2025, 7, 7)
+    # Read SEMESTER_START from env or default
+    semester_start_env = os.environ.get("SEMESTER_START")
+    if semester_start_env:
+        try:
+            semester_start = date.fromisoformat(semester_start_env)
+        except Exception:
+            semester_start = date(2025, 7, 7)
+    else:
+        semester_start = date(2025, 7, 7)
     module_code = "CMPG111"
 
     # Phase 1: persist extractions without creating topics
     extractions = []
-    for filename in week_files:
+    for idx, filename in enumerate(week_files):
         filepath = os.path.join(assets_dir, filename)
         with open(filepath, 'rb') as f:
             b = f.read()
-        week_num = get_week_num(filename)
-        target_date = semester_start + timedelta(weeks=week_num - 1)
+        # Assign week by order (idx=0 -> week 1)
+        target_date = semester_start + timedelta(weeks=idx)
         given_at_dt = datetime.combine(target_date, datetime.min.time().replace(hour=10))
-        print('Uploading', filename)
+        print('Uploading', filename, 'as week', idx+1)
         res = await upload_slide_bytes(b, filename, filename, given_at_dt, semester_start, module_code, create_topic=False)
         print(' -> extraction id:', res.get('extraction', {}).get('id'))
         extractions.append(res.get('extraction'))

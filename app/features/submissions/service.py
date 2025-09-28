@@ -9,9 +9,11 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from app.features.judge0.schemas import CodeSubmissionCreate, CodeExecutionResult
 from app.features.judge0.service import judge0_service
+from app.features.judge0.wrappers import compare_output_against_tests
 from app.features.challenges.repository import challenge_repository
 from app.features.submissions.code_results_repository import code_results_repository
 from app.features.submissions.repository import submissions_repository
+from app.DB.supabase import get_supabase
 from app.features.submissions.schemas import (
     ChallengeQuestionResultSchema,
     ChallengeSubmissionBreakdown,
@@ -164,6 +166,7 @@ class SubmissionsService:
             starter_code=str(question.get("starter_code") or ""),
             reference_solution=question.get("reference_solution"),
             tier=tier,
+            badge_id=str(question.get("badge_id")) if question.get("badge_id") else None,
             language_id=int(question.get("language_id") or 71),
             points=weight,
             max_time_ms=max_time_ms,
@@ -241,6 +244,7 @@ class SubmissionsService:
         user_id: int,
         attempt_number: int,
         late_multiplier: float,
+        perform_award: bool = True,
     ) -> QuestionEvaluationResponse:
         bundle = bundle or await self.get_question_bundle(challenge_id, question_id)
         lang = int(language_id or bundle.language_id or 71)
@@ -336,11 +340,170 @@ class SubmissionsService:
         except Exception:
             pass
 
+        # For each passed test, optionally call the stored procedure to record progress and award ELO/badges.
+        # When perform_award is False the caller intends to handle awarding in a consolidated post-step.
+        if perform_award:
+            try:
+                client = await get_supabase()
+                for tr in executions:
+                    try:
+                        if tr.passed:
+                            # call RPC: record_test_result_and_award(profile_id, question_id, test_id, is_public, passed, badge_id)
+                            is_public_flag = True if (getattr(tr, "visibility", "public") == "public") else False
+                            badge_id_to_pass = None
+                            if is_public_flag:
+                                # attempt to pass the badge id from the bundle (if present)
+                                badge_id_to_pass = bundle.badge_id if getattr(bundle, "badge_id", None) else None
+                            await client.rpc(
+                                "record_test_result_and_award",
+                                {
+                                    "p_profile_id": int(user_id),
+                                    "p_question_id": str(question_id),
+                                    "p_test_id": str(tr.test_id),
+                                    "p_is_public": is_public_flag,
+                                    "p_passed": True,
+                                    "p_public_badge_id": badge_id_to_pass,
+                                },
+                            ).execute()
+                    except Exception:
+                        # avoid failing the entire evaluation if RPC fails; log in future
+                        continue
+            except Exception:
+                # ignore supabase client errors to keep grading robust
+                pass
+
         return QuestionEvaluationResponse(
             challenge_id=bundle.challenge_id,
             question_id=bundle.question_id,
             tier=bundle.tier,
             language_id=lang,
+            gpa_weight=gpa_weight,
+            gpa_awarded=gpa_awarded,
+            elo_awarded=elo_delta,
+            elo_base=elo_base,
+            elo_efficiency_bonus=efficiency_bonus,
+            public_passed=bool(executions and executions[0].passed),
+            tests_passed=tests_passed,
+            tests_total=tests_total,
+            average_execution_time_ms=avg_time_ms,
+            average_memory_used_kb=avg_memory_kb,
+            badge_tier_awarded=badge_tier,
+            tests=executions,
+        )
+
+
+    async def evaluate_question_output(
+        self,
+        challenge_id: str,
+        question_id: str,
+        output: str,
+        include_private: bool = True,
+        *,
+        user_id: Optional[int] = None,
+        perform_award: bool = True,
+    ) -> QuestionEvaluationResponse:
+        """Grade a provided output string against the question's tests (no Judge0 run).
+
+        This is intended for frontends that precompute output and want immediate grading.
+        """
+        bundle = await self.get_question_bundle(challenge_id, question_id)
+        tests_raw = [t.model_dump() for t in bundle.tests]
+        tests = self._normalise_tests(bundle.tests)
+        if not include_private:
+            tests = tests[:1]
+        # Compare output to tests
+        raw_results = compare_output_against_tests(output, [t.model_dump() for t in tests])
+        executions = []
+        for rr in raw_results:
+            executions.append(
+                TestRunResultSchema(
+                    test_id=rr.get("test_id"),
+                    visibility=rr.get("visibility"),
+                    passed=bool(rr.get("passed")),
+                    stdout=output,
+                    stderr=None,
+                    compile_output=None,
+                    status_id=3 if rr.get("passed") else 1,
+                    status_description="accepted" if rr.get("passed") else "failed",
+                    token=None,
+                    execution_time=None,
+                    execution_time_seconds=None,
+                    execution_time_ms=None,
+                    memory_used=None,
+                    memory_used_kb=None,
+                )
+            )
+
+        # Map rest of evaluate_question logic with the fake executions
+        gpa_weight = bundle.points or _GRADING_WEIGHTS.gpa_weight(bundle.tier)
+        times = []
+        memories = []
+        avg_time_ms = None
+        avg_memory_kb = None
+
+        time_budget_ms = bundle.max_time_ms or DEFAULT_TIME_BUDGET_MS
+        memory_budget_kb = bundle.max_memory_kb or DEFAULT_MEMORY_BUDGET_KB
+
+        time_multiplier = 1.0
+        memory_multiplier = 1.0
+
+        tests_passed = sum(1 for r in executions if r.passed)
+        tests_total = len(executions)
+        passed_all = tests_passed == tests_total and tests_total > 0
+
+        attempt_multiplier = 1.0
+        base_component = _base_elo(bundle.tier)
+
+        if not passed_all:
+            elo_delta = _fail_penalty(bundle.tier)
+            elo_base = 0
+            efficiency_bonus = elo_delta
+            gpa_awarded = 0
+        else:
+            raw_delta = base_component * time_multiplier * memory_multiplier * 1.0 * attempt_multiplier
+            elo_delta = int(round(raw_delta))
+            elo_base = base_component
+            efficiency_bonus = elo_delta - elo_base
+            perf = (tests_passed / tests_total) * time_multiplier * memory_multiplier
+            gpa_awarded = int(round(perf * gpa_weight))
+
+        if bundle.tier in _ADVANCED_TIERS and include_private and not passed_all:
+            gpa_awarded = 0
+
+        badge_tier = bundle.tier if passed_all else None
+
+        # If a user_id was provided, optionally record passes via RPC in DB (idempotent)
+        if user_id is not None and perform_award:
+            try:
+                client = await get_supabase()
+                for tr in executions:
+                    try:
+                        if tr.passed:
+                            is_public_flag = True if (getattr(tr, "visibility", "public") == "public") else False
+                            badge_id_to_pass = None
+                            if is_public_flag:
+                                badge_id_to_pass = bundle.badge_id if getattr(bundle, "badge_id", None) else None
+                            await client.rpc(
+                                "record_test_result_and_award",
+                                {
+                                    "p_profile_id": int(user_id),
+                                    "p_question_id": str(question_id),
+                                    "p_test_id": str(tr.test_id),
+                                    "p_is_public": is_public_flag,
+                                    "p_passed": True,
+                                    "p_public_badge_id": badge_id_to_pass,
+                                },
+                            ).execute()
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        return QuestionEvaluationResponse(
+            challenge_id=bundle.challenge_id,
+            question_id=bundle.question_id,
+            tier=bundle.tier,
+            language_id=bundle.language_id,
             gpa_weight=gpa_weight,
             gpa_awarded=gpa_awarded,
             elo_awarded=elo_delta,

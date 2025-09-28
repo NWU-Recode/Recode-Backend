@@ -96,8 +96,23 @@ async def upload_slide_bytes(
 ) -> Dict[str, Any]:
     key = build_slide_object_key(original_filename, topic_name, given_at_dt, semester_start_date)
     content_type = mimetypes.guess_type(original_filename)[0] or "application/octet-stream"
-
     client = await get_supabase()
+
+    # Prevent duplicate slide_extraction rows for the same week and module_code.
+    # This enforces the invariant that a given (module_code, week_number) only has one extraction.
+    try:
+        exist_resp = await client.table("slide_extractions").select("id").eq("week_number", key.week).eq("module_code", module_code).limit(1).execute()
+        exist_data = getattr(exist_resp, "data", None) or (exist_resp.get("data") if isinstance(exist_resp, dict) else None)
+        if exist_data:
+            # Raise a clear runtime error that the endpoint will surface as HTTP 400
+            raise RuntimeError(f"Slides for week {key.week} already exist for module {module_code}")
+    except Exception as e:
+        # If we raised the duplicate error, re-raise to surface to caller. If the select itself failed for other reasons,
+        # propagate that error so callers can see the failure instead of silently proceeding.
+        if isinstance(e, RuntimeError) and str(e).startswith("Slides for week"):
+            raise
+        # Unexpected DB/select failure: raise to surface the issue to the endpoint caller
+        raise
     bucket = client.storage.from_("slides")
     # Upload bytes (simple path first to avoid option mismatch across client versions)
     try:
@@ -131,19 +146,53 @@ async def upload_slide_bytes(
     try:
         if original_filename.lower().endswith(".pptx"):
             slides_map = extract_pptx_text(BytesIO(file_bytes))
-            # Detect topic locally (phrase/spaCy/heuristics)
+            # Detect topic locally (phrase/spaCy/heuristics) and augment with dynamic extractor
             slide_texts = [line for _, lines in sorted(slides_map.items()) for line in lines]
             # Defaults if NLP fails
             primary = topic_name or key.topic_slug or "Coding"
             subtopics = []
             try:
                 det_primary, det_subs = extract_primary_topic(slide_texts)
-                if det_primary:
-                    primary = det_primary
-                if det_subs:
-                    subtopics = det_subs
             except Exception:
                 logging.getLogger("slides").exception("Primary topic extraction failed; falling back to filename/topic param")
+                det_primary, det_subs = (None, [])
+
+            # Use dynamic extractor for additional candidate phrases (no env vars, dynamic models)
+            try:
+                from app.features.topic_detections.topics.extractor import extract_topics_from_text
+                dyn_phrases, dyn_domain = extract_topics_from_text("\n".join(slide_texts), top_n=4)
+            except Exception:
+                dyn_phrases, dyn_domain = ([], "unknown")
+
+            # Normalize primary and subtopics
+            if det_primary:
+                primary = det_primary
+            if det_subs:
+                subtopics = det_subs
+
+            # Combine dynamic phrases: prefer coding-domain signals; otherwise augment conservatively
+            try:
+                dyn_slugs = []
+                from app.features.topic_detections.topics.topic_service import _slugify as _t_slug
+                for p in dyn_phrases:
+                    if p:
+                        dyn_slugs.append(_t_slug(p))
+            except Exception:
+                dyn_slugs = dyn_phrases or []
+
+            if dyn_domain == "coding":
+                for s in dyn_slugs:
+                    if s not in subtopics and len(subtopics) < 3:
+                        subtopics.append(s)
+            else:
+                # If adapter gave nothing useful, adopt the first dyn phrase as primary
+                if (not det_primary or det_primary in ("topic", "topic")) and dyn_slugs:
+                    primary = dyn_slugs[0] or primary
+                    subtopics = dyn_slugs[1:4]
+                else:
+                    for s in dyn_slugs:
+                        if s not in subtopics and len(subtopics) < 3:
+                            subtopics.append(s)
 
             # Only filter noisy subtopics when the primary is a CS topic; preserve non-CS primaries/subtopics
             try:

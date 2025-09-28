@@ -307,6 +307,8 @@ async def _fetch_topic_context(
 ) -> TopicContext:
     client = await get_supabase()
     tier_key = (tier or "base").lower()
+    # Use per-tier window sizes. TOPIC_WINDOW_BY_TIER contains the configured sliding window
+    # for each tier (ruby=2, emerald=4, diamond=None meaning full history up to the requested week).
     window_weeks = TOPIC_WINDOW_BY_TIER.get(tier_key, 1)
     max_rows = TOPIC_LIMIT_BY_TIER.get(tier_key, 12)
 
@@ -339,6 +341,9 @@ async def _fetch_topic_context(
             except (TypeError, ValueError):
                 pass
 
+    # If window_weeks is None, _collect_topic_rows will not filter by a sliding window and we will
+    # fetch rows up to `week` (i.e., weeks <= requested week) allowing special tiers to use topics
+    # from week 1..week.
     topic_rows = await _collect_topic_rows(
         client,
         week=week,
@@ -629,9 +634,12 @@ async def _insert_challenge(
         raise ValueError("lecturer_id is required to insert challenge")
 
     module_part = _slugify(context.module_code or "module")
+    # For diamond we want to persist the challenge as week 12 regardless of the requested week
+    # (diamond represents an end-of-semester special). Use slug_week/idempotency_week accordingly.
+    slug_week = 12 if tier == "diamond" else context.week
     # Use 'base' as the user-facing tier; legacy DB may use 'plain' for slugging
     tier_slug = "plain" if tier == "base" else _slugify(tier)
-    slug = f"{module_part}-w{context.week:02d}-{tier_slug}"
+    slug = f"{module_part}-w{int(slug_week):02d}-{tier_slug}"
     # Map to schema: weekly vs special
     is_weekly = tier == "base"
     challenge_type_value = "weekly" if is_weekly else "special"
@@ -641,10 +649,11 @@ async def _insert_challenge(
     tier_value = None if is_weekly else ("plain" if tier == "base" else tier)
 
     # Always compute an idempotency key for the challenge (used for dedup and returned to client).
+    # Use slug_week in idempotency key for diamond so duplicates are detected on the stored week value
     key_source = "|".join([
         str(context.topic_id or ""),
         str(context.module_code or ""),
-        str(context.week),
+        str(slug_week),
         tier,
     ])
     idempotency_key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()[:16]
@@ -697,6 +706,8 @@ async def _insert_challenge(
         try:
             if isinstance(existing, dict):
                 existing.setdefault("idempotency_key", idempotency_key)
+                # mark that this record was pre-existing so callers can choose behavior
+                existing.setdefault("_existing", True)
         except Exception:
             pass
         return existing
@@ -708,21 +719,9 @@ async def _insert_challenge(
         # map to provided schema: module_id (uuid) expected
     }
 
-    # Resolve module_id from module_code if available
-    module_id_value = None
-    try:
-        if context.module_code:
-            mresp = await client.table("modules").select("id").eq("code", context.module_code).limit(1).execute()
-            mrows = mresp.data or []
-            if mrows:
-                module_id_value = mrows[0].get("id")
-    except Exception:
-        module_id_value = None
-
-    if module_id_value:
-        payload["module_id"] = module_id_value
-    else:
-        # Keep a reference to the module code in a fallback field if module_id isn't resolvable
+    # Per DB schema we store module_code (string). Do not attempt to resolve or store
+    # a numeric module_id here — the challenges table expects `module_code` or null.
+    if context.module_code:
         payload.setdefault("module_code", context.module_code)
 
     # Set challenge_type and weekly/special-specific fields
@@ -737,10 +736,17 @@ async def _insert_challenge(
         payload["week_number"] = int(context.week or 0) or None
         # weekly per schema requires tier null and trigger_event null (omit them)
     else:
-        # special challenges: include tier and a trigger_event marker
+        # special challenges: include tier
         payload["tier"] = tier if tier is not None else None
-        payload["week_number"] = None
-        payload["trigger_event"] = {"auto_generated": True, "week": context.week}
+        if tier == "diamond":
+            # Persist diamond as a week 12 challenge directly (legacy special-case)
+            payload["week_number"] = 12
+            # Optionally keep a trigger_event metadata but do not use trigger_event for storing week
+        else:
+            # For non-diamond specials (e.g., ruby, emerald) persist as the provided week
+            # and also include trigger_event metadata for downstream tooling.
+            payload["week_number"] = int(context.week or 0) or None
+            payload["trigger_event"] = {"auto_generated": True, "week": context.week}
     # Only include optional columns if the DB table supports them
     try:
         if await _table_has_column("challenges", "idempotency_key"):
@@ -752,9 +758,14 @@ async def _insert_challenge(
             payload.setdefault("slug", slug)
     except Exception:
         pass
+    # NOTE: Do not set topic_id here to avoid type-mismatch errors when the
+    # challenges.topic_id column is not the same type (bigint vs uuid) as the
+    # topic.id values. If you want topic_id stored, migrate the challenges
+    # table to use uuid for topic_id, or make sure topic IDs are numeric.
+    #
+    # Keep payload minimal and compatible with the current DB schema.
     try:
-        if await _table_has_column("challenges", "topic_id") and context.topic_id:
-            payload["topic_id"] = context.topic_id
+        logger.debug("challenge payload prepared (not yet inserted): %s", payload)
     except Exception:
         pass
     try:
@@ -764,10 +775,53 @@ async def _insert_challenge(
         pass
     if supports_idempotency:
         payload["idempotency_key"] = idempotency_key
+    # Enforce one-challenge-per-week rules at the application level to provide a clear error
+    try:
+        if is_weekly:
+            try:
+                exists_resp = await client.table("challenges").select("id").eq("challenge_type", "weekly").eq("week_number", int(context.week)).limit(1).execute()
+                if getattr(exists_resp, "data", None):
+                    raise RuntimeError(f"A weekly challenge already exists for week {context.week}")
+            except Exception:
+                # If the DB check failed (missing column or unsupported operator), continue and let insertion attempt proceed
+                pass
+        else:
+            # special challenge check: look for existing special with same week_number OR same trigger_event week
+            found = None
+            try:
+                exists_resp = await client.table("challenges").select("id").eq("challenge_type", "special").eq("week_number", int(context.week)).limit(1).execute()
+                if getattr(exists_resp, "data", None):
+                    found = True
+            except Exception:
+                found = None
+            if not found:
+                # Try matching trigger_event->>week if the DB and client support JSON path comparisons
+                try:
+                    trigger_resp = await client.table("challenges").select("id").eq("challenge_type", "special").eq("trigger_event->>week", str(int(context.week))).limit(1).execute()
+                    if getattr(trigger_resp, "data", None):
+                        found = True
+                except Exception:
+                    # ignore and fallback
+                    found = None
+            if found:
+                raise RuntimeError(f"A special challenge already exists for week {context.week}")
+    except RuntimeError:
+        # Bubble up duplicate-week errors to caller so the API responds clearly
+        raise
+    except Exception:
+        # For any unexpected issues during checks, continue to insertion and let DB report errors
+        pass
+
     resp = await client.table("challenges").insert(payload).execute()
     if not resp.data:
         raise ValueError(f"Failed to create challenge for tier {tier}")
     record = resp.data[0]
+    # mark that this record was newly created
+    try:
+        if isinstance(record, dict):
+            record.setdefault("_existing", False)
+    except Exception:
+        pass
     # Attach idempotency_key to the returned record dictionary (even if it couldn't be persisted).
     try:
         if isinstance(record, dict):
@@ -835,7 +889,8 @@ async def _insert_question(
         "expected_output": public_expected,
         "points": points,
         "starter_code": starter_code,
-        "max_time_ms": 2000,
+        # match DB default of 5000ms unless the model specifies otherwise
+        "max_time_ms": 5000,
         "max_memory_kb": 256000,
         "tier": difficulty.lower(),
         "question_text": question_text,
@@ -901,6 +956,20 @@ class ChallengePackGenerator:
                     challenge_description=f"Auto-generated {tier} challenge for Week {self.week} covering {context.topic_title}.",
                     lecturer_id=self.lecturer_id,
                 )
+                # Link challenge to detected topics via challenge_topics table
+                try:
+                    topic_ids = context.topic_ids_used or []
+                    for tid in topic_ids:
+                        try:
+                            await client.table("challenge_topics").insert({
+                                "challenge_id": challenge.get("id"),
+                                "topic_id": tid,
+                            }).execute()
+                        except Exception:
+                            # ignore insert errors (duplicates or constraint mismatches)
+                            pass
+                except Exception:
+                    pass
                 existing_q = await client.table("questions").select("id").eq("challenge_id", challenge.get("id")).execute()
                 existing_ids = [str(r.get("id")) for r in (existing_q.data or []) if r.get("id")]
                 stored_questions = []
@@ -1028,6 +1097,19 @@ async def generate_and_save_tier(
         challenge_description=f"Auto-generated {internal_tier} challenge for Week {week} covering {context.topic_title}.",
         lecturer_id=lecturer_id,
     )
+    # Link the newly created challenge to detected topics via challenge_topics
+    try:
+        topic_ids = context.topic_ids_used or []
+        for tid in topic_ids:
+            try:
+                await client.table("challenge_topics").insert({
+                    "challenge_id": challenge.get("id"),
+                    "topic_id": tid,
+                }).execute()
+            except Exception:
+                pass
+    except Exception:
+        pass
     stored = []
     existing_q = await client.table("questions").select("id").eq("challenge_id", challenge.get("id")).execute()
     existing_ids = [str(r.get("id")) for r in (existing_q.data or []) if r.get("id")]

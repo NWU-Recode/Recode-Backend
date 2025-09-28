@@ -2,6 +2,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from datetime import datetime, date, time, timedelta
+import os
+
+def _read_semester_start() -> date:
+    val = os.environ.get("SEMESTER_START")
+    if not val:
+        return date(2025, 7, 7)
+    try:
+        # accept YYYY-MM-DD
+        return date.fromisoformat(val)
+    except Exception:
+        # fallback to default if parsing fails
+        return date(2025, 7, 7)
 from typing import List
 import asyncio
 
@@ -13,8 +25,8 @@ from .pathing import parse_week_topic_from_filename, SA_TZ
 
 router = APIRouter(prefix="/slides", tags=["slides"])
 
-# Set per deployment/season
-SEMESTER_START = date(2025, 7, 7)
+# Set per deployment/season via env var SEMESTER_START (YYYY-MM-DD)
+SEMESTER_START = _read_semester_start()
 
 
 @router.post("/upload")
@@ -29,16 +41,14 @@ async def upload_slide(
 ):
     try:
         data = await file.read()
-        # Parse optional inputs from filename if not provided
-        parsed_week, parsed_topic = parse_week_topic_from_filename(file.filename)
+        # Topic may still be provided but we DO NOT use filename week to determine week.
+        # Always derive the week from the provided datetime (given_at_iso) or now, relative to SEMESTER_START.
+        _, parsed_topic = parse_week_topic_from_filename(file.filename)
         tn = topic_name or parsed_topic or "Coding"
         if given_at_iso:
             given_at_dt = datetime.fromisoformat(given_at_iso)
-        elif parsed_week:
-            # Map week number to a date within that week relative to semester start
-            target_date = SEMESTER_START + timedelta(weeks=max(1, min(12, parsed_week)) - 1)
-            given_at_dt = datetime.combine(target_date, time(10, 0, 0, tzinfo=SA_TZ))
         else:
+            # Use now; week will be derived from SEMESTER_START in pathing.build_slide_object_key
             given_at_dt = datetime.now(tz=SA_TZ)
         out = await upload_slide_bytes(
             data, file.filename, tn, given_at_dt, SEMESTER_START, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
@@ -59,6 +69,7 @@ async def batch_upload_slides(
     signed_ttl_sec: int = Query(900, ge=60, le=86400, description="TTL (seconds) for the signed URL if requested"),
     files: List[UploadFile] = File(...),
     current_user: CurrentUser = Depends(require_admin_or_lecturer_cookie()),
+    assign_weeks_by_order: bool = Query(True, description="If true, assign weeks sequentially starting at SEMESTER_START based on file order (useful for batch uploads)") ,
 ):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -70,15 +81,13 @@ async def batch_upload_slides(
         async with semaphore:
             try:
                 data = await file.read()
-                # Parse optional inputs from filename if not provided
-                parsed_week, parsed_topic = parse_week_topic_from_filename(file.filename)
+                # Topic may still be provided but we DO NOT use filename week to determine week.
+                _, parsed_topic = parse_week_topic_from_filename(file.filename)
                 tn = topic_name or parsed_topic or "Coding"
-                if parsed_week:
-                    # Map week number to a date within that week relative to semester start
-                    target_date = SEMESTER_START + timedelta(weeks=max(1, min(12, parsed_week)) - 1)
-                    given_at_dt = datetime.combine(target_date, time(10, 0, 0, tzinfo=SA_TZ))
-                else:
-                    given_at_dt = datetime.now(tz=SA_TZ)
+                # Always derive the week from given_at_dt (provided or now) relative to SEMESTER_START
+                # For batch uploads we may want to assign weeks by order later; default behavior here
+                # is to use now. The outer dispatcher will override given_at_dt when assign_weeks_by_order=True.
+                given_at_dt = datetime.now(tz=SA_TZ)
                 result = await upload_slide_bytes(
                     data, file.filename, tn, given_at_dt, SEMESTER_START, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
                 )
@@ -89,10 +98,37 @@ async def batch_upload_slides(
             except Exception as e:
                 return {"filename": file.filename, "success": False, "error": str(e)}
     
-    # Process all files concurrently with controlled concurrency
-    # Phase 1: persist all extractions without creating topics
-    tasks = [process_file(file) for file in files]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # If assign_weeks_by_order is True, compute given_at_dt for each file sequentially
+    # so uploads are stamped to successive weeks starting at SEMESTER_START.
+    if assign_weeks_by_order:
+        # Use file order as provided. Week 1 corresponds to SEMESTER_START.
+        tasks = []
+        for idx, file in enumerate(files):
+            # compute week offset (0-based index -> week 1..)
+            week_offset = idx
+            target_date = SEMESTER_START + timedelta(weeks=week_offset)
+            given_at_dt = datetime.combine(target_date, time(10, 0)).astimezone(SA_TZ)
+            async def process_with_given(file=file, given_at_dt=given_at_dt):
+                async with semaphore:
+                    try:
+                        data = await file.read()
+                        _, parsed_topic = parse_week_topic_from_filename(file.filename)
+                        tn = topic_name or parsed_topic or "Coding"
+                        result = await upload_slide_bytes(
+                            data, file.filename, tn, given_at_dt, SEMESTER_START, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
+                        )
+                        if not include_signed_url:
+                            result.pop("signed_url", None)
+                        return {"filename": file.filename, "success": True, "data": result}
+                    except Exception as e:
+                        return {"filename": file.filename, "success": False, "error": str(e)}
+            tasks.append(process_with_given())
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    else:
+        # Process all files concurrently with controlled concurrency
+        # Phase 1: persist all extractions without creating topics
+        tasks = [process_file(file) for file in files]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Collect successful extractions for phase 2
     extractions = []  # list of tuples (filename, extraction_dict)

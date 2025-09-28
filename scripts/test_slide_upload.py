@@ -1,6 +1,7 @@
 import asyncio
 import os
 from datetime import datetime, date
+import os
 from app.features.slides.upload import upload_slide_bytes
 
 async def test_slide_upload():
@@ -16,7 +17,15 @@ async def test_slide_upload():
     original_filename = "Week1_Variables_Loops.pptx"
     topic_name = "Test Topic"
     given_at_dt = datetime.now()
-    semester_start_date = date(2025, 7, 7)
+    # Read semester start from env or default to original value
+    semester_start_env = os.environ.get("SEMESTER_START")
+    if semester_start_env:
+        try:
+            semester_start_date = date.fromisoformat(semester_start_env)
+        except Exception:
+            semester_start_date = date(2025, 7, 7)
+    else:
+        semester_start_date = date(2025, 7, 7)
 
     result = await upload_slide_bytes(
         file_bytes=file_bytes,

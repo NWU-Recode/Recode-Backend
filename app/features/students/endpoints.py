@@ -3,9 +3,9 @@ from typing import Optional, List
 from datetime import date
 from app.features.students.schemas import StudentProfile, ModuleProgress, BadgeInfo, StudentProgress,StudentProfileUpdate
 from app.features.students import service, service_analytics, repository_analytics
-from app.common.deps import get_current_user, require_lecturer, require_admin
+from app.common.deps import get_current_user, require_lecturer, require_admin, require_role
 
-router = APIRouter(prefix="/student", tags=["Student"])
+router = APIRouter(prefix="/student", tags=["Student"], dependencies=[Depends(require_role("student"))])
 
 @router.get("/me", response_model=StudentProfile)
 async def student_me(current=Depends(get_current_user)):

@@ -1,15 +1,16 @@
 from typing import List, Optional, Any, Dict
 import logging
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 from app.DB.supabase import get_supabase
+from app.common.deps import require_role
 from app.features.topic_detections.slide_extraction.repository_supabase import (
     slide_extraction_supabase_repository,
 )
 
-router = APIRouter(prefix="/slides", tags=["SlidesDownload"])
+router = APIRouter(prefix="/slides", tags=["SlidesDownload"], dependencies=[Depends(require_role("student", "lecturer", use_cookie=True))])
 
 DEFAULT_TTL = 900
 MAX_TTL = 3600

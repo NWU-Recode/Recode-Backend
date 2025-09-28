@@ -12,7 +12,9 @@ from .schemas import (
 )
 from .service import achievements_service
 
-router = APIRouter(prefix="/achievements", tags=["achievements"])
+from app.common.deps import require_role
+
+router = APIRouter(prefix="/achievements", tags=["achievements"], dependencies=[Depends(require_role("student"))])
 
 def _err(status: int, code: str, message: str):
     return HTTPException(status_code=status, detail={"error_code": code, "message": message})

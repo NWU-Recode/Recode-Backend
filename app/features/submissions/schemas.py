@@ -26,6 +26,7 @@ class QuestionBundleSchema(BaseModel):
     points: int
     max_time_ms: Optional[int] = None
     max_memory_kb: Optional[int] = None
+    badge_id: Optional[str] = None
     tests: List[QuestionTestSchema]
 
 

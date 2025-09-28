@@ -7,6 +7,7 @@ from app.DB.supabase import get_supabase
 from app.features.topic_detections.topics.repository import TopicRepository
 
 from app.adapters.nlp_spacy import extract_primary_topic
+from app.features.topic_detections.topics.extractor import extract_topics_from_text
 
 def _slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
@@ -35,11 +36,49 @@ class TopicService:
         base = slides_url.strip().split("/")[-1] or "topic"
         base = re.sub(r"\.[A-Za-z0-9]+$", "", base)
         primary_key = _slugify(base) or "topic"
-        # Prefer basic NLP extraction if texts are present
+        # Prefer basic NLP extraction if texts are present; combine with the
+        # dynamic multi-model extractor to improve robustness. The dynamic
+        # extractor may provide multiple phrase candidates and a domain label.
         if slide_texts:
-            key, subs = extract_primary_topic(slide_texts)
-            primary_key = key or primary_key
-            subtopics = subs
+            try:
+                key, subs = extract_primary_topic(slide_texts)
+            except Exception:
+                key, subs = (None, [])
+
+            try:
+                dyn_phrases, domain = extract_topics_from_text("\n".join(slide_texts), top_n=4)
+            except Exception:
+                dyn_phrases, domain = ([], "unknown")
+
+            # Normalise primary from adapter
+            if key:
+                primary_key = key or primary_key
+
+            # If dynamic extractor signals 'coding', prefer adapter primary when available
+            # but augment subtopics with dynamic phrases (slugified) not already present.
+            subtopics = subs or []
+            try:
+                # slugify dynamic phrases
+                dyn_slugs = [_slugify(p) for p in dyn_phrases if p]
+            except Exception:
+                dyn_slugs = dyn_phrases or []
+
+            if domain == "coding":
+                # Add dyn slugs as complementary subtopics, up to 3 total
+                for s in dyn_slugs:
+                    if s not in subtopics and len(subtopics) < 3:
+                        subtopics.append(s)
+            else:
+                # If not clearly coding, but adapter gave only a generic 'topic', prefer dyn phrases
+                if (not key or key in ("topic", "topic")) and dyn_slugs:
+                    primary_key = dyn_slugs[0] or primary_key
+                    # set subtopics from dyn_slugs
+                    subtopics = dyn_slugs[1:4]
+                else:
+                    # Still augment with dyn phrases conservatively
+                    for s in dyn_slugs:
+                        if s not in subtopics and len(subtopics) < 3:
+                            subtopics.append(s)
         else:
             subtopics = []
         title = primary_key.replace("-", " ").title()

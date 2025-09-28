@@ -57,9 +57,14 @@ def build_slide_object_key(
 
 
 def parse_week_topic_from_filename(filename: str) -> tuple[int | None, str | None]:
-    """Best-effort parse of week number and topic from filenames like:
-    Week1_Lecture_Variables_Loops.pptx or week10-dictionaries.pptx
-    Returns (week:int|None, topic:str|None)
+    """Best-effort parse of topic from filename.
+
+    IMPORTANT: week numbers must NOT be trusted from filenames. This parser now only
+    returns a topic (if present). The application must compute week using
+    `week_from_date(semester_start, given_date)` where `given_date` is derived from
+    the upload timestamp or explicitly provided datetime.
+
+    Returns (None, topic:str|None)
     """
     stem = filename
     # strip extension
@@ -68,14 +73,16 @@ def parse_week_topic_from_filename(filename: str) -> tuple[int | None, str | Non
     except Exception:
         pass
     s = stem.strip()
+    # Try to capture a trailing topic after an initial WeekN_ prefix but do not use the week
     m = re.match(r"(?i)\s*week\s*(\d{1,2})[\s_\-]*?(?:lecture[\s_\-]*)?(.*)$", s)
-    week_val: int | None = None
     topic_name: str | None = None
     if m:
-        try:
-            week_val = int(m.group(1))
-        except Exception:
-            week_val = None
         raw_topic = (m.group(2) or "").strip().replace("_", " ").replace("-", " ")
         topic_name = raw_topic if raw_topic else None
-    return week_val, topic_name
+        return None, topic_name
+
+    # Fallback: attempt to use the entire stem as a topic name if it contains words
+    cleaned = re.sub(r"\s+", " ", s).strip()
+    if cleaned:
+        return None, cleaned
+    return None, None
