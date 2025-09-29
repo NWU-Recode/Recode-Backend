@@ -1,61 +1,44 @@
-from typing import List
 from app.DB.supabase import get_supabase
-from app.features.students import repository, repository_analytics
-from app.features.students.models import StudentProfileUpdate, StudentProfile
-from app.features.students.schemas import StudentProfile, ModuleProgress, BadgeInfo,StudentProfileUpdate
-
-# -------------------
-# Profile
-# -------------------
-async def get_student_profile(user_id: int) -> StudentProfile:
-    data = await repository.get_student_profile(user_id)
-    if not data:
-        raise ValueError(f"Student with id={user_id} not found")
-    return data  
+from app.features.students import repository
+from app.features.students.schemas import (
+    StudentProfile,
+    StudentProfileUpdate,
+    ModuleProgress,
+    BadgeInfo,
+)
 
 ALLOWED_COLUMNS = ["email", "full_name", "avatar_url", "phone", "bio"]
 
-async def update_student_profile(user_id: int, profile_data: StudentProfileUpdate):
+async def get_student_profile(user_id: int) -> StudentProfile:
+    return await repository.get_student_profile(user_id)
+
+async def update_student_profile(user_id: int, update_data: StudentProfileUpdate) -> dict:
     client = await get_supabase()
-    
-    # Only include fields that are set and allowed
-    update_dict = {
-        k: v for k, v in profile_data.dict(exclude_unset=True).items()
-        if k in ALLOWED_COLUMNS
-    }
 
-    if not update_dict:
-        return {"message": "No valid fields provided for update."}
+    # Fetch current profile
+    resp = await client.table("profiles").select("*").eq("id", user_id).single().execute()
+    profile = resp.data or {}
 
-    # Update the fields in the DB
-    await client.table("profiles").update(update_dict).eq("id", user_id).execute()
+    # Only update fields that are explicitly set
+    patch = {}
+    for field, value in update_data.dict(exclude_unset=True).items():
+        # Skip placeholder values like "string"
+        if value not in [None, "string", ""]:
+            patch[field] = value
 
-    # Fetch the updated record to return full profile
-    updated_record = await client.table("profiles").select("*").eq("id", user_id).single().execute()
+    # If nothing to update, return current profile
+    if not patch:
+        return profile
 
-    return updated_record.data
+    # Apply patch
+    update_resp = await client.table("profiles").update(patch).eq("id", user_id).execute()
+    return update_resp.data[0] if update_resp.data else profile
 
-# -------------------
-# Modules
-# -------------------
-async def get_student_modules(user_id: int) -> List[ModuleProgress]:
-    modules_data = await repository.get_student_modules(user_id)
-    return modules_data  # don't wrap with ModuleProgress(**m)
+async def get_student_modules(user_id: int) -> list[ModuleProgress]:
+    raw_modules = await repository.get_student_modules(user_id)
+    return raw_modules
 
-    modules_data = await repository.get_student_modules(user_id)
-    return [ModuleProgress(**m) for m in modules_data]
 
-# -------------------
-# Badges
-# -------------------
-async def get_student_badges(user_id: int) -> List[BadgeInfo]:
-    badges_data = await repository.get_student_badges(user_id)
-    return [
-        BadgeInfo(
-            id=b["id"],
-            name=b.get("name", ""),
-            badge_type=b.get("badge_type", ""),
-            awarded_at=b["awarded_at"]
-        )
-        for b in badges_data
-    ]
+async def get_student_badges(user_id: int) -> list[BadgeInfo]:
+    raw_badges = await repository.get_student_badges(user_id)
+    return [BadgeInfo(**b) for b in raw_badges]
