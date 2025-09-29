@@ -1,6 +1,6 @@
-from datetime import datetime
-from typing import List, Optional
 from pydantic import BaseModel, EmailStr, UUID4
+from typing import Optional, List
+from datetime import datetime
 
 # -------------------
 # Profile
@@ -11,7 +11,7 @@ class StudentProfile(BaseModel):
     full_name: str
     avatar_url: Optional[str]
     bio: Optional[str]
-    role: str
+    role: Optional[str]
     is_active: bool
     last_sign_in: Optional[datetime]
 
@@ -26,18 +26,29 @@ class StudentProfileUpdate(BaseModel):
 # Modules / Dashboard
 # -------------------
 class ModuleProgress(BaseModel):
-    module_id: UUID4
+    module_id: str
     module_code: str
     module_name: str
-    elo: int
-    current_title: Optional[str]
-    current_streak: int
-    longest_streak: int
-    total_points: int
-    total_questions_passed: int
-    challenges_completed: int
-    total_badges: int
-    last_submission: Optional[datetime]
+    progress_percent: Optional[float] = None
+    elo: Optional[int] = None
+    current_title: Optional[str] = None
+    current_streak: Optional[int] = None
+    longest_streak: Optional[int] = None
+    total_points: Optional[int] = None
+    total_questions_passed: Optional[int] = None
+    challenges_completed: Optional[int] = None
+    total_badges: Optional[int] = None
+    last_submission: Optional[datetime] = None
+
+# -------------------
+# Badges
+# -------------------
+class BadgeInfo(BaseModel):
+    id: UUID4
+    name: str
+    description: Optional[str]
+    badge_type: str
+    awarded_at: datetime
 
 # -------------------
 # Progress & Analytics
@@ -65,17 +76,3 @@ class StudentProgress(BaseModel):
     longest_streak: int
     topics_mastered: List[TopicProgress]
     recent_challenges: List[ChallengeProgress]
-
-# -------------------
-# Badges & Achievements
-# -------------------
-class BadgeInfo(BaseModel):
-    id: UUID4
-    name: str
-    description: Optional[str]
-    badge_type: str
-    awarded_at: datetime
-
-class StudentAchievements(BaseModel):
-    badges: List[BadgeInfo]
-    current_title: Optional[str]
