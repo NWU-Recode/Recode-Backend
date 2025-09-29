@@ -8,7 +8,7 @@ from .schemas import (
     ChallengeCreate, ChallengeResponse,
     StudentResponse,
 )
-from .repository import ModuleRepository
+from .repository import ModuleRepository, LecturerRepository
 
 
 class ModuleService:
@@ -181,3 +181,9 @@ async def _async_csv_iter(reader):
     # Helper to iterate csv.DictReader in async contexts
     for row in reader:
         yield row
+
+class LecturerService:
+    @staticmethod
+    async def get_lecturer_profile(lecturer_id: str) -> Optional[dict]:
+        return await LecturerRepository.get_lecturer_by_id(lecturer_id)
+
