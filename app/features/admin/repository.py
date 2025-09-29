@@ -229,3 +229,16 @@ class ModuleRepository:
         client = await get_supabase()
         rows = await _exec(client.table("semesters").select("*").eq("id", str(semester_id)).limit(1))
         return rows[0] if rows else None
+    
+class LecturerRepository:
+    @staticmethod
+    async def get_lecturer_by_id(lecturer_id: str) -> Optional[dict]:
+        client = await get_supabase()
+        rows = await _exec(
+            client.table("profiles")
+            .select("id, full_name, email, avatar_url, phone, bio")
+            .eq("id", str(lecturer_id))
+            .limit(1)
+        )
+        return rows[0] if rows else None
+
