@@ -4,10 +4,10 @@
 
 Recode is an educational platform that converts traditional lecture materials into engaging, interactive coding challenges. Built with FastAPI and powered by Supabase, this backend service provides the foundation for a gamified learning experience that adapts to each student's progress.
 
-
 ## 🎯 Project Overview
 
 Recode addresses the challenge of making computer science education more interactive and engaging by:
+
 - **Transforming static slides** into dynamic coding exercises
 - **Summarising key points** from educational content automatically
 - **Creating gamified experiences** with semester-based progression
@@ -16,6 +16,7 @@ Recode addresses the challenge of making computer science education more interac
 ## 🏗️ Architecture
 
 ### Tech Stack
+
 - **FastAPI** - Modern, fast web framework for building APIs
 - **Supabase** - Open-source Firebase alternative with PostgreSQL
 - **spaCy** - Industrial-strength NLP for content processing
@@ -23,6 +24,7 @@ Recode addresses the challenge of making computer science education more interac
 - **Uvicorn** - Lightning-fast ASGI server
 
 ### Project Structure
+
 ```
 recode-backend/
 ├── app/
@@ -42,41 +44,49 @@ recode-backend/
 ## 🚀 Quick Start
 
 ### Prerequisites
+
 - Python 3.8+
 - Supabase account and project
 
 ### Installation
 
 1. **Clone the repository**
+
 ```bash
 git clone https://github.com/your-org/recode-backend.git
 cd recode-backend
 ```
 
 2. **Create virtual environment**
+
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
 3. **Install dependencies**
+
 ```bash
 pip install -r requirements.txt
 ```
 
 4. **Set up environment variables**
+
 ```bash
 cp .env.example .env
 # Edit .env with your Supabase credentials
 ```
 
 5. **Run the application**
+
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Environment Variables
+
 Create a `.env` file with:
+
 ```env
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_KEY=your_supabase_anon_key
@@ -85,6 +95,7 @@ SUPABASE_KEY=your_supabase_anon_key
 ## 📚 API Documentation
 
 ### Base URL
+
 ```
 http://localhost:8000
 ```
@@ -92,6 +103,7 @@ http://localhost:8000
 ### Available Endpoints
 
 #### Users
+
 - `GET /users` - List all users
 - `GET /users/{id}` - Get user by ID
 - `POST /users` - Create new user
@@ -99,17 +111,31 @@ http://localhost:8000
 - `DELETE /users/{id}` - Delete user
 
 ### Interactive Documentation
+
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
+
+### Note: Upload-triggered Challenge Generation
+
+The slides upload endpoints now act as a middleware that triggers challenge generation automatically after a successful slide extraction and topic creation. Generation rules:
+
+- Every upload will create a base weekly challenge for the detected week.
+- Weeks 2, 6, 10: also generate a "ruby" special challenge and publish it.
+- Weeks 4, 8: also generate an "emerald" special challenge and publish it.
+- Week 12: generate a "diamond" special challenge and publish it.
+
+Lecturer-facing generation endpoints have been removed; generation is now triggered automatically by upload to simplify the flow.
 
 ## 🔧 Development
 
 ### Running Tests
+
 ```bash
 pytest tests/
 ```
 
 ### Code Quality
+
 ```bash
 # Format code
 black app/
@@ -122,7 +148,9 @@ flake8 app/
 ```
 
 ### Database Schema
+
 The application uses the following key tables:
+
 - **users** - User management and profiles
 - **exercises** - Interactive coding challenges
 - **submissions** - User exercise submissions
@@ -131,17 +159,20 @@ The application uses the following key tables:
 ## 🎯 Key Features
 
 ### 1. Automated Content Processing
+
 - **Slide Analysis**: Extract key concepts from lecture slides
 - **Code Generation**: Create relevant coding exercises
 - **Difficulty Scaling**: Adjust challenge complexity based on student level
 
 ### 2. Gamification System
+
 - **Progress Tracking**: Visual learning journey
 - **Achievement System**: Badges and milestones
 - **Leaderboards**: Competitive elements
 - **Streak Counters**: Daily engagement incentives
 
 ### 3. Adaptive Learning
+
 - **Personalized Paths**: Tailored to individual progress
 - **Real-time Feedback**: Immediate exercise validation
 - **Performance Analytics**: Detailed learning insights
@@ -155,6 +186,7 @@ The application uses the following key tables:
 5. Open a Pull Request
 
 ### Development Guidelines
+
 - Follow PEP 8 style guidelines
 - Add tests for new features
 - Update documentation
@@ -163,22 +195,26 @@ The application uses the following key tables:
 ## 🗺️ Roadmap
 
 ### Phase 1: Core Platform
+
 - [x] Basic API structure
 - [x] User management system
 - [ ] Exercise generation engine
 - [ ] Content upload system
 
 ### Phase 2: Intelligence
+
 - [ ] Advanced content processing
 - [ ] Adaptive difficulty algorithms
 - [ ] Performance analytics dashboard
 
 ### Phase 3: Gamification
+
 - [ ] Achievement system
 - [ ] Leaderboards
 - [ ] Social features
 
 ### Phase 4: Scale
+
 - [ ] Multi-language support
 - [ ] Advanced reporting
 - [ ] Integration with LMS platforms
@@ -186,6 +222,7 @@ The application uses the following key tables:
 ## 📊 Performance
 
 The backend is optimized for:
+
 - **High concurrency**: Async FastAPI handling
 - **Low latency**: Efficient database queries
 - **Scalability**: Horizontal scaling ready
@@ -218,4 +255,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Built with ❤️ by the Recode Team**
-
