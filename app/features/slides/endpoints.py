@@ -22,11 +22,30 @@ from app.common.deps import require_admin_or_lecturer_cookie
 from .upload import upload_slide_bytes
 from .upload import create_topic_from_extraction
 from .pathing import parse_week_topic_from_filename, SA_TZ
+import logging
+from app.features.module.service import ModuleService
+from app.features.challenges.challenge_pack_generator import generate_and_save_tier
+from app.features.challenges.repository import challenge_repository
 
 router = APIRouter(prefix="/slides", tags=["slides"])
 
-# Set per deployment/season via env var SEMESTER_START (YYYY-MM-DD)
-SEMESTER_START = _read_semester_start()
+# Helper: resolve current semester start date from the DB; fallback to env default
+async def _resolve_semester_start_date() -> date:
+    try:
+        curr = await ModuleService.get_current_semester()
+        if curr:
+            sd = curr.get("start_date") or curr.get("start")
+            if isinstance(sd, str):
+                try:
+                    return date.fromisoformat(sd)
+                except Exception:
+                    pass
+            if isinstance(sd, date):
+                return sd
+    except Exception:
+        # If lookup fails, fall back to env-based read
+        pass
+    return _read_semester_start()
 
 
 @router.post("/upload")
@@ -42,7 +61,7 @@ async def upload_slide(
     try:
         data = await file.read()
         # Topic may still be provided but we DO NOT use filename week to determine week.
-        # Always derive the week from the provided datetime (given_at_iso) or now, relative to SEMESTER_START.
+        # Always derive the week from the provided datetime (given_at_iso) or now, relative to current semester start.
         _, parsed_topic = parse_week_topic_from_filename(file.filename)
         tn = topic_name or parsed_topic or "Coding"
         if given_at_iso:
@@ -50,9 +69,38 @@ async def upload_slide(
         else:
             # Use now; week will be derived from SEMESTER_START in pathing.build_slide_object_key
             given_at_dt = datetime.now(tz=SA_TZ)
+        semester_start = await _resolve_semester_start_date()
         out = await upload_slide_bytes(
-            data, file.filename, tn, given_at_dt, SEMESTER_START, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
+            data, file.filename, tn, given_at_dt, semester_start, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
         )
+        # After successful extraction/topic creation, trigger challenge generation according to week rules.
+        try:
+            week_num = None
+            extraction = out.get("extraction") if isinstance(out, dict) else None
+            if extraction and isinstance(extraction, dict):
+                week_num = int(extraction.get("week_number") or out.get("week") or 0)
+                slide_stack_id = extraction.get("id")
+            else:
+                week_num = int(out.get("week") or 0)
+                slide_stack_id = None
+            lecturer_id = int(getattr(current_user, "id", 0) or 0)
+            if week_num and week_num > 0:
+                # always generate base
+                await generate_and_save_tier("base", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                # conditional tiers
+                if week_num in {2, 6, 10}:
+                    await generate_and_save_tier("ruby", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                if week_num in {4, 8}:
+                    await generate_and_save_tier("emerald", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                if week_num == 12:
+                    await generate_and_save_tier("diamond", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                # publish the week challenges we just generated
+                try:
+                    await challenge_repository.publish_for_week(week_num)
+                except Exception:
+                    logging.getLogger("slides").exception("Failed to publish generated challenges for week %s", week_num)
+        except Exception:
+            logging.getLogger("slides").exception("Automatic challenge generation failed for uploaded slide")
         # Do not expose signed URL unless explicitly requested
         if not include_signed_url:
             out.pop("signed_url", None)
@@ -88,8 +136,9 @@ async def batch_upload_slides(
                 # For batch uploads we may want to assign weeks by order later; default behavior here
                 # is to use now. The outer dispatcher will override given_at_dt when assign_weeks_by_order=True.
                 given_at_dt = datetime.now(tz=SA_TZ)
+                semester_start = await _resolve_semester_start_date()
                 result = await upload_slide_bytes(
-                    data, file.filename, tn, given_at_dt, SEMESTER_START, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
+                    data, file.filename, tn, given_at_dt, semester_start, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
                 )
                 # Do not expose signed URL unless explicitly requested
                 if not include_signed_url:
@@ -106,7 +155,8 @@ async def batch_upload_slides(
         for idx, file in enumerate(files):
             # compute week offset (0-based index -> week 1..)
             week_offset = idx
-            target_date = SEMESTER_START + timedelta(weeks=week_offset)
+            semester_start = await _resolve_semester_start_date()
+            target_date = semester_start + timedelta(weeks=week_offset)
             given_at_dt = datetime.combine(target_date, time(10, 0)).astimezone(SA_TZ)
             async def process_with_given(file=file, given_at_dt=given_at_dt):
                 async with semaphore:
@@ -115,7 +165,7 @@ async def batch_upload_slides(
                         _, parsed_topic = parse_week_topic_from_filename(file.filename)
                         tn = topic_name or parsed_topic or "Coding"
                         result = await upload_slide_bytes(
-                            data, file.filename, tn, given_at_dt, SEMESTER_START, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
+                            data, file.filename, tn, given_at_dt, semester_start, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
                         )
                         if not include_signed_url:
                             result.pop("signed_url", None)

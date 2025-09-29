@@ -27,54 +27,6 @@ router = APIRouter(prefix="/challenges", tags=["challenges"], dependencies=[Depe
 ALLOWED_TIERS = {"base", "ruby", "emerald", "diamond"}
 
 
-@router.post("/generate/{tier}")
-async def generate_challenge(
-    tier: str,
-    payload: ChallengeGenerateRequest = Body(...),
-    current_user: CurrentUser = Depends(require_role("lecturer")),
-):
-
-    tier_key = tier.lower()
-    if tier_key == "common":
-        tier_key = "base"
-    if tier_key not in ALLOWED_TIERS:
-        raise HTTPException(status_code=400, detail={"error_code": "E_INVALID_TIER", "message": "invalid tier"})
-
-    # Resolve optional module_code (module_id removed from API)
-    resolved_code = payload.module_code
-    week_number = int(payload.week_number)
-
-    try:
-        result = await generate_and_save_tier(
-            tier_key,
-            week_number,
-            slide_stack_id=None,
-            module_code=resolved_code,
-            lecturer_id=int(getattr(current_user, "id", 0) or 0),
-        )
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).exception("Failed to generate and save challenge")
-        raise HTTPException(status_code=500, detail={"error_code": "E_GENERATION_FAILED", "message": str(exc)})
-
-    challenge_info = result.get("challenge") if isinstance(result, dict) else None
-    # If the underlying insert detected an existing challenge for this week+tier, return 200 with a friendly message
-    if isinstance(challenge_info, dict) and challenge_info.get("_existing"):
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            status_code=200,
-            content={
-                "tier": tier_key,
-                "status": "exists",
-                "message": "A Challenge for this week already exists. Do you want to do another week?",
-                **result,
-            },
-        )
-    if isinstance(challenge_info, dict):
-        idem = challenge_info.get("idempotency_key")
-        if idem:
-            result.setdefault("idempotency_key", idem)
-    return {"tier": tier_key, "status": "saved", **result}
 @router.post("/publish/{week_number}")
 async def publish_week_challenges(
     week_number: int, current_user: CurrentUser = Depends(require_role("lecturer"))
