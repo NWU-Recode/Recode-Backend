@@ -22,7 +22,19 @@ from ...common.deps import (
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
-
+#lecturer only : list lecturers profile
+@router.get(
+    "/me",
+    response_model=LecturerProfileResponse,
+    summary="Get current lecturer profile",
+    description="Fetch the authenticated lecturer’s profile info.",
+)
+async def get_my_profile(user: CurrentUser = Depends(require_lecturer_cookie())):
+    """Return the profile for the currently authenticated lecturer."""
+    profile = await LecturerService.get_lecturer_profile(user.id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Lecturer profile not found")
+    return profile
 
 # Admin: Create module (for admins only)
 @router.post(
@@ -372,18 +384,6 @@ async def admin_create_module(
         raise HTTPException(status_code=400, detail="Failed to create module")
     return created
 
-#lecturer only : list lecturers profile
-@router.get(
-    "/me",
-    response_model=LecturerProfileResponse,
-    summary="Get current lecturer profile",
-    description="Fetch the authenticated lecturer’s profile info.",
-)
-async def get_my_profile(user: CurrentUser = Depends(require_lecturer_cookie())):
-    """Return the profile for the currently authenticated lecturer."""
-    profile = await LecturerService.get_lecturer_profile(user.id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Lecturer profile not found")
-    return profile
+
 
 
