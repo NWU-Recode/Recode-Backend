@@ -3,14 +3,16 @@ from typing import List
 from uuid import UUID
 from fastapi import UploadFile, File
 
+
+
 from .schemas import (
     ModuleCreate, ModuleResponse,
     ChallengeCreate, ChallengeResponse,
     StudentResponse,
     EnrolRequest, BatchEnrolRequest, AssignLecturerRequest,
-    SemesterCreate, ModuleAdminCreate,
+    SemesterCreate, ModuleAdminCreate,LecturerProfileResponse 
 )
-from .service import ModuleService
+from .service import ModuleService,LecturerService 
 from ...common.deps import (
     require_lecturer_cookie,
     get_current_user_with_refresh,
@@ -19,6 +21,7 @@ from ...common.deps import (
 )
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+
 
 
 # Admin: Create module (for admins only)
@@ -368,3 +371,19 @@ async def admin_create_module(
     if not created:
         raise HTTPException(status_code=400, detail="Failed to create module")
     return created
+
+#lecturer only : list lecturers profile
+@router.get(
+    "/me",
+    response_model=LecturerProfileResponse,
+    summary="Get current lecturer profile",
+    description="Fetch the authenticated lecturer’s profile info.",
+)
+async def get_my_profile(user: CurrentUser = Depends(require_lecturer_cookie())):
+    """Return the profile for the currently authenticated lecturer."""
+    profile = await LecturerService.get_lecturer_profile(user.id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Lecturer profile not found")
+    return profile
+
+

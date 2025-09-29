@@ -115,3 +115,14 @@ class ModuleAdminCreate(BaseModel):
     lecturer_id: int
     code_language: Optional[str] = None
     credits: Optional[int] = 8
+
+# ===========================
+# LECTURER PROFILE SCHEMAS
+# ===========================
+class LecturerProfileResponse(BaseModel):
+    id: int
+    email: str
+    full_name: str
+    avatar_url: Optional[str]
+    phone: Optional[str]
+    bio: Optional[str]
