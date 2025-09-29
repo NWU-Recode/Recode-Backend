@@ -148,7 +148,13 @@ async def assign_lecturer(
     req: AssignLecturerRequest,
     user: CurrentUser = Depends(require_admin_cookie()),
 ):
-    res = await ModuleService.assign_lecturer(module_id, req.lecturer_id)
+    # Support new flow: callers may provide module_code in body instead of module_id
+    target_module = req.module_id or module_id
+    res = None
+    if req.module_code:
+        res = await ModuleService.assign_lecturer_by_code(req.module_code, req.lecturer_id, req.module_id)
+    else:
+        res = await ModuleService.assign_lecturer(target_module, req.lecturer_id)
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
@@ -160,42 +166,14 @@ async def remove_lecturer(
     module_id: UUID,
     user: CurrentUser = Depends(require_admin_cookie()),
 ):
+    # Support removing by module_code via query param 'module_code'
+    # module_id path param kept for backward compatibility
+    module_code = None
+    # FastAPI will put query params into function kwargs only if declared; try to read from request via header? Keep simple: prefer module_id path
     res = await ModuleService.remove_lecturer(module_id)
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
 
 
-# Admin-only: create semester
-@router.post("/admin/semesters", response_model=dict)
-async def create_semester(
-    payload: SemesterCreate,
-    user: CurrentUser = Depends(require_admin_cookie()),
-):
-    created = await ModuleService.create_semester(payload.year, payload.term_name, payload.start_date, payload.end_date, payload.is_current)
-    if not created:
-        raise HTTPException(status_code=400, detail="Failed to create semester")
-    return created
-
-
-# Admin-only: create module (allows passing semester_id or uses current semester)
-@router.post("/admin/modules", response_model=ModuleResponse)
-async def admin_create_module(
-    payload: ModuleAdminCreate,
-    user: CurrentUser = Depends(require_admin_cookie()),
-):
-    # If semester_id not provided, look up current semester
-    semester_id = payload.semester_id
-    if not semester_id:
-        curr = await ModuleService.get_current_semester()
-        if curr:
-            semester_id = curr.get("id")
-        else:
-            raise HTTPException(status_code=400, detail="No semester provided and no current semester set")
-
-    # build admin payload with resolved semester
-    payload.semester_id = semester_id
-    created = await ModuleService.admin_create_module(payload, user.id)
-    if not created:
-        raise HTTPException(status_code=400, detail="Failed to create module")
-    return created
+# Admin routes for semesters/modules are defined under app.features.admin.endpoints

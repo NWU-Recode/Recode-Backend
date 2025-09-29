@@ -98,8 +98,17 @@ class ModuleService:
         return await ModuleRepository.assign_lecturer(module_id, lecturer_profile_id)
 
     @staticmethod
+    async def assign_lecturer_by_code(module_code: str, lecturer_profile_id: int, fallback_module_id: Optional[UUID] = None) -> Optional[dict]:
+        """New flow: accept module_code (string), look up module id and semester, create a teaching_assignments row and update modules.lecturer_id for compatibility."""
+        return await ModuleRepository.assign_lecturer_by_code(module_code, lecturer_profile_id, fallback_module_id)
+
+    @staticmethod
     async def remove_lecturer(module_id: UUID) -> Optional[dict]:
         return await ModuleRepository.remove_lecturer(module_id)
+
+    @staticmethod
+    async def remove_lecturer_by_code(module_code: str) -> Optional[dict]:
+        return await ModuleRepository.remove_lecturer_by_code(module_code)
 
     @staticmethod
     async def create_semester(year: int, term_name: str, start_date, end_date, is_current: bool = False) -> Optional[dict]:

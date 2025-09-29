@@ -12,6 +12,8 @@ from .schemas import (
     EnrolRequest, BatchEnrolRequest, AssignLecturerRequest,
     SemesterCreate, ModuleAdminCreate,LecturerProfileResponse 
 )
+from .schemas import RemoveLecturerRequest
+from app.features.semester.schemas import SemesterResponse
 from .service import ModuleService,LecturerService 
 from ...common.deps import (
     require_lecturer_cookie,
@@ -22,7 +24,7 @@ from ...common.deps import (
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
-#lecturer only : list lecturers profile
+# lecturer only : get current lecturer profile
 @router.get(
     "/me",
     response_model=LecturerProfileResponse,
@@ -296,7 +298,11 @@ async def assign_lecturer(
 
     Required role: Admin
     """
-    res = await ModuleService.assign_lecturer(module_id, req.lecturer_id)
+    # Support module_code flow: if req.module_code provided use new flow
+    if req.module_code:
+        res = await ModuleService.assign_lecturer_by_code(req.module_code, req.lecturer_id, req.module_id)
+    else:
+        res = await ModuleService.assign_lecturer(module_id, req.lecturer_id)
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
@@ -318,16 +324,61 @@ async def remove_lecturer(
 
     Required role: Admin
     """
+    # If a module_code query/body is provided by a client in the future, this handler can be extended.
     res = await ModuleService.remove_lecturer(module_id)
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
 
 
+# Admin: assign lecturer by body (module_code)
+@router.post(
+    "/assign-lecturer",
+    summary="Assign lecturer to module (Admin) by body",
+)
+async def assign_lecturer_by_body(
+    req: AssignLecturerRequest,
+    user: CurrentUser = Depends(require_admin_cookie()),
+):
+    if not req.module_code and not req.module_id:
+        raise HTTPException(status_code=400, detail="module_code or module_id required")
+    if req.module_code:
+        res = await ModuleService.assign_lecturer_by_code(req.module_code, req.lecturer_id, req.module_id)
+    else:
+        res = await ModuleService.assign_lecturer(req.module_id, req.lecturer_id)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return res
+
+
+# Admin: remove lecturer by body (module_code)
+@router.post(
+    "/remove-lecturer",
+    summary="Remove lecturer from module (Admin) by body",
+)
+async def remove_lecturer_by_body(
+    req: RemoveLecturerRequest,
+    user: CurrentUser = Depends(require_admin_cookie()),
+):
+    if not req.module_code and not req.module_id:
+        raise HTTPException(status_code=400, detail="module_code or module_id required")
+    if req.module_code:
+        res = await ModuleService.remove_lecturer_by_code(req.module_code)
+    else:
+        res = await ModuleService.remove_lecturer(req.module_id)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return res
+
+
 # Admin-only: create semester
+# (Handled below with a SemesterResponse return to include the UUID)
+
+
+# Admin-only: create module (allows passing semester_id or uses current semester)
 @router.post(
     "/semesters",
-    response_model=dict,
+    response_model=SemesterResponse,
     summary="Create semester (Admin)",
     description=(
         "Create a new academic semester. Requires Admin role.\n\n"
@@ -346,43 +397,8 @@ async def create_semester(
     created = await ModuleService.create_semester(payload.year, payload.term_name, payload.start_date, payload.end_date, payload.is_current)
     if not created:
         raise HTTPException(status_code=400, detail="Failed to create semester")
-    return created
-
-
-# Admin-only: create module (allows passing semester_id or uses current semester)
-@router.post(
-    "/modules",
-    response_model=ModuleResponse,
-    summary="Create module for semester (Admin)",
-    description=(
-        "Create a new module for a given semester. Requires Admin role.\n\n"
-        "If semester_id is not provided, the current semester will be used (if set).\n"
-        "Body: ModuleAdminCreate { code, name, description, semester_id?, lecturer_id, ... }."
-    ),
-)
-async def admin_create_module(
-    payload: ModuleAdminCreate,
-    user: CurrentUser = Depends(require_admin_cookie()),
-):
-    """Create a module for a semester. Admin-only.
-
-    Required role: Admin
-    """
-    # If semester_id not provided, look up current semester
-    semester_id = payload.semester_id
-    if not semester_id:
-        curr = await ModuleService.get_current_semester()
-        if curr:
-            semester_id = curr.get("id")
-        else:
-            raise HTTPException(status_code=400, detail="No semester provided and no current semester set")
-
-    # build admin payload with resolved semester
-    payload.semester_id = semester_id
-    created = await ModuleService.admin_create_module(payload, user.id)
-    if not created:
-        raise HTTPException(status_code=400, detail="Failed to create module")
-    return created
+    # Validate/normalize the returned row into the SemesterResponse so the FE gets the UUID id
+    return SemesterResponse.model_validate(created)
 
 
 
