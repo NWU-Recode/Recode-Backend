@@ -67,6 +67,14 @@ class ModuleRepository:
         return rows[0] if rows else None
 
     @staticmethod
+    async def get_module_by_code(module_code: str):
+        client = await get_supabase()
+        rows = await _exec(
+            client.table("modules").select("*").eq("code", str(module_code)).limit(1)
+        )
+        return rows[0] if rows else None
+
+    @staticmethod
     async def list_modules(user):
         client = await get_supabase()
         if user.role.lower() == "lecturer":
@@ -195,6 +203,56 @@ class ModuleRepository:
         client = await get_supabase()
         rows = await _exec(client.table("modules").update({"lecturer_id": lecturer_profile_id}).eq("id", str(module_id)))
         return rows[0] if rows else None
+
+    @staticmethod
+    async def assign_lecturer_by_code(module_code: str, lecturer_profile_id: int, fallback_module_id: Optional[UUID] = None) -> Optional[dict]:
+        client = await get_supabase()
+        # Find module by code
+        rows = await _exec(client.table("modules").select("id, semester_id").eq("code", str(module_code)).limit(1))
+        if not rows:
+            # Fallback: if caller passed module_id separately, try to use that
+            if fallback_module_id:
+                return await ModuleRepository.assign_lecturer(fallback_module_id, lecturer_profile_id)
+            return None
+        module = rows[0]
+        module_id = module.get("id")
+        semester_id = module.get("semester_id")
+        # Insert teaching_assignments row (idempotent due to unique constraint)
+        ta_payload = {
+            "semester_id": semester_id,
+            "module_id": module_id,
+            "lecturer_profile_id": int(lecturer_profile_id),
+        }
+        try:
+            await _exec(client.table("teaching_assignments").insert(ta_payload))
+        except Exception:
+            # In case of unique violation or other DB errors, continue to update modules
+            pass
+        # Update modules.lecturer_id for compatibility
+        try:
+            await _exec(client.table("modules").update({"lecturer_id": lecturer_profile_id}).eq("id", module_id))
+        except Exception:
+            pass
+        return await _exec(client.table("modules").select("*").eq("id", module_id).limit(1))
+
+    @staticmethod
+    async def remove_lecturer_by_code(module_code: str) -> Optional[dict]:
+        client = await get_supabase()
+        rows = await _exec(client.table("modules").select("id").eq("code", str(module_code)).limit(1))
+        if not rows:
+            return None
+        module_id = rows[0].get("id")
+        # Delete teaching_assignments row(s) for this module
+        try:
+            await _exec(client.table("teaching_assignments").delete().eq("module_id", module_id))
+        except Exception:
+            pass
+        # Clear modules.lecturer_id for compatibility
+        try:
+            await _exec(client.table("modules").update({"lecturer_id": None}).eq("id", module_id))
+        except Exception:
+            pass
+        return await _exec(client.table("modules").select("*").eq("id", module_id).limit(1))
 
     @staticmethod
     async def remove_lecturer(module_id: UUID) -> Optional[dict]:

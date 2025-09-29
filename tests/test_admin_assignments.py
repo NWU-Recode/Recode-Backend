@@ -1,8 +1,8 @@
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
-from app.features.module import repository as repo
-from app.features.module.service import ModuleService
+from app.features.admin import repository as repo
+from app.features.admin.service import ModuleService
 
 
 def test_assign_and_remove_by_code(monkeypatch):

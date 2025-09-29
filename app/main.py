@@ -162,3 +162,18 @@ async def favicon():
     if os.path.isfile(real_icon_path):
         return FileResponse(real_icon_path, media_type="image/x-icon")
     return PlainTextResponse("favicon.ico not found", status_code=404)
+
+
+# Catch-all to serve SPA index for unknown GET routes (useful for client-side routing / SPA reloads)
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_catch_all(request: Request, full_path: str):
+    # Only serve index.html for GET requests and when static dir exists
+    try:
+        if request.method != "GET":
+            return PlainTextResponse("Not Found", status_code=404)
+        index_file = os.path.join(static_dir, "index.html")
+        if os.path.isfile(index_file):
+            return FileResponse(index_file, media_type="text/html")
+    except Exception:
+        pass
+    return PlainTextResponse("Not Found", status_code=404)

@@ -109,6 +109,45 @@ class ModuleService:
     async def get_current_semester() -> Optional[dict]:
         return await ModuleRepository.get_current_semester()
 
+    # --- Module-code helpers (moved from module.service) -----------------
+    @staticmethod
+    async def assign_lecturer_by_code(module_code: str, lecturer_profile_id: int, fallback_module_id: Optional[UUID] = None) -> Optional[dict]:
+        return await ModuleRepository.assign_lecturer_by_code(module_code, lecturer_profile_id, fallback_module_id)
+
+    @staticmethod
+    async def remove_lecturer_by_code(module_code: str) -> Optional[dict]:
+        return await ModuleRepository.remove_lecturer_by_code(module_code)
+
+    @staticmethod
+    async def get_semester_start_for_module_code(module_code: str):
+        """Return a date or None: prefer the semester.start_date for the module identified by module_code,
+        otherwise fall back to the current semester start."""
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if mod and mod.get("semester_id"):
+            sem = await ModuleRepository.get_semester_by_id(mod.get("semester_id"))
+            if sem and sem.get("start_date"):
+                sd = sem.get("start_date")
+                # ensure it's a date object or ISO string
+                if isinstance(sd, str):
+                    try:
+                        from datetime import date
+                        return date.fromisoformat(sd)
+                    except Exception:
+                        return None
+                return sd
+        # fallback
+        curr = await ModuleRepository.get_current_semester()
+        if curr and curr.get("start_date"):
+            sd = curr.get("start_date")
+            if isinstance(sd, str):
+                try:
+                    from datetime import date
+                    return date.fromisoformat(sd)
+                except Exception:
+                    return None
+            return sd
+        return None
+
     @staticmethod
     async def admin_create_module(payload, admin_user_id: int) -> Optional[ModuleResponse]:
         # payload is expected to be ModuleAdminCreate-like or ModuleCreate

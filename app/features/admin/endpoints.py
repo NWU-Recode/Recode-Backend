@@ -21,6 +21,16 @@ from ...common.deps import (
     CurrentUser,
     require_admin_cookie,
 )
+from app.demo.timekeeper import (
+    add_demo_week_offset,
+    set_demo_week_offset,
+    clear_demo_week_offset,
+    get_demo_week_offset,
+    add_demo_week_offset_for_module,
+    set_demo_week_offset_for_module,
+    clear_demo_week_offset_for_module,
+    get_demo_week_offset_for_module,
+)
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -65,7 +75,7 @@ async def create_module(
 
 # Admin: Update module
 @router.put(
-    "/{module_id}",
+    "/{module_code}",
     response_model=ModuleResponse,
     summary="Update module (Admin)",
     description=(
@@ -75,7 +85,7 @@ async def create_module(
     ),
 )
 async def update_module(
-    module_id: UUID,
+    module_code: str,
     module: ModuleCreate,
     user: CurrentUser = Depends(require_admin_cookie()),
 ):
@@ -83,7 +93,7 @@ async def update_module(
 
     Required role: Admin
     """
-    updated = await ModuleService.update_module(module_id, module, user.id)
+    updated = await ModuleService.update_module_by_code(module_code, module, user.id)
     if not updated:
         raise HTTPException(status_code=404, detail="Module not found or not authorized")
     return updated
@@ -91,7 +101,7 @@ async def update_module(
 
 # Admin: Delete module
 @router.delete(
-    "/{module_id}",
+    "/{module_code}",
     summary="Delete module (Admin)",
     description=(
         "Delete a module by id. Requires Admin role.\n\n"
@@ -99,14 +109,14 @@ async def update_module(
     ),
 )
 async def delete_module(
-    module_id: UUID,
+    module_code: str,
     user: CurrentUser = Depends(require_admin_cookie()),
 ):
     """Delete a module. Admin-only.
 
     Required role: Admin
     """
-    deleted = await ModuleService.delete_module(module_id, user.id)
+    deleted = await ModuleService.delete_module_by_code(module_code, user.id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Module not found or not authorized")
     return {"deleted": True}
@@ -134,7 +144,7 @@ async def list_modules(user: CurrentUser = Depends(get_current_user_with_refresh
 
 # Student/Lecturer: View module details
 @router.get(
-    "/{module_id}",
+    "/{module_code}",
     response_model=ModuleResponse,
     summary="Get module details (Student/Lecturer)",
     description=(
@@ -143,14 +153,14 @@ async def list_modules(user: CurrentUser = Depends(get_current_user_with_refresh
     ),
 )
 async def get_module(
-    module_id: UUID,
+    module_code: str,
     user: CurrentUser = Depends(get_current_user_with_refresh),
 ):
     """Retrieve module details.
 
     Roles allowed: Student (if enrolled), Lecturer (if assigned)
     """
-    module = await ModuleService.get_module(module_id, user)
+    module = await ModuleService.get_module_by_code(module_code, user)
     if not module:
         raise HTTPException(status_code=403, detail="Not authorized for this module")
     return module
@@ -159,7 +169,7 @@ async def get_module(
 
 # Lecturer: See students in their module
 @router.get(
-    "/{module_id}/students",
+    "/{module_code}/students",
     response_model=List[StudentResponse],
     summary="List students in a module (Lecturer)",
     description=(
@@ -168,14 +178,14 @@ async def get_module(
     ),
 )
 async def module_students(
-    module_id: UUID,
+    module_code: str,
     user: CurrentUser = Depends(require_lecturer_cookie()),  # <--- note the ()
 ):
     """List students in a module. Lecturer-only.
 
     Required role: Lecturer
     """
-    students = await ModuleService.get_students(module_id, user.id)
+    students = await ModuleService.get_students_by_code(module_code, user.id)
     if not students:
         raise HTTPException(status_code=403, detail="Not authorized for this module")
     return students
@@ -184,7 +194,7 @@ async def module_students(
 
 # Student/Lecturer: View challenges in a module
 @router.get(
-    "/{module_id}/challenges",
+    "/{module_code}/challenges",
     response_model=List[ChallengeResponse],
     summary="List challenges in a module (Student/Lecturer)",
     description=(
@@ -193,14 +203,14 @@ async def module_students(
     ),
 )
 async def module_challenges(
-    module_id: UUID,
+    module_code: str,
     user: CurrentUser = Depends(get_current_user_with_refresh),
 ):
     """List challenges for a module.
 
     Roles allowed: Student (if enrolled), Lecturer (if assigned)
     """
-    challenges = await ModuleService.get_challenges(module_id, user)
+    challenges = await ModuleService.get_challenges_by_code(module_code, user)
     if challenges is None:
         raise HTTPException(status_code=403, detail="Not authorized for this module")
     return challenges
@@ -208,7 +218,7 @@ async def module_challenges(
 
 # Lecturer-only: enrol a single student into a module
 @router.post(
-    "/{module_id}/enrol",
+    "/{module_code}/enrol",
     summary="Enrol a student into a module (Lecturer)",
     description=(
         "Enrol a single student into a module. Requires Lecturer role and that the lecturer is assigned to the module.\n"
@@ -217,7 +227,7 @@ async def module_challenges(
     ),
 )
 async def enrol_student(
-    module_id: UUID,
+    module_code: str,
     req: EnrolRequest,
     user: CurrentUser = Depends(require_lecturer_cookie()),
 ):
@@ -225,7 +235,7 @@ async def enrol_student(
 
     Required role: Lecturer
     """
-    res = await ModuleService.enrol_student(module_id, req.student_id, user.id, req.semester_id)
+    res = await ModuleService.enrol_student_by_code(module_code, req.student_id, user.id, req.semester_id)
     if res is None:
         raise HTTPException(status_code=403, detail="Not authorized or module not found")
     return res
@@ -233,7 +243,7 @@ async def enrol_student(
 
 # Lecturer-only: batch enrol students (JSON list of ids)
 @router.post(
-    "/{module_id}/enrol/batch",
+    "/{module_code}/enrol/batch",
     summary="Batch enrol students (Lecturer)",
     description=(
         "Batch enrol students by student id list. Requires Lecturer role and module assignment.\n"
@@ -241,7 +251,7 @@ async def enrol_student(
     ),
 )
 async def enrol_students_batch(
-    module_id: UUID,
+    module_code: str,
     req: BatchEnrolRequest,
     user: CurrentUser = Depends(require_lecturer_cookie()),
 ):
@@ -249,7 +259,7 @@ async def enrol_students_batch(
 
     Required role: Lecturer
     """
-    res = await ModuleService.enrol_students_batch(module_id, req.student_ids, user.id, req.semester_id)
+    res = await ModuleService.enrol_students_batch_by_code(module_code, req.student_ids, user.id, req.semester_id)
     if not res:
         raise HTTPException(status_code=403, detail="Not authorized or module not found")
     return res
@@ -257,7 +267,7 @@ async def enrol_students_batch(
 
 # Lecturer-only: upload CSV to batch enrol students. CSV should have header 'student_id' or 'email'.
 @router.post(
-    "/{module_id}/enrol/upload",
+    "/{module_code}/enrol/upload",
     summary="Upload CSV to batch enrol students (Lecturer)",
     description=(
         "Upload a CSV file with header 'student_id' or 'email' to batch enrol students. Requires Lecturer role.\n"
@@ -265,7 +275,7 @@ async def enrol_students_batch(
     ),
 )
 async def enrol_students_csv(
-    module_id: UUID,
+    module_code: str,
     file: UploadFile = File(...),
     user: CurrentUser = Depends(require_lecturer_cookie()),
 ):
@@ -274,7 +284,7 @@ async def enrol_students_csv(
     Required role: Lecturer
     """
     content = await file.read()
-    result = await ModuleService.enrol_students_csv(module_id, content, user.id)
+    result = await ModuleService.enrol_students_csv_by_code(module_code, content, user.id)
     if isinstance(result, dict) and result.get('error'):
         raise HTTPException(status_code=403, detail=result.get('error'))
     return result
@@ -282,7 +292,7 @@ async def enrol_students_csv(
 
 # Admin-only: assign a lecturer to a module
 @router.post(
-    "/{module_id}/assign-lecturer",
+    "/{module_code}/assign-lecturer",
     summary="Assign lecturer to module (Admin)",
     description=(
         "Assign a lecturer to a specific module. Requires Admin role.\n"
@@ -290,7 +300,7 @@ async def enrol_students_csv(
     ),
 )
 async def assign_lecturer(
-    module_id: UUID,
+    module_code: str,
     req: AssignLecturerRequest,
     user: CurrentUser = Depends(require_admin_cookie()),
 ):
@@ -299,10 +309,13 @@ async def assign_lecturer(
     Required role: Admin
     """
     # Support module_code flow: if req.module_code provided use new flow
-    if req.module_code:
-        res = await ModuleService.assign_lecturer_by_code(req.module_code, req.lecturer_id, req.module_id)
+    # prefer explicit path module_code; body may also contain module_code or module_id for backward compatibility
+    target_code = req.module_code or module_code
+    if target_code:
+        res = await ModuleService.assign_lecturer_by_code(target_code, req.lecturer_id, req.module_id)
     else:
-        res = await ModuleService.assign_lecturer(module_id, req.lecturer_id)
+        # fallback to id-based assignment if provided in body
+        res = await ModuleService.assign_lecturer(req.module_id, req.lecturer_id)
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
@@ -310,14 +323,14 @@ async def assign_lecturer(
 
 # Admin-only: remove lecturer from module
 @router.post(
-    "/{module_id}/remove-lecturer",
+    "/{module_code}/remove-lecturer",
     summary="Remove lecturer from module (Admin)",
     description=(
         "Remove lecturer assignment from a module. Requires Admin role. Returns the updated module record."
     ),
 )
 async def remove_lecturer(
-    module_id: UUID,
+    module_code: str,
     user: CurrentUser = Depends(require_admin_cookie()),
 ):
     """Remove lecturer assignment. Admin-only.
@@ -325,7 +338,8 @@ async def remove_lecturer(
     Required role: Admin
     """
     # If a module_code query/body is provided by a client in the future, this handler can be extended.
-    res = await ModuleService.remove_lecturer(module_id)
+    # prefer module_code flow
+    res = await ModuleService.remove_lecturer_by_code(module_code)
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
@@ -399,6 +413,67 @@ async def create_semester(
         raise HTTPException(status_code=400, detail="Failed to create semester")
     # Validate/normalize the returned row into the SemesterResponse so the FE gets the UUID id
     return SemesterResponse.model_validate(created)
+
+
+# ---- Demo time control (Admin-only) ------------------------------------------------
+@router.post(
+    "/demo/skip",
+    summary="Skip demo weeks (Admin)",
+    description="Add a positive or negative number of weeks to the demo offset (e.g. {\"delta\": 1} advances one week).",
+)
+async def demo_skip_weeks(delta: int = 1, module_code: str | None = None, user: CurrentUser = Depends(require_admin_cookie())):
+    """Adjust the demo week offset by delta weeks. If module_code is provided, adjust only that module."""
+    if module_code:
+        new = add_demo_week_offset_for_module(module_code, delta)
+    else:
+        new = add_demo_week_offset(delta)
+    return {"offset_weeks": new}
+
+
+
+# ---- Demo time control (Admin-only) ------------------------------------------------
+@router.post(
+    "/demo/skip",
+    summary="Skip demo weeks (Admin)",
+    description="Add a positive or negative number of weeks to the demo offset (e.g. {\"delta\": 1} advances one week).",
+)
+async def demo_skip_weeks(delta: int = 1, module_code: str | None = None, user: CurrentUser = Depends(require_admin_cookie())):
+    """Adjust the demo week offset by delta weeks. Returns the new offset.
+
+    If module_code is provided, adjust the offset only for that module.
+    """
+    if module_code:
+        new = add_demo_week_offset_for_module(module_code, delta)
+        return {"module_code": module_code, "offset_weeks": new}
+    new = add_demo_week_offset(delta)
+    return {"offset_weeks": new}
+
+
+@router.post(
+    "/demo/set",
+    summary="Set demo week offset (Admin)",
+    description="Set the demo offset to an explicit number of weeks (0 = no skip).",
+)
+async def demo_set_weeks(offset: int = 0, module_code: str | None = None, user: CurrentUser = Depends(require_admin_cookie())):
+    if module_code:
+        new = set_demo_week_offset_for_module(module_code, offset)
+        return {"module_code": module_code, "offset_weeks": new}
+    new = set_demo_week_offset(offset)
+    return {"offset_weeks": new}
+
+
+@router.delete(
+    "/demo/clear",
+    summary="Clear demo week offset (Admin)",
+    description="Reset demo offset to zero.",
+)
+async def demo_clear_weeks(module_code: str | None = None, user: CurrentUser = Depends(require_admin_cookie())):
+    if module_code:
+        clear_demo_week_offset_for_module(module_code)
+        return {"module_code": module_code, "offset_weeks": get_demo_week_offset_for_module(module_code)}
+    clear_demo_week_offset()
+    return {"offset_weeks": get_demo_week_offset()}
+
 
 
 

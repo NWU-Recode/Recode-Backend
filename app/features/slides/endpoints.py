@@ -23,9 +23,10 @@ from .upload import upload_slide_bytes
 from .upload import create_topic_from_extraction
 from .pathing import parse_week_topic_from_filename, SA_TZ
 import logging
-from app.features.module.service import ModuleService
+from app.features.admin.service import ModuleService
 from app.features.challenges.challenge_pack_generator import generate_and_save_tier
 from app.features.challenges.repository import challenge_repository
+from app.demo.timekeeper import apply_demo_offset_to_semester_start
 
 router = APIRouter(prefix="/slides", tags=["slides"])
 
@@ -48,7 +49,17 @@ async def _resolve_semester_start_date() -> date:
     return _read_semester_start()
 
 
-@router.post("/upload")
+@router.post(
+    "/upload",
+    summary="Upload slides, extract topics and trigger challenge generation",
+    description=(
+        "Upload a slide file for a module. The server will extract topics from the file, "
+        "create a topic record, and trigger automatic challenge generation for the week computed "
+        "from the provided datetime (or now) relative to the module's semester start. "
+        "Generation rules: base always; ruby on weeks 2,6,10; emerald on weeks 4,8; diamond on week 12. "
+        "Optionally returns a signed URL for the uploaded file when requested."
+    ),
+)
 async def upload_slide(
     module_code: str = Query(..., description="Module code for the slides"),
     topic_name: str | None = Query(None, description="Optional topic override; inferred from filename/slides if omitted"),
@@ -69,7 +80,11 @@ async def upload_slide(
         else:
             # Use now; week will be derived from SEMESTER_START in pathing.build_slide_object_key
             given_at_dt = datetime.now(tz=SA_TZ)
-        semester_start = await _resolve_semester_start_date()
+        # Prefer module-specific semester start (if module has semester assigned)
+        module_sem_start = await ModuleService.get_semester_start_for_module_code(module_code)
+        semester_start = module_sem_start or await _resolve_semester_start_date()
+        # apply demo offset so admin can 'skip' weeks during demos (module-scoped when module_code provided)
+        semester_start = apply_demo_offset_to_semester_start(semester_start, module_code)
         out = await upload_slide_bytes(
             data, file.filename, tn, given_at_dt, semester_start, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
         )
@@ -109,7 +124,15 @@ async def upload_slide(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/batch-upload")
+@router.post(
+    "/batch-upload",
+    summary="Batch upload slides, create topics and optionally assign weeks by file order",
+    description=(
+        "Upload multiple slide files for a module. By default each file is processed with the current datetime, "
+        "but when `assign_weeks_by_order=true` files are assigned successive weeks starting at the module's semester start. "
+        "Each uploaded file will result in an extraction and topic creation, and will trigger challenge generation for the resolved week."
+    ),
+)
 async def batch_upload_slides(
     module_code: str = Query(..., description="Module code for all slides"),
     topic_name: str | None = Query(None, description="Optional topic override; inferred from filename/slides if omitted"),
@@ -136,7 +159,9 @@ async def batch_upload_slides(
                 # For batch uploads we may want to assign weeks by order later; default behavior here
                 # is to use now. The outer dispatcher will override given_at_dt when assign_weeks_by_order=True.
                 given_at_dt = datetime.now(tz=SA_TZ)
-                semester_start = await _resolve_semester_start_date()
+                module_sem_start = await ModuleService.get_semester_start_for_module_code(module_code)
+                semester_start = module_sem_start or await _resolve_semester_start_date()
+                semester_start = apply_demo_offset_to_semester_start(semester_start, module_code)
                 result = await upload_slide_bytes(
                     data, file.filename, tn, given_at_dt, semester_start, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
                 )
@@ -155,7 +180,9 @@ async def batch_upload_slides(
         for idx, file in enumerate(files):
             # compute week offset (0-based index -> week 1..)
             week_offset = idx
-            semester_start = await _resolve_semester_start_date()
+            module_sem_start = await ModuleService.get_semester_start_for_module_code(module_code)
+            semester_start = module_sem_start or await _resolve_semester_start_date()
+            semester_start = apply_demo_offset_to_semester_start(semester_start, module_code)
             target_date = semester_start + timedelta(weeks=week_offset)
             given_at_dt = datetime.combine(target_date, time(10, 0)).astimezone(SA_TZ)
             async def process_with_given(file=file, given_at_dt=given_at_dt):
