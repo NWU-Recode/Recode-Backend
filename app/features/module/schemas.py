@@ -97,6 +97,9 @@ class BatchEnrolRequest(BaseModel):
 
 class AssignLecturerRequest(BaseModel):
     lecturer_id: int
+    module_code: str | None = None
+    # legacy: allow module_id when callers still send it
+    module_id: UUID | None = None
 
 
 class SemesterCreate(BaseModel):

@@ -255,3 +255,44 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Built with ❤️ by the Recode Team**
+
+## Database migration: teaching_assignments
+
+The admin flows now create rows in a new `teaching_assignments` table which links `semesters`, `modules`, and `lecturers`.
+
+1. SQL file is provided at `scripts/create_teaching_assignments.sql`.
+
+2. To apply on Supabase (SQL editor):
+
+- Open your Supabase project → Database → SQL Editor → paste the contents and Run.
+
+3. To apply via psql locally (pwsh example):
+
+```powershell
+# On Windows PowerShell (assuming psql is available and environment variables set):
+$env:PGHOST='your-db-host'
+$env:PGPORT='5432'
+$env:PGUSER='postgres'
+$env:PGPASSWORD='yourpassword'
+$env:PGDATABASE='postgres'
+psexec(pwsh) # optional
+psql -h $env:PGHOST -p $env:PGPORT -U $env:PGUSER -d $env:PGDATABASE -f "scripts/create_teaching_assignments.sql"
+```
+
+4. After applying the migration, admin assign/remove endpoints will:
+
+- POST /admin/assign-lecturer (body: { module_code: "CS101", lecturer_id: 123 })
+- POST /admin/remove-lecturer (body: { module_code: "CS101" })
+
+These endpoints will insert/delete rows in `teaching_assignments` and update `modules.lecturer_id` for backward compatibility.
+
+5. Quick curl example for creating a semester (Admin).
+
+```bash
+curl -X POST "http://localhost:8000/admin/semesters" \
+	-H "Content-Type: application/json" \
+	-H "Cookie: YOUR_ADMIN_SESSION_COOKIE" \
+	-d '{"year":2026, "term_name":"Semester 1", "start_date":"2026-02-01", "end_date":"2026-06-30", "is_current":true}'
+```
+
+If you want, I can tailor the psql snippet to your exact DB credentials or produce a one-line PowerShell-ready command.
