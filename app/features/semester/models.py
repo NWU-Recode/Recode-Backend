@@ -19,6 +19,6 @@ class Semester(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
     
    # in semester/models.py
-    modules = relationship("Module", back_populates="semester")
+    #modules = relationship("Module", back_populates="semester")
 
 

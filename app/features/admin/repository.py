@@ -1,8 +1,9 @@
-import uuid
-from typing import List, Optional
+from fastapi import HTTPException, status
+import uuid 
+from typing import List, Optional 
 from uuid import UUID
-
 from app.DB.supabase import get_supabase
+import uuid
 from .schemas import ModuleCreate, ChallengeCreate
 
 # Wrapper like in profiles repo
@@ -14,36 +15,70 @@ async def _exec(query):
 class ModuleRepository:
 
     @staticmethod
-    async def create_module(module: ModuleCreate, lecturer_id: int):
+    async def create_module(module_data: ModuleCreate, admin_id: int):
         client = await get_supabase()
+
+    # Check if lecturer exists
+        lecturer_request = client.table("lecturers").select("*").eq("profile_id", module_data.lecturer_id).maybe_single()
+        lecturer_result = await lecturer_request.execute()
+        lecturer = lecturer_result.data
+        if not lecturer:
+         raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Lecturer with id {module_data.lecturer_id} does not exist."
+        )
+
+    # If lecturer exists, insert module
         data = {
-            "id": str(uuid.uuid4()),
-            "code": module.code,
-            "name": module.name,
-            "description": module.description,
-            "semester_id": str(module.semester_id),
-            "lecturer_id": lecturer_id,
-            "code_language": module.code_language,
-            "credits": module.credits,
-        }
+        "code": module_data.code,
+        "name": module_data.name,
+        "description": module_data.description,
+        "semester_id": str(module_data.semester_id),
+        "lecturer_id": module_data.lecturer_id,
+        "code_language": module_data.code_language,
+        "credits": module_data.credits,
+    }
         rows = await _exec(client.table("modules").insert(data))
         return rows[0] if rows else None
 
+
     @staticmethod
-    async def update_module(module_id: UUID, module: ModuleCreate, lecturer_id: Optional[int] = None):
-        client = await get_supabase()
-        q = client.table("modules").update({
-            "code": module.code,
-            "name": module.name,
-            "description": module.description,
-            "semester_id": str(module.semester_id),
-            "code_language": module.code_language,
-            "credits": module.credits,
-        }).eq("id", str(module_id))
-        if lecturer_id is not None:
-            q = q.eq("lecturer_id", lecturer_id)
-        rows = await _exec(q)
-        return rows[0] if rows else None
+    async def update_module(module_id: UUID, module: ModuleCreate, admin_id: int):
+     client = await get_supabase()
+
+    # ✅ If the admin is assigning a new lecturer, make sure the lecturer exists
+     if module.lecturer_id:
+        lecturer_request = client.table("lecturers") \
+            .select("*") \
+            .eq("profile_id", module.lecturer_id) \
+            .maybe_single()
+        lecturer_result = await lecturer_request.execute()
+        lecturer = lecturer_result.data
+        if not lecturer:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lecturer with id {module.lecturer_id} does not exist."
+            )
+
+    # ✅ Update the module (admin-only, no lecturer_id filter)
+        data = {
+        "code": module.code,
+        "name": module.name,
+        "description": module.description,
+        "semester_id": str(module.semester_id),
+        "lecturer_id": module.lecturer_id,
+        "code_language": module.code_language,
+        "credits": module.credits,
+    }
+
+     rows = await _exec(
+        client.table("modules")
+        .update(data)
+        .eq("id", str(module_id))   # only check by module id
+    )
+
+     return rows[0] if rows else None
+
 
     @staticmethod
     async def delete_module(module_id: UUID, lecturer_id: Optional[int] = None):
