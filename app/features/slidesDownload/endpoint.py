@@ -1,13 +1,15 @@
 from typing import List, Optional, Any, Dict
 import logging
+import inspect
 
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+import httpx
 
 from app.DB.supabase import get_supabase
-from app.features.topic_detections.slide_extraction.repository_supabase import (
-    slide_extraction_supabase_repository,
-)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/slides", tags=["SlidesDownload"])
 
@@ -31,36 +33,73 @@ class SignedURLResponse(BaseModel):
     expires_in: int
 
 
-async def _fetch_slide_row_by_id(slide_id: int) -> Optional[Dict[str, Any]]:
-    try:
-        get_by_id = getattr(slide_extraction_supabase_repository, "get_by_id", None)
-        if callable(get_by_id):
-            row = await get_by_id(slide_id)
-            if row is None:
-                return None
-            if isinstance(row, dict) and "data" in row and row.get("data"):
-                return row.get("data")
-            return row
-    except Exception:
-        logging.exception("slide_extraction_supabase_repository.get_by_id failed; falling back to query()")
+def _extract_signed_url(signed: Any) -> Optional[str]:
+    """Robust extraction of a signed URL from different client return shapes."""
+    if not signed:
+        return None
 
     try:
-        query = slide_extraction_supabase_repository.query()
-        select_method = getattr(query, "select", None)
-        if callable(select_method):
-            query = query.select("id, filename, week_number, module_code, topic_id, slides_key")
-        resp = await query.eq("id", slide_id).single().execute()
-        if getattr(resp, "error", None):
-            logging.debug("Supabase query error for slide %s: %s", slide_id, getattr(resp, "error"))
+        # dict-like responses
+        if isinstance(signed, dict):
+            for key in ("signedURL", "signed_url", "signedUrl", "url"):
+                val = signed.get(key)
+                if val:
+                    return val
+            data = signed.get("data")
+            if isinstance(data, dict):
+                for key in ("signedURL", "signed_url", "signedUrl", "url"):
+                    if data.get(key):
+                        return data.get(key)
             return None
-        data = getattr(resp, "data", None)
-        if data:
-            return data
-        if isinstance(resp, dict):
-            return resp
-        return None
+
+        # objects that expose get()
+        get = getattr(signed, "get", None)
+        if callable(get):
+            try:
+                for key in ("signedURL", "signed_url", "signedUrl", "url"):
+                    val = signed.get(key)
+                    if val:
+                        return val
+                data = signed.get("data")
+                if isinstance(data, dict):
+                    for key in ("signedURL", "signed_url", "signedUrl", "url"):
+                        if data.get(key):
+                            return data.get(key)
+            except Exception:
+                pass
+
+        # objects with attributes
+        for attr in ("signedURL", "signed_url", "signedUrl", "url"):
+            if hasattr(signed, attr):
+                val = getattr(signed, attr)
+                if val:
+                    return val
+
+        # last resort: string representation
+        s = str(signed)
+        if s.startswith("http"):
+            return s
     except Exception:
-        logging.exception("Fallback query for slide_by_id failed")
+        logging.exception("_extract_signed_url failed to parse storage response")
+
+    return None
+
+
+async def _fetch_slide_row_by_id(slide_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Fetch a slide row by id directly from Supabase.
+    """
+    try:
+        client = await get_supabase()
+        query = client.table("slide_extractions").select(
+            "id, filename, week_number, module_code, topic_id, slides_key"
+        ).eq("id", slide_id).single()
+
+        resp = await query.execute()
+        data = getattr(resp, "data", None) or (resp.get("data") if isinstance(resp, dict) else None)
+        return data
+    except Exception:
+        logger.exception("Failed to fetch slide by id")
         return None
 
 
@@ -70,8 +109,13 @@ async def list_slides(
     module_code: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
 ):
+    """List slides with optional filters."""
     try:
-        query = slide_extraction_supabase_repository.query()
+        client = await get_supabase()
+        query = client.table("slide_extractions").select(
+            "id, filename, week_number, module_code, topic_id, slides_key"
+        )
+
         if week is not None:
             query = query.eq("week_number", week)
         if module_code is not None:
@@ -79,14 +123,11 @@ async def list_slides(
         if search:
             query = query.ilike("filename", f"%{search}%")
 
-        select_method = getattr(query, "select", None)
-        if callable(select_method):
-            query = query.select("id, filename, week_number, module_code, topic_id, slides_key")
-
         slides_res = await query.execute()
-        rows = getattr(slides_res, "data", None) or slides_res or []
+        rows = getattr(slides_res, "data", None) or (slides_res.get("data") if isinstance(slides_res, dict) else []) or []
+
     except Exception:
-        logging.exception("Failed to fetch slides list")
+        logger.exception("Failed to fetch slides list")
         raise HTTPException(status_code=500, detail="Failed to fetch slides")
 
     out: List[SlideMetadata] = []
@@ -106,6 +147,7 @@ async def list_slides(
 
 @router.get("/{slide_id}", response_model=SlideMetadata)
 async def get_slide_by_id(slide_id: int):
+    """Get single slide metadata."""
     row = await _fetch_slide_row_by_id(slide_id)
     if not row:
         raise HTTPException(status_code=404, detail="Slide not found")
@@ -122,11 +164,13 @@ async def get_slide_by_id(slide_id: int):
 
 @router.get("/{slide_id}/download", response_model=SignedURLResponse)
 async def download_slide(slide_id: int, ttl: int = Query(DEFAULT_TTL)):
+    """
+    Return a signed URL for the slide stored in the `slides` bucket.
+    """
     if ttl <= 0 or ttl > MAX_TTL:
         raise HTTPException(status_code=400, detail=f"ttl must be between 1 and {MAX_TTL} seconds")
 
     client = await get_supabase()
-
     row = await _fetch_slide_row_by_id(slide_id)
     if not row:
         raise HTTPException(status_code=404, detail="Slide not found")
@@ -137,25 +181,69 @@ async def download_slide(slide_id: int, ttl: int = Query(DEFAULT_TTL)):
 
     try:
         bucket = client.storage.from_("slides")
-        signed = await bucket.create_signed_url(key, expires_in=ttl)
-        signed_url = None
-        if isinstance(signed, dict):
-            signed_url = signed.get("signedURL") or signed.get("signed_url") or signed.get("signedUrl")
-            if signed_url is None and isinstance(signed.get("data"), dict):
-                signed_url = signed["data"].get("signedURL") or signed["data"].get("signed_url")
-        else:
-            try:
-                signed_url = getattr(signed, "get", None) and (signed.get("signedURL") or signed.get("signed_url") or signed.get("signedUrl"))
-            except Exception:
-                signed_url = None
+        signed = bucket.create_signed_url(key, expires_in=ttl)
 
+        if inspect.isawaitable(signed):
+            signed = await signed
+
+        signed_url = _extract_signed_url(signed)
         if not signed_url:
-            logging.debug("create_signed_url returned: %s", signed)
+            logger.debug("create_signed_url returned: %s", signed)
             raise Exception("No signed URL in storage response")
     except HTTPException:
         raise
     except Exception:
-        logging.exception("Failed to generate signed URL for slide %s", slide_id)
+        logger.exception("Failed to generate signed URL for slide %s", slide_id)
         raise HTTPException(status_code=500, detail="Failed to generate signed URL")
 
     return SignedURLResponse(slide_id=slide_id, filename=row.get("filename"), signed_url=signed_url, expires_in=ttl)
+
+
+@router.get("/{slide_id}/download-file", response_class=StreamingResponse)
+async def download_slide_file(slide_id: int, ttl: int = Query(DEFAULT_TTL)):
+    """
+    Stream the slide file through the API using a server-side fetch of the signed URL.
+    Useful for Swagger UI to get an actual file download.
+    """
+    if ttl <= 0 or ttl > MAX_TTL:
+        raise HTTPException(status_code=400, detail=f"ttl must be between 1 and {MAX_TTL} seconds")
+
+    client = await get_supabase()
+    row = await _fetch_slide_row_by_id(slide_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Slide not found")
+
+    key = row.get("slides_key")
+    if not key:
+        raise HTTPException(status_code=404, detail="Slide storage key missing")
+
+    try:
+        bucket = client.storage.from_("slides")
+        signed = bucket.create_signed_url(key, expires_in=ttl)
+        if inspect.isawaitable(signed):
+            signed = await signed
+        signed_url = _extract_signed_url(signed)
+        if not signed_url:
+            logger.debug("create_signed_url returned: %s", signed)
+            raise Exception("No signed URL in storage response")
+    except Exception:
+        logger.exception("Failed to generate signed URL for slide %s", slide_id)
+        raise HTTPException(status_code=500, detail="Failed to generate signed URL")
+
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.get(signed_url, timeout=60.0)
+            if resp.status_code != 200:
+                logger.debug("Failed to fetch file from signed URL: %s (status=%s)", signed_url, resp.status_code)
+                raise HTTPException(status_code=502, detail="Failed to fetch slide file from storage provider")
+
+            media_type = resp.headers.get("content-type", "application/octet-stream")
+            filename = (row.get("filename") or "slide")
+            headers = {"Content-Disposition": f'attachment; filename=\"{filename}\"'}
+
+            return StreamingResponse(resp.aiter_bytes(), media_type=media_type, headers=headers)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while streaming slide file for slide %s", slide_id)
+        raise HTTPException(status_code=500, detail="Failed to stream slide file")
