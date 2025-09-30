@@ -183,15 +183,16 @@ def require_admin(use_cookie: bool = False) -> Callable:
     return require_role("admin", use_cookie=use_cookie)
 
 def require_admin_cookie() -> Callable:
-    from app.common.deps import get_current_user_from_cookie  # Lazy import to avoid circular dependency
-
-    async def dependency(request: Request):
-        user = await get_current_user_from_cookie(request)  # Await the async function
+    """Enforce admin role using cookie-based auth."""
+    async def dependency(
+        user: CurrentUser = Depends(get_current_user_from_cookie)  # <- let FastAPI resolve claims
+    ):
         if user.role != "admin":
             raise HTTPException(status_code=403, detail="Not authorized as admin")
         return user
 
     return dependency
+
 
 def require_lecturer(use_cookie: bool = False) -> Callable:
     return require_role("lecturer", use_cookie=use_cookie)
