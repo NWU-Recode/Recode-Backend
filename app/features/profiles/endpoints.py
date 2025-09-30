@@ -2,10 +2,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 
 from app.common.deps import (
-    get_current_user_from_cookie,
-    require_admin_cookie,
-    get_current_user_with_refresh,
-    require_admin_or_lecturer_cookie,
+    get_current_user,
+    require_admin,
+    require_lecturer,
+    require_role,
     CurrentUser,
 )
 from typing import Callable
@@ -15,15 +15,15 @@ from .service import list_profiles, get_profile_by_id, update_profile, update_pr
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 @router.get("/", response_model=list[ProfileSchema])
-async def read_profiles(current_user: CurrentUser = Depends(require_admin_or_lecturer_cookie())) -> list[ProfileSchema]:
-    """Lecturer or Admin: List all profiles (cookie auth)."""
+async def read_profiles(current_user: CurrentUser = Depends(require_role('admin','lecturer')) ) -> list[ProfileSchema]:
+    """Lecturer or Admin: List all profiles (bearer token)."""
     profiles = await list_profiles()
     return [ProfileSchema(**profile) for profile in profiles]
 
 @router.get("/me", response_model=ProfileSchema)
 async def read_current_profile(
     request: Request,
-    current_user: CurrentUser = Depends(get_current_user_with_refresh),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ProfileSchema:
     """Authenticated user: Get their own full profile (auto-refresh if expiring).
 
@@ -40,9 +40,9 @@ async def read_current_profile(
 @router.put("/me", response_model=ProfileSchema)
 async def update_current_profile(
     data: ProfileUpdate,
-    current_user: CurrentUser = Depends(get_current_user_from_cookie),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ProfileSchema:
-    """Authenticated user: Update their own profile (cookie auth)."""
+    """Authenticated user: Update their own profile (bearer token)."""
 
     updated = await update_profile(current_user.id, data)
 
@@ -53,9 +53,9 @@ async def update_current_profile(
 @router.get("/{profile_id}", response_model=PublicProfile)
 async def read_profile(
     profile_id: int,
-    current_user: CurrentUser = Depends(require_admin_or_lecturer_cookie()),
+    current_user: CurrentUser = Depends(require_role('admin','lecturer')),
 ) -> PublicProfile:
-    """Lecturer or Admin: Get a public profile by ID (cookie auth)."""
+    """Lecturer or Admin: Get a public profile by ID (bearer token)."""
     prof = await get_profile_by_id(profile_id)
     if not prof:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
@@ -66,9 +66,9 @@ async def update_profile_role_endpoint(
     profile_id: int,
 
     role_data: ProfileRoleUpdate,
-    current_user: CurrentUser = Depends(require_admin_cookie()),
+    current_user: CurrentUser = Depends(require_admin()),
 ) -> ProfileSchema:
-    """Admin-only: Update a user's role (cookie auth)."""
+    """Admin-only: Update a user's role (bearer token)."""
     if current_user.id == profile_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
