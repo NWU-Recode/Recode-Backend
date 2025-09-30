@@ -95,15 +95,17 @@ class BatchEnrolRequest(BaseModel):
     semester_id: Optional[UUID] = None
 
 
-class AssignLecturerRequest(BaseModel):
+class AssignLecturerRequestByBody(BaseModel):
     lecturer_id: int
     module_code: Optional[str] = None
-    module_id: Optional[UUID] = None
+    #module_id: Optional[UUID] = None
 
+class AssignLecturerRequest(BaseModel):
+    lecturer_id: int
 
 class RemoveLecturerRequest(BaseModel):
     module_code: Optional[str] = None
-    module_id: Optional[UUID] = None
+    #module_id: Optional[UUID] = None
 
 """
 class SemesterCreate(BaseModel):
