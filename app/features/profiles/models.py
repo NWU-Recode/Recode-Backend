@@ -59,7 +59,7 @@ class User(Base):
     # relationships
     # Modules a user (student) is enrolled in. student_module table
     # links users.id to modules.id
-    #modules = relationship("Module", secondary="student_module", back_populates="students")
+    #modules = relationship("Module", secondary="student_module", back_populates="students")(vonani)
 
     # Note: LecturerProfile relationship was removed because no mapped
     # LecturerProfile class exists in the codebase. If you later add a
