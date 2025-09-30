@@ -1,6 +1,10 @@
 
+import importlib
 
-from tortoise import fields, models
+# Import submodules explicitly to avoid cases where the package __init__ doesn't
+# expose `fields`/`models` attributes directly.
+models = importlib.import_module("tortoise.models")
+fields = importlib.import_module("tortoise.fields")
 
 # -------------------
 # Profiles Table
