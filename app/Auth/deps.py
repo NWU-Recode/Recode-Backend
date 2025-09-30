@@ -4,7 +4,7 @@ from sqlalchemy import select
 from jose import JWTError
 from typing import Any, TypedDict
 from app.DB.session import get_db
-from app.features.profiles.models import Profile
+from app.features.profiles.service import ensure_profile_provisioned
 from .jwks_cache import JWKSCache
 from app.Core.config import get_settings
 import os, time
@@ -63,45 +63,70 @@ async def get_current_claims(request: Request) -> Claims:
 async def get_current_user(
     claims: dict = Depends(get_current_claims),
     db: Session = Depends(get_db),
-) -> Profile:
+) -> object:
+    """Resolve a minimal current user object using the profiles service to avoid ORM mapper issues.
+
+    Returns a lightweight object with attributes: id, email, role, full_name, avatar_url.
+    """
     user_id = claims.get("sub")
     if not user_id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token missing sub")
+
     # Cache path: return minimal profile fields if available
     cached = _cache_get(user_id)
     if cached:
         class _Lite:
             pass
         obj = _Lite()
-        # Required attributes used downstream
         obj.id = cached.get("id")
         obj.email = cached.get("email")
         obj.role = cached.get("role")
         obj.full_name = cached.get("full_name")
         obj.avatar_url = cached.get("avatar_url")
         return obj  # type: ignore[return-value]
-    # Profile PK (id) is not the Supabase auth user id; we stored that in supabase_id
-    # so look it up by supabase_id column.
-    profile = db.execute(select(Profile).where(Profile.supabase_id == user_id)).scalar_one_or_none()
-    if not profile:
-        # If the trigger somehow lagged, you can decide to insert a minimal row here.
+
+    # Use service layer which safely provisions/looks up profiles (may use Supabase repo)
+    try:
+        profile_row = await ensure_profile_provisioned(user_id, (claims.get("email") or (claims.get("user_metadata") or {}).get("email") or ""), (claims.get("user_metadata") or {}).get("full_name"))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Failed to resolve profile: {exc}") from exc
+
+    if not profile_row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Profile not found")
+
     # Update cache with minimal fields
     try:
         _cache_set(user_id, {
-            "id": getattr(profile, "id", None),
-            "email": getattr(profile, "email", None),
-            "role": getattr(profile, "role", None),
-            "full_name": getattr(profile, "full_name", None),
-            "avatar_url": getattr(profile, "avatar_url", None),
+            "id": profile_row.get("id"),
+            "email": profile_row.get("email"),
+            "role": profile_row.get("role"),
+            "full_name": profile_row.get("full_name"),
+            "avatar_url": profile_row.get("avatar_url"),
         })
     except Exception:
         pass
-    return profile
+
+    class _Lite:
+        pass
+
+    obj = _Lite()
+    obj.id = profile_row.get("id")
+    obj.email = profile_row.get("email")
+    obj.role = profile_row.get("role")
+    obj.full_name = profile_row.get("full_name")
+    obj.avatar_url = profile_row.get("avatar_url")
+    return obj
 
 def require_roles(*allowed: str):
-    async def _dep(user: Profile = Depends(get_current_user)) -> Profile:
-        if user.role not in allowed:
+    async def _dep(user = Depends(get_current_user)):
+        # 'user' will be the lightweight object returned by get_current_user
+        resolved = user if not isinstance(user, Depends) else None
+        if not resolved:
+            # Fast-fail in the unlikely case the dependency didn't resolve
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+        if getattr(user, "role", None) not in allowed:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permissions")
         return user
     return _dep

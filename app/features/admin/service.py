@@ -164,6 +164,70 @@ class ModuleService:
         created = await ModuleRepository.create_module(module, payload.lecturer_id)
         return ModuleResponse(**created) if created else None
 
+    # --- Helpers that operate on module_code (used by endpoints) -----------------
+    @staticmethod
+    async def get_module_by_code(module_code: str, user: CurrentUser) -> Optional[ModuleResponse]:
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if not mod:
+            return None
+        # reuse existing get_module logic but with id-based checks
+        if user.role.lower() == "student":
+            enrolled = await ModuleRepository.is_enrolled(mod.get("id"), user.id)
+            if not enrolled:
+                return None
+        if user.role.lower() == "lecturer" and mod.get("lecturer_id") != user.id:
+            return None
+        return ModuleResponse(**mod)
+
+    @staticmethod
+    async def update_module_by_code(module_code: str, module: ModuleCreate, admin_user_id: int) -> Optional[ModuleResponse]:
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if not mod:
+            return None
+        return await ModuleService.update_module(mod.get("id"), module, admin_user_id)
+
+    @staticmethod
+    async def delete_module_by_code(module_code: str, admin_user_id: int) -> bool:
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if not mod:
+            return False
+        return await ModuleService.delete_module(mod.get("id"), admin_user_id)
+
+    @staticmethod
+    async def get_students_by_code(module_code: str, lecturer_id: int):
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if not mod:
+            return None
+        return await ModuleService.get_students(mod.get("id"), lecturer_id)
+
+    @staticmethod
+    async def get_challenges_by_code(module_code: str, user: CurrentUser):
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if not mod:
+            return None
+        return await ModuleService.get_challenges(mod.get("id"), user)
+
+    @staticmethod
+    async def enrol_student_by_code(module_code: str, student_id: int, lecturer_id: int, semester_id: Optional[UUID] = None):
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if not mod:
+            return None
+        return await ModuleService.enrol_student(mod.get("id"), student_id, lecturer_id, semester_id)
+
+    @staticmethod
+    async def enrol_students_batch_by_code(module_code: str, student_ids: list[int], lecturer_id: int, semester_id: Optional[UUID] = None):
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if not mod:
+            return None
+        return await ModuleService.enrol_students_batch(mod.get("id"), student_ids, lecturer_id, semester_id)
+
+    @staticmethod
+    async def enrol_students_csv_by_code(module_code: str, csv_bytes: bytes, lecturer_id: int):
+        mod = await ModuleRepository.get_module_by_code(module_code)
+        if not mod:
+            return {"error": "module_not_found"}
+        return await ModuleService.enrol_students_csv(mod.get("id"), csv_bytes, lecturer_id)
+
     @staticmethod
     async def enrol_students_csv(module_id: UUID, csv_bytes: bytes, lecturer_id: int, semester_id: Optional[UUID] = None) -> dict:
         """

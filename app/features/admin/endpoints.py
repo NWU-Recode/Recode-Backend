@@ -16,10 +16,11 @@ from .schemas import RemoveLecturerRequest
 from app.features.semester.schemas import SemesterResponse
 from .service import ModuleService,LecturerService 
 from ...common.deps import (
-    require_lecturer_cookie,
-    get_current_user_with_refresh,
+    require_lecturer,
+    get_current_user,
+    require_role,
     CurrentUser,
-    require_admin_cookie,
+    require_admin,
 )
 from app.demo.timekeeper import (
     add_demo_week_offset,
@@ -41,7 +42,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
     summary="Get current lecturer profile",
     description="Fetch the authenticated lecturer’s profile info.",
 )
-async def get_my_profile(user: CurrentUser = Depends(require_lecturer_cookie())):
+async def get_my_profile(user: CurrentUser = Depends(require_lecturer())):
     """Return the profile for the currently authenticated lecturer."""
     profile = await LecturerService.get_lecturer_profile(user.id)
     if not profile:
@@ -61,13 +62,14 @@ async def get_my_profile(user: CurrentUser = Depends(require_lecturer_cookie()))
 )
 async def create_module(
     module: ModuleCreate,
-    user: CurrentUser = Depends(require_admin_cookie()),
+    user: CurrentUser = Depends(require_admin()),
 ):
     """Create a module. Admin-only.
 
     Required role: Admin
     """
-    created = await ModuleService.create_module(module, user.id)
+    # Use admin_create_module so admins can specify lecturer_id in the payload
+    created = await ModuleService.admin_create_module(module, user.id)
     if not created:
         raise HTTPException(status_code=400, detail="Failed to create module")
     return created
@@ -87,7 +89,7 @@ async def create_module(
 async def update_module(
     module_code: str,
     module: ModuleCreate,
-    user: CurrentUser = Depends(require_admin_cookie()),
+    user: CurrentUser = Depends(require_admin()),
 ):
     """Update a module. Admin-only.
 
@@ -110,7 +112,7 @@ async def update_module(
 )
 async def delete_module(
     module_code: str,
-    user: CurrentUser = Depends(require_admin_cookie()),
+    user: CurrentUser = Depends(require_admin()),
 ):
     """Delete a module. Admin-only.
 
@@ -134,7 +136,7 @@ async def delete_module(
         "Requires authenticated user (Student or Lecturer)."
     ),
 )
-async def list_modules(user: CurrentUser = Depends(get_current_user_with_refresh)):
+async def list_modules(user: CurrentUser = Depends(get_current_user)):
     """List modules for the current user.
 
     Roles allowed: Student, Lecturer
@@ -154,7 +156,7 @@ async def list_modules(user: CurrentUser = Depends(get_current_user_with_refresh
 )
 async def get_module(
     module_code: str,
-    user: CurrentUser = Depends(get_current_user_with_refresh),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """Retrieve module details.
 
@@ -179,7 +181,7 @@ async def get_module(
 )
 async def module_students(
     module_code: str,
-    user: CurrentUser = Depends(require_lecturer_cookie()),  # <--- note the ()
+    user: CurrentUser = Depends(require_lecturer()),  # <--- note the ()
 ):
     """List students in a module. Lecturer-only.
 
@@ -204,7 +206,7 @@ async def module_students(
 )
 async def module_challenges(
     module_code: str,
-    user: CurrentUser = Depends(get_current_user_with_refresh),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """List challenges for a module.
 
@@ -229,7 +231,7 @@ async def module_challenges(
 async def enrol_student(
     module_code: str,
     req: EnrolRequest,
-    user: CurrentUser = Depends(require_lecturer_cookie()),
+    user: CurrentUser = Depends(require_lecturer()),
 ):
     """Enrol a student into a module. Lecturer-only.
 
@@ -253,7 +255,7 @@ async def enrol_student(
 async def enrol_students_batch(
     module_code: str,
     req: BatchEnrolRequest,
-    user: CurrentUser = Depends(require_lecturer_cookie()),
+    user: CurrentUser = Depends(require_lecturer()),
 ):
     """Batch enrol students. Lecturer-only.
 
@@ -277,7 +279,7 @@ async def enrol_students_batch(
 async def enrol_students_csv(
     module_code: str,
     file: UploadFile = File(...),
-    user: CurrentUser = Depends(require_lecturer_cookie()),
+    user: CurrentUser = Depends(require_lecturer()),
 ):
     """Batch enrol students from CSV. Lecturer-only.
 
@@ -302,7 +304,7 @@ async def enrol_students_csv(
 async def assign_lecturer(
     module_code: str,
     req: AssignLecturerRequest,
-    user: CurrentUser = Depends(require_admin_cookie()),
+    user: CurrentUser = Depends(require_admin()),
 ):
     """Assign a lecturer to a module. Admin-only.
 
@@ -331,7 +333,7 @@ async def assign_lecturer(
 )
 async def remove_lecturer(
     module_code: str,
-    user: CurrentUser = Depends(require_admin_cookie()),
+    user: CurrentUser = Depends(require_admin()),
 ):
     """Remove lecturer assignment. Admin-only.
 
@@ -352,7 +354,7 @@ async def remove_lecturer(
 )
 async def assign_lecturer_by_body(
     req: AssignLecturerRequest,
-    user: CurrentUser = Depends(require_admin_cookie()),
+    user: CurrentUser = Depends(require_admin()),
 ):
     if not req.module_code and not req.module_id:
         raise HTTPException(status_code=400, detail="module_code or module_id required")
@@ -372,7 +374,7 @@ async def assign_lecturer_by_body(
 )
 async def remove_lecturer_by_body(
     req: RemoveLecturerRequest,
-    user: CurrentUser = Depends(require_admin_cookie()),
+    user: CurrentUser = Depends(require_admin()),
 ):
     if not req.module_code and not req.module_id:
         raise HTTPException(status_code=400, detail="module_code or module_id required")
@@ -402,7 +404,7 @@ async def remove_lecturer_by_body(
 )
 async def create_semester(
     payload: SemesterCreate,
-    user: CurrentUser = Depends(require_admin_cookie()),
+    user: CurrentUser = Depends(require_admin()),
 ):
     """Create a semester. Admin-only.
 
@@ -421,7 +423,7 @@ async def create_semester(
     summary="Skip demo weeks (Admin)",
     description="Add a positive or negative number of weeks to the demo offset (e.g. {\"delta\": 1} advances one week).",
 )
-async def demo_skip_weeks(delta: int = 1, module_code: str | None = None, user: CurrentUser = Depends(require_admin_cookie())):
+async def demo_skip_weeks(delta: int = 1, module_code: str | None = None, user: CurrentUser = Depends(require_admin())):
     """Adjust the demo week offset by delta weeks. If module_code is provided, adjust only that module."""
     if module_code:
         new = add_demo_week_offset_for_module(module_code, delta)
@@ -430,31 +432,12 @@ async def demo_skip_weeks(delta: int = 1, module_code: str | None = None, user: 
     return {"offset_weeks": new}
 
 
-
-# ---- Demo time control (Admin-only) ------------------------------------------------
-@router.post(
-    "/demo/skip",
-    summary="Skip demo weeks (Admin)",
-    description="Add a positive or negative number of weeks to the demo offset (e.g. {\"delta\": 1} advances one week).",
-)
-async def demo_skip_weeks(delta: int = 1, module_code: str | None = None, user: CurrentUser = Depends(require_admin_cookie())):
-    """Adjust the demo week offset by delta weeks. Returns the new offset.
-
-    If module_code is provided, adjust the offset only for that module.
-    """
-    if module_code:
-        new = add_demo_week_offset_for_module(module_code, delta)
-        return {"module_code": module_code, "offset_weeks": new}
-    new = add_demo_week_offset(delta)
-    return {"offset_weeks": new}
-
-
 @router.post(
     "/demo/set",
     summary="Set demo week offset (Admin)",
     description="Set the demo offset to an explicit number of weeks (0 = no skip).",
 )
-async def demo_set_weeks(offset: int = 0, module_code: str | None = None, user: CurrentUser = Depends(require_admin_cookie())):
+async def demo_set_weeks(offset: int = 0, module_code: str | None = None, user: CurrentUser = Depends(require_admin())):
     if module_code:
         new = set_demo_week_offset_for_module(module_code, offset)
         return {"module_code": module_code, "offset_weeks": new}
@@ -467,7 +450,7 @@ async def demo_set_weeks(offset: int = 0, module_code: str | None = None, user: 
     summary="Clear demo week offset (Admin)",
     description="Reset demo offset to zero.",
 )
-async def demo_clear_weeks(module_code: str | None = None, user: CurrentUser = Depends(require_admin_cookie())):
+async def demo_clear_weeks(module_code: str | None = None, user: CurrentUser = Depends(require_admin())):
     if module_code:
         clear_demo_week_offset_for_module(module_code)
         return {"module_code": module_code, "offset_weeks": get_demo_week_offset_for_module(module_code)}

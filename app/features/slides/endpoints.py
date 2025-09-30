@@ -17,8 +17,7 @@ def _read_semester_start() -> date:
 from typing import List
 import asyncio
 
-from app.common.deps import get_current_user_from_cookie, CurrentUser
-from app.common.deps import require_admin_or_lecturer_cookie
+from app.common.deps import get_current_user, CurrentUser, require_role
 from .upload import upload_slide_bytes
 from .upload import create_topic_from_extraction
 from .pathing import parse_week_topic_from_filename, SA_TZ
@@ -67,7 +66,7 @@ async def upload_slide(
     include_signed_url: bool = Query(False, description="Include a short-lived signed URL in the response (not stored)"),
     signed_ttl_sec: int = Query(900, ge=60, le=86400, description="TTL (seconds) for the signed URL if requested"),
     file: UploadFile = File(...),
-    current_user: CurrentUser = Depends(require_admin_or_lecturer_cookie()),
+    current_user: CurrentUser = Depends(require_role('admin','lecturer')),
 ):
     try:
         data = await file.read()
@@ -139,7 +138,7 @@ async def batch_upload_slides(
     include_signed_url: bool = Query(False, description="Include a short-lived signed URL in the response (not stored)"),
     signed_ttl_sec: int = Query(900, ge=60, le=86400, description="TTL (seconds) for the signed URL if requested"),
     files: List[UploadFile] = File(...),
-    current_user: CurrentUser = Depends(require_admin_or_lecturer_cookie()),
+    current_user: CurrentUser = Depends(require_role('admin','lecturer')),
     assign_weeks_by_order: bool = Query(True, description="If true, assign weeks sequentially starting at SEMESTER_START based on file order (useful for batch uploads)") ,
 ):
     if not files:

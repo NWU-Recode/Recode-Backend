@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, model_validator
 from typing import Dict
 
-from app.common.deps import CurrentUser, get_current_user_from_cookie, require_role
+from app.common.deps import CurrentUser, get_current_user, require_role
 from app.features.submissions.schemas import QuestionEvaluationRequest, QuestionEvaluationResponse
 from app.features.submissions.service import submissions_service
 from app.features.submissions.repository import submissions_repository
@@ -43,7 +43,7 @@ class BatchSubmissionsPayload(BaseModel):
 async def quick_test_question_by_qid(
     question_id: str,
     payload: QuestionEvaluationRequest,
-    current_user: CurrentUser = Depends(get_current_user_from_cookie),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Resolve question -> challenge and run ONLY public tests. Delegates to submissions_service.evaluate_question.
 
@@ -80,7 +80,7 @@ async def quick_test_question_by_qid(
 async def submit_challenge(
     challenge_id: str,
     payload: BatchSubmissionsPayload = Body(...),
-    current_user: CurrentUser = Depends(get_current_user_from_cookie),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Full snapshot submit flow (FE provides mapping question_id -> source_code). This
     uses the open attempt lifecycle: create_or_get_open_attempt, grade via service, and finalize attempt.
