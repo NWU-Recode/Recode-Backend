@@ -23,7 +23,12 @@ from app.features.judge0.endpoints import protected_router as judge0_protected_r
 from app.features.challenges.endpoints import router as challenges_router
 from app.features.dashboard.endpoints import router as dashboard_router
 from app.features.submissions.endpoints import router as submissions_router
+<<<<<<< HEAD
 from app.common.deps import get_current_user
+=======
+from app.features.analytics.endpoints import router as analytics_router
+from app.common.deps import get_current_user_from_cookie
+>>>>>>> e0373c6963229d363a07b32a91147e535fcb4b28
 from app.common.middleware import SessionManagementMiddleware
 # vonani routers
 from app.features.admin.endpoints import router as admin_router
@@ -91,6 +96,7 @@ app.include_router(dashboard_router, dependencies=protected_deps)
 app.include_router(slides_router, dependencies=protected_deps)           # Legacy slides
 app.include_router(slides_download_router, dependencies=protected_deps)  # Your new slides endpoint
 app.include_router(submissions_router, dependencies=protected_deps)
+app.include_router(analytics_router)
 # vonani
 app.include_router(admin_router)
 app.include_router(semester_router)
