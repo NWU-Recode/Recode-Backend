@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends
 
 from app.common.deps import (
     CurrentUser,
-    get_current_user_from_cookie,
-    require_admin_cookie,
+    get_current_user,
+    require_admin,
 )
 
 from .schemas import ModuleResponse, SemesterCreate, SemesterResponse
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/semesters", tags=["Semesters"])
 @router.post("/", response_model=SemesterResponse)
 def create_semester(
     semester: SemesterCreate,
-    current_user: CurrentUser = Depends(require_admin_cookie()),
+    current_user: CurrentUser = Depends(require_admin()),
 ) -> SemesterResponse:
     return SemesterService.create_semester(semester)
 
@@ -34,7 +34,7 @@ def list_semesters() -> List[SemesterResponse]:
 
 @router.get("/current", response_model=SemesterResponse)
 def current_semester(
-    current_user: CurrentUser = Depends(get_current_user_from_cookie),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> SemesterResponse:
     return SemesterService.current_semester()
 
@@ -42,7 +42,7 @@ def current_semester(
 @router.get("/{semester_id}/modules", response_model=List[ModuleResponse])
 async def semester_modules(
     semester_id: str,
-    current_user: CurrentUser = Depends(get_current_user_from_cookie),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> List[ModuleResponse]:
     return SemesterService.get_user_modules(semester_id, current_user.id)
 

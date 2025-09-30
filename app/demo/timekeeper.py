@@ -1,104 +1,61 @@
-from __future__ import annotations
+from datetime import timedelta, date
+from typing import Optional
 
-import json
-from pathlib import Path
-from datetime import date, timedelta
-from typing import Dict, Any
-
-# Store demo state alongside scripts folder so it survives restarts but is easy to find.
-STATE_FILE = Path(__file__).resolve().parents[2] / "scripts" / "demo_time_state.json"
+# Simple in-memory demo offsets (process-local). Not persistent — just to satisfy imports and basic behavior.
+_global_offset_weeks: int = 0
+_module_offsets: dict[str, int] = {}
 
 
-def _read_state() -> Dict[str, Any]:
+def apply_demo_offset_to_semester_start(sem_start: date, module_code: Optional[str] = None) -> date:
+    """Return semester_start adjusted by demo offset (module-specific if provided, else global)."""
+    offset = _module_offsets.get(module_code) if module_code else None
+    if offset is None:
+        offset = _global_offset_weeks
     try:
-        if not STATE_FILE.exists():
-            return {"offset_weeks": 0, "modules": {}}
-        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        # normalize
-        return {
-            "offset_weeks": int(data.get("offset_weeks", 0)),
-            "modules": {k: int(v) for k, v in (data.get("modules") or {}).items()},
-        }
+        return sem_start + timedelta(weeks=int(offset))
     except Exception:
-        return {"offset_weeks": 0, "modules": {}}
+        return sem_start
 
 
-def _write_state(state: Dict[str, Any]) -> None:
-    try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
-    except Exception:
-        # best-effort: ignore write failures in demo mode
-        pass
+# Global offsets
+def add_demo_week_offset(delta: int) -> int:
+    global _global_offset_weeks
+    _global_offset_weeks += int(delta)
+    return _global_offset_weeks
+
+
+def set_demo_week_offset(value: int) -> int:
+    global _global_offset_weeks
+    _global_offset_weeks = int(value)
+    return _global_offset_weeks
+
+
+def clear_demo_week_offset() -> int:
+    global _global_offset_weeks
+    _global_offset_weeks = 0
+    return _global_offset_weeks
 
 
 def get_demo_week_offset() -> int:
-    return int(_read_state().get("offset_weeks", 0))
-
-
-def set_demo_week_offset(offset: int) -> int:
-    offset_val = int(offset or 0)
-    state = _read_state()
-    state["offset_weeks"] = offset_val
-    _write_state(state)
-    return offset_val
-
-
-def add_demo_week_offset(delta: int) -> int:
-    cur = get_demo_week_offset()
-    new = int(cur + int(delta or 0))
-    set_demo_week_offset(new)
-    return new
-
-
-def clear_demo_week_offset() -> None:
-    set_demo_week_offset(0)
+    return _global_offset_weeks
 
 
 # Module-scoped offsets
-def get_demo_week_offset_for_module(module_code: str) -> int:
-    state = _read_state()
-    return int(state.get("modules", {}).get(module_code, 0))
-
-
-def set_demo_week_offset_for_module(module_code: str, offset: int) -> int:
-    state = _read_state()
-    modules = state.get("modules", {})
-    modules[module_code] = int(offset or 0)
-    state["modules"] = modules
-    _write_state(state)
-    return modules[module_code]
-
-
 def add_demo_week_offset_for_module(module_code: str, delta: int) -> int:
-    cur = get_demo_week_offset_for_module(module_code)
-    new = int(cur + int(delta or 0))
-    set_demo_week_offset_for_module(module_code, new)
-    return new
+    v = _module_offsets.get(module_code, 0) + int(delta)
+    _module_offsets[module_code] = v
+    return v
 
 
-def clear_demo_week_offset_for_module(module_code: str) -> None:
-    state = _read_state()
-    modules = state.get("modules", {})
-    if module_code in modules:
-        modules.pop(module_code, None)
-    state["modules"] = modules
-    _write_state(state)
+def set_demo_week_offset_for_module(module_code: str, value: int) -> int:
+    _module_offsets[module_code] = int(value)
+    return _module_offsets[module_code]
 
 
-def apply_demo_offset_to_semester_start(semester_start: date, module_code: str | None = None) -> date:
-    """Return an adjusted semester_start that accounts for demo offset.
+def clear_demo_week_offset_for_module(module_code: str) -> int:
+    _module_offsets.pop(module_code, None)
+    return 0
 
-    If a module_code is provided and has a configured offset, use that. Otherwise use the global offset.
-    We move the semester_start earlier so the system thinks time has advanced by that many weeks.
-    """
-    try:
-        if module_code:
-            offset = get_demo_week_offset_for_module(module_code)
-        else:
-            offset = get_demo_week_offset()
-        if not offset:
-            return semester_start
-        return semester_start - timedelta(weeks=int(offset))
-    except Exception:
-        return semester_start
+
+def get_demo_week_offset_for_module(module_code: str) -> Optional[int]:
+    return _module_offsets.get(module_code)

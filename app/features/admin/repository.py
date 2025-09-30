@@ -30,32 +30,28 @@ class ModuleRepository:
         return rows[0] if rows else None
 
     @staticmethod
-    async def update_module(module_id: UUID, module: ModuleCreate, lecturer_id: int):
+    async def update_module(module_id: UUID, module: ModuleCreate, lecturer_id: Optional[int] = None):
         client = await get_supabase()
-        rows = await _exec(
-            client.table("modules")
-            .update({
-                "code": module.code,
-                "name": module.name,
-                "description": module.description,
-                "semester_id": str(module.semester_id),
-                "code_language": module.code_language,
-                "credits": module.credits,
-            })
-            .eq("id", str(module_id))
-            .eq("lecturer_id", lecturer_id)
-        )
+        q = client.table("modules").update({
+            "code": module.code,
+            "name": module.name,
+            "description": module.description,
+            "semester_id": str(module.semester_id),
+            "code_language": module.code_language,
+            "credits": module.credits,
+        }).eq("id", str(module_id))
+        if lecturer_id is not None:
+            q = q.eq("lecturer_id", lecturer_id)
+        rows = await _exec(q)
         return rows[0] if rows else None
 
     @staticmethod
-    async def delete_module(module_id: UUID, lecturer_id: int):
+    async def delete_module(module_id: UUID, lecturer_id: Optional[int] = None):
         client = await get_supabase()
-        rows = await _exec(
-            client.table("modules")
-            .delete()
-            .eq("id", str(module_id))
-            .eq("lecturer_id", lecturer_id)
-        )
+        q = client.table("modules").delete().eq("id", str(module_id))
+        if lecturer_id is not None:
+            q = q.eq("lecturer_id", lecturer_id)
+        rows = await _exec(q)
         return bool(rows)
 
     @staticmethod
@@ -233,7 +229,8 @@ class ModuleRepository:
             await _exec(client.table("modules").update({"lecturer_id": lecturer_profile_id}).eq("id", module_id))
         except Exception:
             pass
-        return await _exec(client.table("modules").select("*").eq("id", module_id).limit(1))
+        rows = await _exec(client.table("modules").select("*").eq("id", module_id).limit(1))
+        return rows[0] if rows else None
 
     @staticmethod
     async def remove_lecturer_by_code(module_code: str) -> Optional[dict]:
@@ -252,7 +249,8 @@ class ModuleRepository:
             await _exec(client.table("modules").update({"lecturer_id": None}).eq("id", module_id))
         except Exception:
             pass
-        return await _exec(client.table("modules").select("*").eq("id", module_id).limit(1))
+        rows = await _exec(client.table("modules").select("*").eq("id", module_id).limit(1))
+        return rows[0] if rows else None
 
     @staticmethod
     async def remove_lecturer(module_id: UUID) -> Optional[dict]:

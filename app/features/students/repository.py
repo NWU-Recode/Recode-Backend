@@ -1,75 +1,48 @@
-from typing import List
 from app.DB.supabase import get_supabase
-from .schemas import StudentProfile, ModuleProgress, BadgeInfo, TopicProgress, ChallengeProgress
+from typing import List
+from app.features.students.schemas import StudentProfile, ModuleProgress
 
-# -------------------
-# Profiles
-# -------------------
-async def get_student_profile(user_id: int) -> StudentProfile:
+async def get_student_profile(user_id: int) -> dict:
     client = await get_supabase()
     resp = await client.table("profiles").select("*").eq("id", user_id).single().execute()
-    data = resp.data  
-    if not data:
-        return None
-    return StudentProfile(
-        id=data["id"],
-        email=data["email"],
-        full_name=data["full_name"],
-        avatar_url=data.get("avatar_url"),
-        bio=data.get("bio"),
-        role=data["role"],
-        is_active=data["is_active"],
-        last_sign_in=data.get("last_sign_in")
-    )
+    return resp.data
 
-# -------------------
-# Modules / Dashboard
-# -------------------
 async def get_student_modules(user_id: int) -> List[ModuleProgress]:
     client = await get_supabase()
-    resp = await client.table("student_dashboard").select("*").eq("user_id", user_id).execute()
-    rows = resp.data or []
-    
-    modules = [
-        ModuleProgress(
-            module_id=row["module_id"],
-            module_code=row["module_code"],
-            module_name=row["module_name"],
-            elo=row["elo"],
-            current_title=row.get("current_title"),
-            current_streak=row.get("current_streak", 0),
-            longest_streak=row.get("longest_streak", 0),
-            total_points=row.get("total_points", 0),
-            total_questions_passed=row.get("total_questions_passed", 0),
-            challenges_completed=row.get("challenges_completed", 0),
-            total_badges=row.get("total_badges", 0),
-            last_submission=row.get("last_submission")
-        )
-        for row in rows
-    ]
+
+    # Step 1: Get enrolments for this student
+    enrolments_resp = await client.table("enrolments").select("module_id").eq("student_id", user_id).execute()
+    module_ids = [row["module_id"] for row in enrolments_resp.data or []]
+
+    # Step 2: Fetch module metadata for each module_id
+    modules = []
+    for module_id in module_ids:
+        mod_resp = await client.table("modules").select("id, code, name").eq("id", module_id).single().execute()
+        if mod_resp and mod_resp.data:
+            mod = mod_resp.data
+            modules.append(ModuleProgress(
+                module_id=mod["id"],
+                module_code=mod["code"],
+                module_name=mod["name"],
+                progress_percent=0.0  # default until you compute actual progress
+            ))
+
     return modules
 
 
-# -------------------
-# Badges
-# -------------------
-async def get_student_badges(user_id: int) -> list[BadgeInfo]:
+
+async def get_student_badges(user_id: int) -> list[dict]:
     client = await get_supabase()
-    
-    # Step 1: Get user_badge rows
-    resp = await client.table("user_badge").select("id, badge_id, awarded_at").eq("profile_id", user_id).execute()
-    rows = resp.data or []
-    
+    badge_rows = await client.table("user_badge").select("badge_id, awarded_at").eq("profile_id", user_id).execute()
     badges = []
-    for row in rows:
-        # Step 2: Fetch badge metadata
-        badge_resp = await client.table("badges").select("*").eq("id", row["badge_id"]).single().execute()
-        badge_data = badge_resp.data
-        if badge_data:
-            badges.append(BadgeInfo(
-                id=row["badge_id"],
-                name=badge_data["name"],
-                badge_type=badge_data["badge_type"],
-                awarded_at=row["awarded_at"]
-            ))
+    for row in badge_rows.data or []:
+        badge_meta = await client.table("badges").select("*").eq("id", row["badge_id"]).single().execute()
+        if badge_meta.data:
+            badges.append({
+                "id": row["badge_id"],
+                "name": badge_meta.data["name"],
+                "description": badge_meta.data.get("description"),
+                "badge_type": badge_meta.data["badge_type"],
+                "awarded_at": row["awarded_at"]
+            })
     return badges
