@@ -12,7 +12,7 @@ from .schemas import (
     ChallengeCreate, ChallengeResponse,
     StudentResponse,
     EnrolRequest, BatchEnrolRequest, AssignLecturerRequest,
-    ModuleAdminCreate,LecturerProfileResponse 
+    ModuleAdminCreate,LecturerProfileResponse , AssignLecturerRequestByBody
 )
 from .schemas import RemoveLecturerRequest
 from .service import ModuleService,LecturerService 
@@ -285,16 +285,10 @@ async def assign_lecturer(
     """
     # Support module_code flow: if req.module_code provided use new flow
     # prefer explicit path module_code; body may also contain module_code or module_id for backward compatibility
-    target_code = req.module_code or module_code
-    if target_code:
-        res = await ModuleService.assign_lecturer_by_code(target_code, req.lecturer_id, req.module_id)
-    else:
-        # fallback to id-based assignment if provided in body
-        res = await ModuleService.assign_lecturer(req.module_id, req.lecturer_id)
+    res = await ModuleService.assign_lecturer_by_code(module_code, req.lecturer_id)
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
-
 
 # Admin-only: remove lecturer from module
 @router.post(
@@ -326,19 +320,17 @@ async def remove_lecturer(
     summary="Assign lecturer to module (Admin) by body",
 )
 async def assign_lecturer_by_body(
-    req: AssignLecturerRequest,
+    req: AssignLecturerRequestByBody,
     user: CurrentUser = Depends(require_admin()),
 ):
-    if not req.module_code and not req.module_id:
-        raise HTTPException(status_code=400, detail="module_code or module_id required")
-    if req.module_code:
-        res = await ModuleService.assign_lecturer_by_code(req.module_code, req.lecturer_id, req.module_id)
-    else:
-        res = await ModuleService.assign_lecturer(req.module_id, req.lecturer_id)
+    if not req.module_code:
+        raise HTTPException(status_code=400, detail="module_code is required")
+    
+    res = await ModuleService.assign_lecturer_by_code(req.module_code, req.lecturer_id)
+    
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
-
 
 # Admin: remove lecturer by body (module_code)
 @router.post(
@@ -349,12 +341,11 @@ async def remove_lecturer_by_body(
     req: RemoveLecturerRequest,
     user: CurrentUser = Depends(require_admin()),
 ):
-    if not req.module_code and not req.module_id:
-        raise HTTPException(status_code=400, detail="module_code or module_id required")
-    if req.module_code:
-        res = await ModuleService.remove_lecturer_by_code(req.module_code)
-    else:
-        res = await ModuleService.remove_lecturer(req.module_id)
+    if not req.module_code:
+        raise HTTPException(status_code=400, detail="module_code is required")
+    
+    res = await ModuleService.remove_lecturer_by_code(req.module_code)
+    
     if res is None:
         raise HTTPException(status_code=404, detail="Module not found")
     return res
