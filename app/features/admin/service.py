@@ -25,8 +25,8 @@ class ModuleService:
         return ModuleResponse(**data) if data else None
 
     @staticmethod
-    async def delete_module(module_id: UUID, lecturer_id: int) -> bool:
-        return await ModuleRepository.delete_module(module_id, lecturer_id)
+    async def delete_module(module_id: UUID) -> bool:
+        return await ModuleRepository.delete_module(module_id)
 
     @staticmethod
     async def list_modules(user: CurrentUser) -> List[ModuleResponse]:
@@ -101,9 +101,9 @@ class ModuleService:
     async def remove_lecturer(module_id: UUID) -> Optional[dict]:
         return await ModuleRepository.remove_lecturer(module_id)
 
-    @staticmethod
-    async def create_semester(year: int, term_name: str, start_date, end_date, is_current: bool = False) -> Optional[dict]:
-        return await ModuleRepository.create_semester(year, term_name, start_date, end_date, is_current)
+    #@staticmethod
+    #async def create_semester(year: int, term_name: str, start_date, end_date, is_current: bool = False) -> Optional[dict]:
+      #  return await ModuleRepository.create_semester(year, term_name, start_date, end_date, is_current)
 
     @staticmethod
     async def get_current_semester() -> Optional[dict]:
@@ -165,27 +165,16 @@ class ModuleService:
         return ModuleResponse(**created) if created else None
 
     # --- Helpers that operate on module_code (used by endpoints) -----------------
-    @staticmethod
-    async def get_module_by_code(module_code: str, user: CurrentUser) -> Optional[ModuleResponse]:
-        mod = await ModuleRepository.get_module_by_code(module_code)
-        if not mod:
-            return None
-        # reuse existing get_module logic but with id-based checks
-        if user.role.lower() == "student":
-            enrolled = await ModuleRepository.is_enrolled(mod.get("id"), user.id)
-            if not enrolled:
-                return None
-        if user.role.lower() == "lecturer" and mod.get("lecturer_id") != user.id:
-            return None
-        return ModuleResponse(**mod)
+    
 
+    
     @staticmethod
     async def update_module_by_code(module_code: str, module: ModuleCreate, admin_user_id: int) -> Optional[ModuleResponse]:
         mod = await ModuleRepository.get_module_by_code(module_code)
         if not mod:
             return None
         return await ModuleService.update_module(mod.get("id"), module, admin_user_id)
-
+    
     @staticmethod
     async def delete_module_by_code(module_code: str, admin_user_id: int) -> bool:
         mod = await ModuleRepository.get_module_by_code(module_code)

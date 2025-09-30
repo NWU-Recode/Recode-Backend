@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from uuid import UUID
 from fastapi import UploadFile, File
+from app.features.semester.schemas import SemesterCreate, SemesterResponse
+from app.features.semester.service import SemesterService
 
 
 
@@ -10,10 +12,9 @@ from .schemas import (
     ChallengeCreate, ChallengeResponse,
     StudentResponse,
     EnrolRequest, BatchEnrolRequest, AssignLecturerRequest,
-    SemesterCreate, ModuleAdminCreate,LecturerProfileResponse 
+    ModuleAdminCreate,LecturerProfileResponse 
 )
 from .schemas import RemoveLecturerRequest
-from app.features.semester.schemas import SemesterResponse
 from .service import ModuleService,LecturerService 
 from ...common.deps import (
     require_lecturer,
@@ -76,52 +77,24 @@ async def create_module(
 
 
 # Admin: Update module
-@router.put(
-    "/{module_code}",
-    response_model=ModuleResponse,
-    summary="Update module (Admin)",
-    description=(
-        "Update module metadata. Requires Admin role.\n\n"
-        "Path: module_id (UUID). Body: ModuleCreate-like payload containing updated fields.\n"
-        "Returns the updated Module or 404 if not found/authorized."
-    ),
-)
-async def update_module(
-    module_code: str,
-    module: ModuleCreate,
-    user: CurrentUser = Depends(require_admin()),
-):
-    """Update a module. Admin-only.
-
-    Required role: Admin
-    """
+@router.put("/{module_code}", response_model=ModuleResponse)
+async def update_module(module_code: str, module: ModuleCreate, user: CurrentUser = Depends(require_admin())):
     updated = await ModuleService.update_module_by_code(module_code, module, user.id)
     if not updated:
         raise HTTPException(status_code=404, detail="Module not found or not authorized")
     return updated
 
-
 # Admin: Delete module
-@router.delete(
-    "/{module_code}",
-    summary="Delete module (Admin)",
-    description=(
-        "Delete a module by id. Requires Admin role.\n\n"
+@router.delete("/{module_id}", description=(
+        "Delete a module by ID. Requires Admin role.\n\n"
         "Returns {deleted: true} when successful."
-    ),
-)
-async def delete_module(
-    module_code: str,
-    user: CurrentUser = Depends(require_admin()),
-):
-    """Delete a module. Admin-only.
-
-    Required role: Admin
-    """
-    deleted = await ModuleService.delete_module_by_code(module_code, user.id)
+    ),)
+async def delete_module(module_id: UUID, user: CurrentUser = Depends(require_admin())):
+    deleted = await ModuleService.delete_module(module_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Module not found or not authorized")
     return {"deleted": True}
+
 
 
 # Student/Lecturer: List their modules
@@ -386,35 +359,22 @@ async def remove_lecturer_by_body(
         raise HTTPException(status_code=404, detail="Module not found")
     return res
 
-
 # Admin-only: create semester
-# (Handled below with a SemesterResponse return to include the UUID)
-
-
-# Admin-only: create module (allows passing semester_id or uses current semester)
-@router.post(
-    "/semesters",
-    response_model=SemesterResponse,
-    summary="Create semester (Admin)",
-    description=(
-        "Create a new academic semester. Requires Admin role.\n\n"
-        "Body: SemesterCreate { year, term_name, start_date, end_date, is_current }.\n"
-        "If is_current is true this semester will be considered the current active semester."
-    ),
-)
-async def create_semester(
-    payload: SemesterCreate,
-    user: CurrentUser = Depends(require_admin()),
+@router.post("/semesters", response_model=SemesterResponse, summary="Create semester (Admin)")
+def admin_create_semester(
+    semester: SemesterCreate,
+    current_user: CurrentUser = Depends(require_admin()),
 ):
-    """Create a semester. Admin-only.
-
-    Required role: Admin
     """
-    created = await ModuleService.create_semester(payload.year, payload.term_name, payload.start_date, payload.end_date, payload.is_current)
-    if not created:
-        raise HTTPException(status_code=400, detail="Failed to create semester")
-    # Validate/normalize the returned row into the SemesterResponse so the FE gets the UUID id
-    return SemesterResponse.model_validate(created)
+    Create a new academic semester.
+    Only admins can perform this action.
+    """
+    try:
+        created = SemesterService.create_semester(semester)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return created
+
 
 
 # ---- Demo time control (Admin-only) ------------------------------------------------

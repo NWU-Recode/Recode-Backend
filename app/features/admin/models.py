@@ -5,6 +5,8 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from app.DB.base import Base
 
 
+
+
 class Module(Base):
     __tablename__ = 'modules'
     id = Column(PGUUID(as_uuid=True), primary_key=True)
