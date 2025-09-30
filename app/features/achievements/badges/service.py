@@ -1,5 +1,5 @@
 from app.DB.session import get_db
-from app.features.badges.schemas import BadgeAwardSchema
+from app.features.achievements.badges.schemas import BadgeAwardSchema
 
 class BadgesService:
     def __init__(self, db):
