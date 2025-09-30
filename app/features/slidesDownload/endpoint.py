@@ -34,12 +34,10 @@ class SignedURLResponse(BaseModel):
 
 
 def _extract_signed_url(signed: Any) -> Optional[str]:
-    """Robust extraction of a signed URL from different client return shapes."""
     if not signed:
         return None
 
     try:
-        # dict-like responses
         if isinstance(signed, dict):
             for key in ("signedURL", "signed_url", "signedUrl", "url"):
                 val = signed.get(key)
@@ -52,7 +50,6 @@ def _extract_signed_url(signed: Any) -> Optional[str]:
                         return data.get(key)
             return None
 
-        # objects that expose get()
         get = getattr(signed, "get", None)
         if callable(get):
             try:
@@ -68,14 +65,12 @@ def _extract_signed_url(signed: Any) -> Optional[str]:
             except Exception:
                 pass
 
-        # objects with attributes
         for attr in ("signedURL", "signed_url", "signedUrl", "url"):
             if hasattr(signed, attr):
                 val = getattr(signed, attr)
                 if val:
                     return val
 
-        # last resort: string representation
         s = str(signed)
         if s.startswith("http"):
             return s
@@ -86,9 +81,6 @@ def _extract_signed_url(signed: Any) -> Optional[str]:
 
 
 async def _fetch_slide_row_by_id(slide_id: int) -> Optional[Dict[str, Any]]:
-    """
-    Fetch a slide row by id directly from Supabase.
-    """
     try:
         client = await get_supabase()
         query = client.table("slide_extractions").select(
@@ -109,7 +101,6 @@ async def list_slides(
     module_code: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
 ):
-    """List slides with optional filters."""
     try:
         client = await get_supabase()
         query = client.table("slide_extractions").select(
@@ -147,7 +138,6 @@ async def list_slides(
 
 @router.get("/{slide_id}", response_model=SlideMetadata)
 async def get_slide_by_id(slide_id: int):
-    """Get single slide metadata."""
     row = await _fetch_slide_row_by_id(slide_id)
     if not row:
         raise HTTPException(status_code=404, detail="Slide not found")
@@ -164,9 +154,6 @@ async def get_slide_by_id(slide_id: int):
 
 @router.get("/{slide_id}/download", response_model=SignedURLResponse)
 async def download_slide(slide_id: int, ttl: int = Query(DEFAULT_TTL)):
-    """
-    Return a signed URL for the slide stored in the `slides` bucket.
-    """
     if ttl <= 0 or ttl > MAX_TTL:
         raise HTTPException(status_code=400, detail=f"ttl must be between 1 and {MAX_TTL} seconds")
 
@@ -201,10 +188,6 @@ async def download_slide(slide_id: int, ttl: int = Query(DEFAULT_TTL)):
 
 @router.get("/{slide_id}/download-file", response_class=StreamingResponse)
 async def download_slide_file(slide_id: int, ttl: int = Query(DEFAULT_TTL)):
-    """
-    Stream the slide file through the API using a server-side fetch of the signed URL.
-    Useful for Swagger UI to get an actual file download.
-    """
     if ttl <= 0 or ttl > MAX_TTL:
         raise HTTPException(status_code=400, detail=f"ttl must be between 1 and {MAX_TTL} seconds")
 

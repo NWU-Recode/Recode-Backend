@@ -89,8 +89,8 @@ app.include_router(judge0_public_router)
 app.include_router(judge0_protected_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
-app.include_router(slides_router, dependencies=protected_deps)           # Legacy slides
-app.include_router(slides_download_router, dependencies=protected_deps)  # Your new slides endpoint
+app.include_router(slides_router, dependencies=protected_deps)           
+app.include_router(slides_download_router, dependencies=protected_deps) 
 app.include_router(submissions_router, dependencies=protected_deps)
 app.include_router(analytics_router)
 # vonani
