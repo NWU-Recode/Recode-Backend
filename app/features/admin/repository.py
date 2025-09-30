@@ -1,5 +1,6 @@
 from fastapi import HTTPException, status
 import uuid 
+from datetime import datetime, date
 from typing import List, Optional 
 from uuid import UUID
 from app.DB.supabase import get_supabase
@@ -41,53 +42,56 @@ class ModuleRepository:
         rows = await _exec(client.table("modules").insert(data))
         return rows[0] if rows else None
 
-
     @staticmethod
     async def update_module(module_id: UUID, module: ModuleCreate, admin_id: int):
      client = await get_supabase()
 
-    # ✅ If the admin is assigning a new lecturer, make sure the lecturer exists
+    # ✅ Validate lecturer if provided
      if module.lecturer_id:
-        lecturer_request = client.table("lecturers") \
+        lecturer_result = await client.table("lecturers") \
             .select("*") \
             .eq("profile_id", module.lecturer_id) \
-            .maybe_single()
-        lecturer_result = await lecturer_request.execute()
-        lecturer = lecturer_result.data
-        if not lecturer:
+            .maybe_single() \
+            .execute()
+        if not lecturer_result.data:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=400,
                 detail=f"Lecturer with id {module.lecturer_id} does not exist."
             )
 
-    # ✅ Update the module (admin-only, no lecturer_id filter)
-        data = {
+    # ✅ Build update data
+     data = {
         "code": module.code,
         "name": module.name,
         "description": module.description,
         "semester_id": str(module.semester_id),
-        "lecturer_id": module.lecturer_id,
         "code_language": module.code_language,
         "credits": module.credits,
     }
 
+    # Include lecturer_id only if provided
+     if module.lecturer_id:
+        data["lecturer_id"] = module.lecturer_id
+
+    # ✅ Execute update
      rows = await _exec(
         client.table("modules")
         .update(data)
-        .eq("id", str(module_id))   # only check by module id
+        .eq("id", str(module_id))
     )
 
      return rows[0] if rows else None
 
 
+
+
+    # Repository
     @staticmethod
-    async def delete_module(module_id: UUID, lecturer_id: Optional[int] = None):
-        client = await get_supabase()
-        q = client.table("modules").delete().eq("id", str(module_id))
-        if lecturer_id is not None:
-            q = q.eq("lecturer_id", lecturer_id)
-        rows = await _exec(q)
-        return bool(rows)
+    async def delete_module(module_id: UUID) -> bool:
+     client = await get_supabase()
+     rows = await _exec(client.table("modules").delete().eq("id", str(module_id)))
+     return bool(rows)
+
 
     @staticmethod
     async def get_module(module_id: UUID):
