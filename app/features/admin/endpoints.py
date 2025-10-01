@@ -187,7 +187,10 @@ async def module_challenges(
     """
     challenges = await ModuleService.get_challenges_by_code(module_code, user)
     if challenges is None:
-        raise HTTPException(status_code=403, detail="Not authorized for this module")
+        raise HTTPException(
+            status_code=403, 
+            detail="Not authorized for this module or module not found"
+        )
     return challenges
 
 # Lecturer-only: enrol a single student into a module
