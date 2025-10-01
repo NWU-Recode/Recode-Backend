@@ -228,7 +228,7 @@ class ModuleRepository:
         return row
 
     @staticmethod
-    async def add_enrolments_batch(module_id: UUID,student_numbers: List[int], semester_id: Optional[UUID] = None, status: str = "active") -> dict:
+    async def add_enrolments_batch(module_id: UUID, student_numbers: List[int], semester_id: Optional[UUID] = None, status: str = "active") -> dict:
         """
         Idempotent batch enrolment: for each student, try add_enrolment_if_not_exists.
         Returns a summary dict with created/skipped/failed lists for transparency.
