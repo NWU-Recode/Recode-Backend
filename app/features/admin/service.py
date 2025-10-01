@@ -54,17 +54,9 @@ class ModuleService:
 
         result = []
         for s in students:
-            if not s or "student_id" not in s or s["student_id"] is None:
-                continue  # skip invalid entries
-
-            profiles = s.get("profiles") or {}
-            result.append(
-                StudentResponse(
-                    id=int(s["student_id"]),  # ensure it's an int
-                    full_name=profiles.get("full_name", ""),
-                    email=profiles.get("email", ""),
-                )
-            )
+            if not s or "student_number" not in s or s["student_number"] is None:
+                continue
+            result.append(StudentResponse(student_number=int(s["student_number"])))
         return result if result else None
     
     @staticmethod

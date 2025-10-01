@@ -75,9 +75,7 @@ class ChallengeResponse(ChallengeBase):
 # STUDENT SCHEMAS
 # ===========================
 class StudentResponse(BaseModel):
-    id: int
-    full_name: Optional[str]
-    email: Optional[str]
+    student_number: int
 
     class Config:
         from_attributes = True
