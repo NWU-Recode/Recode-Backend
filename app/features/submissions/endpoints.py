@@ -5,7 +5,7 @@ from pydantic import BaseModel, model_validator
 from typing import Dict
 
 from app.common.deps import CurrentUser, get_current_user, require_role
-from app.features.submissions.schemas import QuestionEvaluationRequest, QuestionEvaluationResponse
+from app.features.submissions.schemas import QuestionEvaluationRequest, QuestionEvaluationResponse, QuestionSubmissionRequest
 from app.features.submissions.service import submissions_service
 from app.features.submissions.repository import submissions_repository
 from app.features.challenges.repository import challenge_repository
@@ -49,6 +49,10 @@ async def quick_test_question_by_qid(
 
     Expects FE to send question_id and source_code. Returns the QuestionEvaluationResponse from the service.
     """
+    try:
+        student_number = int(current_user.id)
+    except Exception:
+        raise HTTPException(status_code=400, detail='invalid_student_number')
     q = await submissions_repository.get_question(question_id)
     if not q:
         raise HTTPException(status_code=404, detail="question_not_found")
@@ -64,12 +68,49 @@ async def quick_test_question_by_qid(
             source_code=payload.source_code,
             language_id=lang,
             include_private=False,
-            user_id=current_user.id,
+            user_id=student_number,
             attempt_number=1,
             late_multiplier=1.0,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post(
+    "/challenges/{challenge_id}/questions/{question_id}/submit",
+    response_model=QuestionEvaluationResponse,
+    summary="Submit code for a single challenge question (tracked attempts)",
+)
+async def submit_question(
+    challenge_id: str,
+    question_id: str,
+    payload: QuestionSubmissionRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    try:
+        student_number = int(current_user.id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_student_number")
+    try:
+        return await submissions_service.submit_question(
+            challenge_id=challenge_id,
+            question_id=question_id,
+            source_code=payload.source_code,
+            user_id=student_number,
+            language_id=payload.language_id,
+            include_private=payload.include_private,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_map = {
+            'challenge_not_found': 404,
+            'question_not_found': 404,
+            'question_not_in_snapshot': 404,
+            'attempt_limit_reached': 400,
+            'challenge_already_submitted': 409,
+            'challenge_attempt_expired': 409,
+        }
+        raise HTTPException(status_code=status_map.get(message, 400), detail=message)
 
 
 @router.post(
@@ -88,7 +129,10 @@ async def submit_challenge(
     # payload validation is handled by BatchSubmissionsPayload defined at module scope
 
     try:
-        student_number = current_user.id
+        student_number = int(current_user.id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_student_number")
+    try:
         attempt = await challenge_repository.create_or_get_open_attempt(challenge_id, student_number)
         attempt_id = attempt.get("id")
         snapshot = attempt.get("snapshot_questions") or []
@@ -102,13 +146,13 @@ async def submit_challenge(
         subs_map = payload.submissions
 
         # Delegate grading (service persists results but we will perform RPC awarding in a post-step)
-        breakdown = await submissions_service.grade_challenge_submission(
+        breakdown = await submissions_service.submit_challenge(
             challenge_id=challenge_id,
             attempt_id=attempt_id,
             submissions=subs_map,
             language_overrides=language_overrides,
             question_weights=question_weights,
-            user_id=current_user.id,
+            user_id=student_number,
             tier=attempt.get("tier") or "base",
             attempt_counts=attempt_counts,
             max_attempts=3,
@@ -128,7 +172,7 @@ async def submit_challenge(
                             resp = await client.rpc(
                                 "record_test_result_and_award",
                                 {
-                                    "p_profile_id": int(current_user.id),
+                                    "p_profile_id": student_number,
                                     "p_question_id": str(getattr(qres, "question_id", "")),
                                     "p_test_id": str(getattr(test_run, "test_id", "")),
                                     "p_is_public": True,
@@ -177,3 +221,4 @@ async def submit_challenge(
 
 
 __all__ = ["router"]
+
