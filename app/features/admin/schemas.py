@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 
 
@@ -95,24 +95,26 @@ class BatchEnrolRequest(BaseModel):
     semester_id: Optional[UUID] = None
 
 
-class AssignLecturerRequest(BaseModel):
+class AssignLecturerRequestByBody(BaseModel):
     lecturer_id: int
     module_code: Optional[str] = None
-    module_id: Optional[UUID] = None
+    #module_id: Optional[UUID] = None
 
+class AssignLecturerRequest(BaseModel):
+    lecturer_id: int
 
 class RemoveLecturerRequest(BaseModel):
     module_code: Optional[str] = None
-    module_id: Optional[UUID] = None
+    #module_id: Optional[UUID] = None
 
-
+"""
 class SemesterCreate(BaseModel):
     year: int
     term_name: Optional[str] = "Semester 1"
-    start_date: datetime
-    end_date: datetime
+    start_date: date
+    end_date: date
     is_current: Optional[bool] = False
-
+""" 
 
 class ModuleAdminCreate(BaseModel):
     code: str
