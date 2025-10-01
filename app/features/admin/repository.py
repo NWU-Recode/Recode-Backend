@@ -95,11 +95,11 @@ class ModuleRepository:
 
     @staticmethod
     async def get_module(module_id: UUID):
-        client = await get_supabase()
-        rows = await _exec(
-            client.table("modules").select("*").eq("id", str(module_id))
-        )
-        return rows[0] if rows else None
+            client = await get_supabase()
+            rows = await _exec(
+                client.table("modules").select("*").eq("id", str(module_id))
+            )
+            return rows[0] if rows else None
 
     @staticmethod
     async def get_module_by_code(module_code: str):
@@ -108,7 +108,7 @@ class ModuleRepository:
             client.table("modules").select("*").eq("code", str(module_code)).limit(1)
         )
         return rows[0] if rows else None
-
+    
     @staticmethod
     async def list_modules(user):
         client = await get_supabase()
@@ -145,7 +145,7 @@ class ModuleRepository:
         client = await get_supabase()
         module = await _exec(
             client.table("modules")
-            .select("code")
+            .select("code, lecturer_id")
             .eq("code", module_code)
             .eq("lecturer_id", lecturer_id)
         )
@@ -153,10 +153,13 @@ class ModuleRepository:
             return None
         data = {
             "id": str(uuid.uuid4()),
-            "module_code": str(module_code),
+            "module_code": module_code,
             "title": challenge.title,
             "description": challenge.description,
             "max_score": challenge.max_score,
+            "is_active": True,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
         }
         rows = await _exec(client.table("challenges").insert(data))
         return rows[0] if rows else None
@@ -164,9 +167,11 @@ class ModuleRepository:
     @staticmethod
     async def get_challenges(module_code: str):
         client = await get_supabase()
-        return await _exec(
+        res = await _exec(
             client.table("challenges").select("*").eq("module_code", module_code)
-        ) or []
+        )
+        return res or []
+
 
     @staticmethod
     async def is_enrolled(module_id: UUID, student_id: int) -> bool:
@@ -174,7 +179,7 @@ class ModuleRepository:
         rows = await _exec(
             client.table("enrolments")
             .select("id")
-            .eq("module_id", str(module_id))
+            .eq("module_id", module_id)
             .eq("student_id", student_id)
         )
         return bool(rows)

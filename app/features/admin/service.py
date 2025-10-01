@@ -51,15 +51,22 @@ class ModuleService:
         students = await ModuleRepository.get_students(module_id, lecturer_id)
         if not students:
             return None
-        return [
-            StudentResponse(
-                id=s["student_id"],
-                full_name=s.get("profiles", {}).get("full_name", ""),
-                email=s.get("profiles", {}).get("email", ""),
-            )
-            for s in students
-        ]
 
+        result = []
+        for s in students:
+            if not s or "student_id" not in s or s["student_id"] is None:
+                continue  # skip invalid entries
+
+            profiles = s.get("profiles") or {}
+            result.append(
+                StudentResponse(
+                    id=int(s["student_id"]),  # ensure it's an int
+                    full_name=profiles.get("full_name", ""),
+                    email=profiles.get("email", ""),
+                )
+            )
+        return result if result else None
+    
     @staticmethod
     async def add_challenge(module_code: str, challenge: ChallengeCreate, lecturer_id: int) -> Optional[ChallengeResponse]:
         data = await ModuleRepository.add_challenge(module_code, challenge, lecturer_id)
@@ -67,30 +74,38 @@ class ModuleService:
 
     @staticmethod
     async def get_challenges(module_code: str, user: CurrentUser) -> Optional[List[ChallengeResponse]]:
+        module = await ModuleRepository.get_module_by_code(module_code)
+        if not module:
+            return None
+
+        module_id = module["id"] 
+
         if user.role.lower() == "student":
-            enrolled = await ModuleRepository.is_enrolled(module_code, user.id)
+            enrolled = await ModuleRepository.is_enrolled(module_id, user.id)
             if not enrolled:
                 return None
         elif user.role.lower() == "lecturer":
-            module = await ModuleRepository.get_module(module_code)
+            module = await ModuleRepository.get_module(module_id)
             if not module or module["lecturer_id"] != user.id:
                 return None
         challenges = await ModuleRepository.get_challenges(module_code)
         return [ChallengeResponse(**c) for c in challenges]
 
     @staticmethod
-    async def enrol_student(module_id: UUID, student_number: int, lecturer_id: int, semester_id: Optional[UUID] = None) -> Optional[dict]:
+    async def enrol_student(module_code: str, student_number: int, lecturer_id: int, semester_id: Optional[UUID] = None) -> Optional[dict]:
         # Ensure the lecturer owns the module
-        module = await ModuleRepository.get_module(module_id)
+        module = await ModuleRepository.get_module(module_code)
         if not module or module.get("lecturer_id") != lecturer_id:
             return None
+        module_id = module["id"]
         return await ModuleRepository.add_enrolment(module_id, student_number, semester_id)
 
     @staticmethod
-    async def enrol_students_batch(module_id: UUID, student_ids: List[int], lecturer_id: int, semester_id: Optional[UUID] = None) -> List[dict]:
-        module = await ModuleRepository.get_module(module_id)
+    async def enrol_students_batch(module_code: str, student_ids: List[int], lecturer_id: int, semester_id: Optional[UUID] = None) -> List[dict]:
+        module = await ModuleRepository.get_module(module_code)
         if not module or module.get("lecturer_id") != lecturer_id:
             return {"created": [], "skipped": [], "failed": []}
+        module_id = module["id"]
         return await ModuleRepository.add_enrolments_batch(module_id, student_ids, semester_id)
 
     @staticmethod
@@ -194,7 +209,7 @@ class ModuleService:
         mod = await ModuleRepository.get_module_by_code(module_code)
         if not mod:
             return None
-        return await ModuleService.get_challenges(mod.get("id"), user)
+        return await ModuleService.get_challenges(mod.get("code"), user)
 
     @staticmethod
     async def enrol_student_by_code(module_code: str, student_number: int, lecturer_id: int, semester_id: Optional[UUID] = None):
