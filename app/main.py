@@ -40,16 +40,58 @@ def _split_env_csv(name: str, default: str = ""):
 
 _FRONTEND_ORIGINS = _split_env_csv(
     "ALLOW_ORIGINS",
-    "https://recode-frontend.vercel.app,http://localhost:5173,http://localhost:3000",
+    "https://recode-frontend.vercel.app,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000",
 )
+
+
+# CORS middleware
+import re
+
+# compile origin regex once for reuse
+_CORS_ORIGIN_REGEX = re.compile(r"https?://(.+\.)?vercel\.app|https?://(localhost|127\.0\.0\.1)(:\d+)?", re.I)
+
+print("DEBUG: CORS allowed origins:", _FRONTEND_ORIGINS)
+print("DEBUG: CORS origin regex:", _CORS_ORIGIN_REGEX.pattern)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_FRONTEND_ORIGINS,
+    allow_origin_regex=_CORS_ORIGIN_REGEX.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Fallback middleware: ensure CORS headers are present on responses when the origin
+# matches the allowed origins or regex. This is defensive: some serverless/proxy
+# setups may alter headers; this middleware sets them if missing.
+@app.middleware("http")
+async def _ensure_cors_headers(request: Request, call_next):
+    origin = request.headers.get("origin")
+    response = await call_next(request)
+    try:
+        allowed = False
+        if origin:
+            if origin in _FRONTEND_ORIGINS:
+                allowed = True
+            elif _CORS_ORIGIN_REGEX.match(origin):
+                allowed = True
+        if allowed:
+            # Respect any existing header values set by CORSMiddleware but ensure they exist
+            response.headers.setdefault("Access-Control-Allow-Origin", origin)
+            response.headers.setdefault("Access-Control-Allow-Credentials", "true")
+            # Vary by Origin to prevent caching issues at proxies/CDNs
+            vary = response.headers.get("Vary")
+            if vary:
+                if "Origin" not in [v.strip() for v in vary.split(",")]:
+                    response.headers["Vary"] = vary + ", Origin"
+            else:
+                response.headers["Vary"] = "Origin"
+    except Exception:
+        # Don't break request flow on CORS helper failure
+        pass
+    return response
 
 # Session middleware
 app.add_middleware(SessionManagementMiddleware, auto_refresh=True)

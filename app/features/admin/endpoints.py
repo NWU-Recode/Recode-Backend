@@ -190,7 +190,6 @@ async def module_challenges(
         raise HTTPException(status_code=403, detail="Not authorized for this module")
     return challenges
 
-
 # Lecturer-only: enrol a single student into a module
 @router.post(
     "/{module_code}/enrol",
@@ -210,7 +209,8 @@ async def enrol_student(
 
     Required role: Lecturer
     """
-    res = await ModuleService.enrol_student_by_code(module_code, req.student_id, user.id, req.semester_id)
+    
+    res = await ModuleService.enrol_student_by_code(module_code, req.student_number, user.id, req.semester_id)
     if res is None:
         raise HTTPException(status_code=403, detail="Not authorized or module not found")
     return res
@@ -234,7 +234,7 @@ async def enrol_students_batch(
 
     Required role: Lecturer
     """
-    res = await ModuleService.enrol_students_batch_by_code(module_code, req.student_ids, user.id, req.semester_id)
+    res = await ModuleService.enrol_students_batch_by_code(module_code, req.student_numbers, user.id, req.semester_id)
     if not res:
         raise HTTPException(status_code=403, detail="Not authorized or module not found")
     return res

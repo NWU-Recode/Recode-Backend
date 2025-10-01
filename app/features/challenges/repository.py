@@ -153,9 +153,13 @@ class ChallengeRepository:
         ordered by id to align with weekly Common challenge design.
         """
         questions = await self.get_challenge_questions(challenge_id)
-        if len(questions) < 5:
-            raise ValueError("challenge_not_configured: needs at least 5 questions")
-        selected = sorted(questions, key=lambda r: str(r.get("id")))[:5]
+        challenge = await self.get_challenge(challenge_id)
+        tier_value = str((challenge or {}).get('tier') or 'base').lower()
+        challenge_type = str((challenge or {}).get('challenge_type') or 'weekly').lower()
+        required = 1 if challenge_type != 'weekly' or tier_value in {'ruby', 'emerald', 'diamond'} else 5
+        if len(questions) < required:
+            raise ValueError('challenge_not_configured: needs at least %s questions' % required)
+        selected = sorted(questions, key=lambda r: str(r.get('id')))[:required]
         snapshot: List[Dict[str, Any]] = []
         for idx, q in enumerate(selected):
             snapshot.append({
