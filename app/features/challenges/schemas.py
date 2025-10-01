@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -102,3 +102,83 @@ class ChallengeGenerateRequest(BaseModel):
 class WeekSchema(BaseModel):
     start_date: datetime
     end_date: datetime
+
+
+class ChallengeQuestionSummary(BaseModel):
+    id: UUID
+    question_number: Optional[int] = None
+    sub_number: Optional[int] = None
+    position: Optional[int] = None
+    prompt: Optional[str] = None
+
+
+class ChallengeSummaryItem(BaseModel):
+    id: UUID
+    title: str
+    slug: Optional[str] = None
+    module_code: Optional[str] = None
+    semester_id: Optional[UUID] = None
+    week_number: Optional[int] = None
+    status: str
+    tier: Optional[str] = None
+    challenge_type: Optional[str] = None
+    question_count: int
+    questions: Optional[List[ChallengeQuestionSummary]] = None
+
+
+class ChallengeListResponse(BaseModel):
+    items: List[ChallengeSummaryItem] = Field(default_factory=list)
+    next_cursor: Optional[str] = None
+
+
+class ChallengeDetailResponse(ChallengeSummaryItem):
+    description: Optional[str] = None
+    release_date: Optional[datetime] = None
+    due_date: Optional[datetime] = None
+    trigger_event: Optional[dict] = None
+
+
+class QuestionSummary(BaseModel):
+    id: UUID
+    challenge_id: UUID
+    question_number: Optional[int] = None
+    sub_number: Optional[int] = None
+    position: Optional[int] = None
+    prompt: Optional[str] = None
+
+
+class QuestionTestCase(BaseModel):
+    id: UUID
+    stdin: Optional[str] = None
+    expected_output: Optional[str] = None
+    visibility: Optional[str] = None
+    order: Optional[int] = None
+
+
+class QuestionDetail(QuestionSummary):
+    question_text: Optional[str] = None
+    starter_code: Optional[str] = None
+    reference_solution: Optional[str] = None
+    language_id: Optional[int] = None
+    tier: Optional[str] = None
+    difficulty: Optional[str] = None
+    samples: Optional[List[dict]] = None
+    hints: Optional[List[str]] = None
+    testcases: Optional[List[QuestionTestCase]] = None
+
+
+class ChallengeWithQuestionsResponse(BaseModel):
+    challenge: ChallengeDetailResponse
+    questions: List[QuestionDetail] = Field(default_factory=list)
+
+
+class QuestionListResponse(BaseModel):
+    items: List[QuestionDetail] = Field(default_factory=list)
+
+
+class QuestionDetailResponse(QuestionDetail):
+    pass
+
+
+class QuestionTestCaseListResponse(BaseModel):
+    items: List[QuestionTestCase] = Field(default_factory=list)
