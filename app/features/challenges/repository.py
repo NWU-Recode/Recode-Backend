@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
+import re
 from app.DB.supabase import get_supabase
 from app.common import cache
 
@@ -146,6 +147,278 @@ class ChallengeRepository:
         resp = await client.table("challenge_attempts").select("*").eq("user_id", student_number).execute()  # Supabase stores student_number in user_id column (integer)
         return resp.data or []
 
+
+def _extract_role(self, current_user: Any) -> str:
+    if current_user is None:
+        return ""
+    if isinstance(current_user, dict):
+        role = current_user.get("role")
+    else:
+        role = getattr(current_user, "role", None)
+    return str(role or "").lower()
+
+def _extract_user_id(self, current_user: Any) -> Optional[int]:
+    if current_user is None:
+        return None
+    value = None
+    if isinstance(current_user, dict):
+        value = current_user.get("id")
+    else:
+        value = getattr(current_user, "id", None)
+    try:
+        return int(value) if value is not None else None
+    except Exception:
+        return None
+
+async def resolve_module_access(self, module_code: str, current_user: Any) -> Dict[str, Any]:
+    if not module_code:
+        raise ValueError("module_code_required")
+    client = await get_supabase()
+    resp = await (
+        client.table("modules")
+        .select("id, code, semester_id, lecturer_id")
+        .eq("code", module_code)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        raise ValueError("module_not_found")
+    module = rows[0]
+    role = self._extract_role(current_user)
+    user_id = self._extract_user_id(current_user)
+    if role == "lecturer":
+        ta = await (
+            client.table("teaching_assignments")
+            .select("id")
+            .eq("module_id", module.get("id"))
+            .eq("lecturer_profile_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not (ta.data or []):
+            raise PermissionError("module_forbidden")
+    elif role == "student":
+        enrol = await (
+            client.table("enrolments")
+            .select("id")
+            .eq("module_id", module.get("id"))
+            .eq("student_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not (enrol.data or []):
+            raise PermissionError("module_forbidden")
+    # admins or other roles fall through
+    return module
+
+async def list_challenges_by_module_and_week(
+    self,
+    *,
+    module_code: str,
+    week_number: int,
+    statuses: Optional[List[str]] = None,
+    include_questions: bool = False,
+    limit: int = 20,
+    cursor: Optional[str] = None,
+) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    if limit <= 0:
+        return [], None
+    client = await get_supabase()
+    fetch_limit = max(limit * 3, limit + 1)
+    query = (
+        client.table("challenges")
+        .select("*")
+        .eq("module_code", module_code)
+        .order("created_at")
+    )
+    if cursor:
+        query = query.gt("created_at", cursor)
+    if statuses:
+        statuses_clean = [s.strip().lower() for s in statuses if s.strip()]
+        if statuses_clean:
+            query = query.in_("status", statuses_clean)
+    resp = await query.limit(fetch_limit).execute()
+    rows = resp.data or []
+
+    bundles: List[Dict[str, Any]] = []
+    if not rows:
+        return bundles, None
+
+    import re as _re
+
+    week_pattern = _re.compile(r"w(\d{2})", _re.IGNORECASE)
+    filtered: List[Dict[str, Any]] = []
+    for row in rows:
+        week_value = row.get("week_number")
+        effective_week: Optional[int] = None
+        if isinstance(week_value, (int, float)):
+            effective_week = int(week_value)
+        else:
+            slug = str(row.get("slug") or "")
+            match = week_pattern.search(slug)
+            if match:
+                try:
+                    effective_week = int(match.group(1))
+                except Exception:
+                    effective_week = None
+        if effective_week == week_number:
+            filtered.append(row)
+        if len(filtered) >= limit + 1:
+            break
+
+    if not filtered:
+        return [], None
+
+    challenge_ids = [str(item.get("id")) for item in filtered]
+    question_map: Dict[str, List[Dict[str, Any]]] = {}
+    if challenge_ids:
+        q_resp = await (
+            client.table("questions")
+            .select("id, challenge_id, question_number, sub_number, position, question_text, starter_code, reference_solution, language_id, tier")
+            .in_("challenge_id", challenge_ids)
+            .order("question_number")
+            .order("sub_number")
+            .order("position")
+            .execute()
+        )
+        for item in q_resp.data or []:
+            cid = str(item.get("challenge_id"))
+            question_map.setdefault(cid, []).append(item)
+
+    items: List[Dict[str, Any]] = []
+    for row in filtered[:limit]:
+        cid = str(row.get("id"))
+        questions = question_map.get(cid, [])
+        items.append({"challenge": row, "questions": questions if include_questions else None, "question_count": len(questions)})
+
+    next_cursor = None
+    if len(filtered) > limit:
+        last = filtered[limit - 1]
+        cursor_value = last.get("created_at")
+        if cursor_value:
+            next_cursor = str(cursor_value)
+    return items, next_cursor
+
+async def fetch_challenge_with_questions(
+    self,
+    challenge_id: str,
+    *,
+    include_questions: bool = False,
+    include_testcases: bool = False,
+) -> Dict[str, Any]:
+    client = await get_supabase()
+    resp = await client.table("challenges").select("*").eq("id", challenge_id).single().execute()
+    data = resp.data or None
+    if not data:
+        raise ValueError("challenge_not_found")
+    questions: List[Dict[str, Any]] = []
+    if include_questions:
+        q_resp = await (
+            client.table("questions")
+            .select("*")
+            .eq("challenge_id", challenge_id)
+            .order("question_number")
+            .order("sub_number")
+            .order("position")
+            .execute()
+        )
+        questions = q_resp.data or []
+        if include_testcases and questions:
+            ids = [str(q.get("id")) for q in questions if q.get("id")]
+            if ids:
+                tests = await self._fetch_testcases_for_questions(ids)
+                for q in questions:
+                    qid = str(q.get("id"))
+                    q["testcases"] = tests.get(qid, [])
+    return {"challenge": data, "questions": questions}
+
+async def list_questions_for_challenge(
+    self,
+    challenge_id: str,
+    *,
+    include_testcases: bool = False,
+) -> List[Dict[str, Any]]:
+    client = await get_supabase()
+    q_resp = await (
+        client.table("questions")
+        .select("*")
+        .eq("challenge_id", challenge_id)
+        .order("question_number")
+        .order("sub_number")
+        .order("position")
+        .execute()
+    )
+    questions = q_resp.data or []
+    if not questions:
+        return []
+    if include_testcases:
+        ids = [str(q.get("id")) for q in questions if q.get("id")]
+        if ids:
+            tests = await self._fetch_testcases_for_questions(ids)
+            for q in questions:
+                qid = str(q.get("id"))
+                q["testcases"] = tests.get(qid, [])
+    return questions
+
+async def fetch_question_detail(
+    self,
+    question_id: str,
+    *,
+    include_testcases: bool = False,
+) -> Optional[Dict[str, Any]]:
+    client = await get_supabase()
+    resp = await client.table("questions").select("*").eq("id", question_id).single().execute()
+    question = resp.data or None
+    if not question:
+        return None
+    if include_testcases:
+        tests = await self._fetch_testcases_for_questions([question_id])
+        question["testcases"] = tests.get(str(question_id), [])
+    return question
+
+async def list_question_testcases(self, question_id: str) -> List[Dict[str, Any]]:
+    mapping = await self._fetch_testcases_for_questions([question_id])
+    return mapping.get(question_id, [])
+
+async def _fetch_testcases_for_questions(self, question_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    if not question_ids:
+        return {}
+    client = await get_supabase()
+    tests_map: Dict[str, List[Dict[str, Any]]] = {qid: [] for qid in question_ids}
+    try:
+        resp = await (
+            client.table("question_tests")
+            .select("id, question_id, input, expected_output, visibility, order_index")
+            .in_("question_id", question_ids)
+            .order("order_index")
+            .order("id")
+            .execute()
+        )
+        for item in resp.data or []:
+            qid = str(item.get("question_id"))
+            tests_map.setdefault(qid, []).append(item)
+    except Exception:
+        pass
+    missing = [qid for qid, vals in tests_map.items() if not vals]
+    if missing:
+        try:
+            legacy = await (
+                client.table("tests")
+                .select("id, question_id, input, expected, visibility, order_index")
+                .in_("question_id", missing)
+                .order("order_index")
+                .order("id")
+                .execute()
+            )
+            for item in legacy.data or []:
+                qid = str(item.get("question_id"))
+                if item.get("expected") and not item.get("expected_output"):
+                    item["expected_output"] = item.get("expected")
+                tests_map.setdefault(qid, []).append(item)
+        except Exception:
+            pass
+    return tests_map
     async def _build_snapshot(self, challenge_id: str) -> List[Dict[str, Any]]:
         """Fetch questions and return a frozen snapshot list.
 
@@ -447,47 +720,49 @@ class ChallengeRepository:
         return bundles
 
     async def get_active_for_week(self, week_number: int) -> List[Dict[str, Any]]:
-        """Return list of active challenge bundles for the given week.
-
-        This mirrors fetch_published_bundles_for_week but selects by status='active'
-        and returns the challenge + its questions + test rows (tests fetched later by submissions service).
-        """
+        """Return challenge bundles with status in (active, published) for the given week."""
         client = await get_supabase()
         try:
-            resp = await client.table("challenges").select("*").eq("week_number", week_number).eq("status", "active").order("id").execute()
+            resp = (
+                await client.table("challenges")
+                .select("*")
+                .in_("status", ["active"])
+                .order("id")
+                .execute()
+            )
             rows = resp.data or []
         except Exception:
             rows = []
 
         bundles: List[Dict[str, Any]] = []
+        if not rows:
+            return bundles
 
-        # Choose up to two challenges: prefer one base (weekly) and one special if present
-        base_rows = [r for r in rows if (r.get("tier") or r.get("kind") or "").strip().lower() in {"plain", "common", "base"}]
-        special_rows = [r for r in rows if r not in base_rows]
+        import re as _re
 
-        selected: List[Dict[str, Any]] = []
-        if base_rows:
-            try:
-                base_sorted = sorted(base_rows, key=lambda r: str(r.get("id")))
-                selected.append(base_sorted[0])
-            except Exception:
-                selected.append(base_rows[0])
-        if special_rows:
-            # pick the first special (deterministic ordering by id)
-            try:
-                special_sorted = sorted(special_rows, key=lambda r: str(r.get("id")))
-                selected.append(special_sorted[0])
-            except Exception:
-                selected.append(special_rows[0])
+        week_pattern = _re.compile(r"w(\d{2})", _re.IGNORECASE)
 
-        # If none selected (no base/special partition), select up to 2 from rows
-        if not selected:
-            selected = rows[:2]
+        filtered_rows: List[Dict[str, Any]] = []
+        for ch in rows:
+            week_value = ch.get("week_number")
+            effective_week: Optional[int] = None
+            if isinstance(week_value, (int, float)):
+                effective_week = int(week_value)
+            else:
+                slug = str(ch.get("slug") or "")
+                match_week = week_pattern.search(slug)
+                if match_week:
+                    try:
+                        effective_week = int(match_week.group(1))
+                    except Exception:
+                        effective_week = None
+            if effective_week == week_number:
+                filtered_rows.append(ch)
 
-        # Enforce max 2
-        selected = selected[:2]
+        if not filtered_rows:
+            return bundles
 
-        for ch in selected:
+        for ch in filtered_rows:
             cid = ch.get("id")
             if not cid:
                 continue
@@ -497,17 +772,15 @@ class ChallengeRepository:
             except Exception:
                 questions = []
 
-            # For base challenges return up to 5 snapshot questions
-            tier = (ch.get("tier") or ch.get("kind") or "").strip().lower()
-            if tier in {"plain", "common", "base"}:
+            tier_value = (ch.get("tier") or ch.get("kind") or "").strip().lower()
+            if tier_value in {"plain", "common", "base", "weekly", ""}:
                 questions = sorted(questions, key=lambda q: str(q.get("id")))[:5]
             else:
                 questions = questions[:1]
 
-            # For each question, fetch tests from question_tests (fallback to tests)
             for q in questions:
                 qid = q.get("id")
-                q_tests = []
+                q_tests: List[Dict[str, Any]] = []
                 if qid is not None:
                     try:
                         t_resp = await client.table("question_tests").select("*").eq("question_id", qid).order("id").execute()
@@ -520,12 +793,9 @@ class ChallengeRepository:
                             q_tests = []
                 q["tests"] = q_tests
 
-            # Normalize tier for API consumers
             try:
-                if isinstance(ch, dict):
-                    t = (ch.get("tier") or ch.get("kind") or "").strip().lower()
-                    if t in {"plain", "common"}:
-                        ch["tier"] = "base"
+                if isinstance(ch, dict) and tier_value in {"plain", "common", "weekly", ""}:
+                    ch["tier"] = "base"
             except Exception:
                 pass
 
@@ -533,6 +803,6 @@ class ChallengeRepository:
 
         return bundles
 
-challenge_repository = ChallengeRepository()
 
+challenge_repository = ChallengeRepository()
 

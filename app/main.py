@@ -20,7 +20,7 @@ from app.features.slides.endpoints import router as slides_router  # Legacy slid
 from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
 from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
-from app.features.challenges.endpoints import router as challenges_router
+from app.features.challenges.endpoints import router as challenges_router, questions_router as challenge_questions_router
 from app.features.dashboard.endpoints import router as dashboard_router
 from app.features.submissions.endpoints import router as submissions_router
 from app.features.analytics.endpoints import router as analytics_router
@@ -130,6 +130,7 @@ app.include_router(profiles_router, dependencies=protected_deps)
 app.include_router(judge0_public_router)
 app.include_router(judge0_protected_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
+app.include_router(challenge_questions_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
 app.include_router(slides_router, dependencies=protected_deps)           # Legacy slides
 app.include_router(slides_download_router, dependencies=protected_deps)  # Your new slides endpoint
