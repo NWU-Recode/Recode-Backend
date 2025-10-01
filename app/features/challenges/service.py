@@ -79,7 +79,7 @@ class ChallengeService:
         time_limit_seconds = self._time_limit_for_tier(tier)
         late_multiplier = self._late_multiplier(duration_seconds, time_limit_seconds)
 
-        grading = await submissions_service.grade_challenge_submission(
+        grading = await submissions_service.submit_challenge(
             challenge_id=str(req.challenge_id),
             attempt_id=str(attempt.get("id")),
             submissions=submissions_map,
@@ -170,3 +170,4 @@ class ChallengeService:
 challenge_service = ChallengeService()
 
 __all__ = ["challenge_service", "ChallengeService"]
+

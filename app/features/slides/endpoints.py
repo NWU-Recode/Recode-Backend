@@ -98,16 +98,26 @@ async def upload_slide(
                 week_num = int(out.get("week") or 0)
                 slide_stack_id = None
             lecturer_id = int(getattr(current_user, "id", 0) or 0)
-            if week_num and week_num > 0:
-                # always generate base
+            if week_num and 0 < week_num <= 12:
                 await generate_and_save_tier("base", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
-                # conditional tiers
-                if week_num in {2, 6, 10}:
-                    await generate_and_save_tier("ruby", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
-                if week_num in {4, 8}:
-                    await generate_and_save_tier("emerald", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                optional_generators = []
+                if week_num % 2 == 0:
+                    optional_generators.append(
+                        generate_and_save_tier("ruby", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                    )
+                if week_num % 4 == 0:
+                    optional_generators.append(
+                        generate_and_save_tier("emerald", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                    )
                 if week_num == 12:
-                    await generate_and_save_tier("diamond", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                    optional_generators.append(
+                        generate_and_save_tier("diamond", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                    )
+                for coro in optional_generators:
+                    try:
+                        await coro
+                    except Exception as gen_exc:
+                        logging.getLogger("slides").exception("Challenge generation failed for week %s tier task: %s", week_num, gen_exc)
                 # publish the week challenges we just generated
                 try:
                     await challenge_repository.publish_for_week(week_num)

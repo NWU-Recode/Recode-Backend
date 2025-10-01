@@ -54,6 +54,10 @@ class QuestionEvaluationRequest(BaseModel):
     language_id: Optional[int] = None
 
 
+class QuestionSubmissionRequest(QuestionEvaluationRequest):
+    include_private: bool = True
+
+
 class QuestionEvaluationResponse(BaseModel):
     challenge_id: str
     question_id: str
@@ -70,6 +74,9 @@ class QuestionEvaluationResponse(BaseModel):
     average_execution_time_ms: Optional[float] = None
     average_memory_used_kb: Optional[float] = None
     badge_tier_awarded: Optional[str] = None
+    submission_id: Optional[str] = None
+    attempt_id: Optional[str] = None
+    attempt_number: Optional[int] = None
     tests: List[TestRunResultSchema]
 
 
@@ -96,3 +103,4 @@ class ChallengeSubmissionBreakdown(BaseModel):
     missing_questions: List[str] = Field(default_factory=list)
     badge_tiers_awarded: List[str] = Field(default_factory=list)
     question_results: List[ChallengeQuestionResultSchema] = Field(default_factory=list)
+
