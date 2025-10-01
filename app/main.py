@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.Core.config import get_settings
 
 from app.Auth.routes import router as auth_router
-from app.features.slidesDownload.endpoint import router as slides_download_router  # Your slides endpoint
+from app.features.slidesDownload.endpoints import router as slides_download_router  # Your slides endpoint
 from app.features.slides.endpoints import router as slides_router  # Legacy slides
 from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
 from app.features.judge0.endpoints import public_router as judge0_public_router
