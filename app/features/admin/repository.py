@@ -206,7 +206,7 @@ class ModuleRepository:
         return {"created": False, "reason": "insert_failed", "student_number": student_number}
     
     @staticmethod
-    async def add_enrolment(module_id: UUID, student_number: int,semester_id: Optional[UUID] = None, status: str = "active") -> Optional[dict]:
+    async def add_enrolment(module_id: UUID, student_number: int, semester_id: Optional[UUID] = None, status: str = "active") -> Optional[dict]:
         client = await get_supabase()
         data = {
             "module_id": str(module_id),
