@@ -136,7 +136,7 @@ class ModuleRepository:
             return None
         return await _exec(
             client.table("enrolments")
-            .select("student_id, profiles(full_name, email)")
+            .select("student_number")
             .eq("module_id", str(module_id))
         ) or []
 
