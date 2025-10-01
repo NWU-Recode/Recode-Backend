@@ -59,7 +59,7 @@ class ChallengeUpdate(BaseModel):
 
 class ChallengeResponse(ChallengeBase):
     id: UUID
-    module_id: UUID
+    module_code: str
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -85,13 +85,13 @@ class StudentResponse(BaseModel):
 # ===========================
 
 class EnrolRequest(BaseModel):
-    student_id: int
+    student_number: int
     semester_id: Optional[UUID] = None
     status: Optional[str] = "active"
 
 
 class BatchEnrolRequest(BaseModel):
-    student_ids: list[int]
+    student_numbers: list[int]
     semester_id: Optional[UUID] = None
 
 

@@ -61,30 +61,30 @@ class ModuleService:
         ]
 
     @staticmethod
-    async def add_challenge(module_id: UUID, challenge: ChallengeCreate, lecturer_id: int) -> Optional[ChallengeResponse]:
-        data = await ModuleRepository.add_challenge(module_id, challenge, lecturer_id)
+    async def add_challenge(module_code: str, challenge: ChallengeCreate, lecturer_id: int) -> Optional[ChallengeResponse]:
+        data = await ModuleRepository.add_challenge(module_code, challenge, lecturer_id)
         return ChallengeResponse(**data) if data else None
 
     @staticmethod
-    async def get_challenges(module_id: UUID, user: CurrentUser) -> Optional[List[ChallengeResponse]]:
+    async def get_challenges(module_code: str, user: CurrentUser) -> Optional[List[ChallengeResponse]]:
         if user.role.lower() == "student":
-            enrolled = await ModuleRepository.is_enrolled(module_id, user.id)
+            enrolled = await ModuleRepository.is_enrolled(module_code, user.id)
             if not enrolled:
                 return None
         elif user.role.lower() == "lecturer":
-            module = await ModuleRepository.get_module(module_id)
+            module = await ModuleRepository.get_module(module_code)
             if not module or module["lecturer_id"] != user.id:
                 return None
-        challenges = await ModuleRepository.get_challenges(module_id)
+        challenges = await ModuleRepository.get_challenges(module_code)
         return [ChallengeResponse(**c) for c in challenges]
 
     @staticmethod
-    async def enrol_student(module_id: UUID, student_id: int, lecturer_id: int, semester_id: Optional[UUID] = None) -> Optional[dict]:
+    async def enrol_student(module_id: UUID, student_number: int, lecturer_id: int, semester_id: Optional[UUID] = None) -> Optional[dict]:
         # Ensure the lecturer owns the module
         module = await ModuleRepository.get_module(module_id)
         if not module or module.get("lecturer_id") != lecturer_id:
             return None
-        return await ModuleRepository.add_enrolment(module_id, student_id, semester_id)
+        return await ModuleRepository.add_enrolment(module_id, student_number, semester_id)
 
     @staticmethod
     async def enrol_students_batch(module_id: UUID, student_ids: List[int], lecturer_id: int, semester_id: Optional[UUID] = None) -> List[dict]:
@@ -197,18 +197,18 @@ class ModuleService:
         return await ModuleService.get_challenges(mod.get("id"), user)
 
     @staticmethod
-    async def enrol_student_by_code(module_code: str, student_id: int, lecturer_id: int, semester_id: Optional[UUID] = None):
+    async def enrol_student_by_code(module_code: str, student_number: int, lecturer_id: int, semester_id: Optional[UUID] = None):
         mod = await ModuleRepository.get_module_by_code(module_code)
         if not mod:
             return None
-        return await ModuleService.enrol_student(mod.get("id"), student_id, lecturer_id, semester_id)
+        return await ModuleService.enrol_student(mod.get("id"), student_number, lecturer_id, semester_id)
 
     @staticmethod
-    async def enrol_students_batch_by_code(module_code: str, student_ids: list[int], lecturer_id: int, semester_id: Optional[UUID] = None):
+    async def enrol_students_batch_by_code(module_code: str, student_numbers: list[int], lecturer_id: int, semester_id: Optional[UUID] = None):
         mod = await ModuleRepository.get_module_by_code(module_code)
         if not mod:
             return None
-        return await ModuleService.enrol_students_batch(mod.get("id"), student_ids, lecturer_id, semester_id)
+        return await ModuleService.enrol_students_batch(mod.get("id"), student_numbers, lecturer_id, semester_id)
 
     @staticmethod
     async def enrol_students_csv_by_code(module_code: str, csv_bytes: bytes, lecturer_id: int):
