@@ -57,12 +57,15 @@ class ChallengeUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+
 class ChallengeResponse(ChallengeBase):
     id: UUID
-    module_id: UUID
-    is_active: bool
+    module_code: str
+    is_active: bool = False
     created_at: datetime
     updated_at: datetime
+    week: Optional[int] = None
+    max_score: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -73,8 +76,8 @@ class ChallengeResponse(ChallengeBase):
 # ===========================
 class StudentResponse(BaseModel):
     id: int
-    full_name: str
-    email: str
+    full_name: Optional[str]
+    email: Optional[str]
 
     class Config:
         from_attributes = True
@@ -85,13 +88,13 @@ class StudentResponse(BaseModel):
 # ===========================
 
 class EnrolRequest(BaseModel):
-    student_id: int
+    student_number: int
     semester_id: Optional[UUID] = None
     status: Optional[str] = "active"
 
 
 class BatchEnrolRequest(BaseModel):
-    student_ids: list[int]
+    student_numbers: list[int]
     semester_id: Optional[UUID] = None
 
 

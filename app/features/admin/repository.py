@@ -95,11 +95,11 @@ class ModuleRepository:
 
     @staticmethod
     async def get_module(module_id: UUID):
-        client = await get_supabase()
-        rows = await _exec(
-            client.table("modules").select("*").eq("id", str(module_id))
-        )
-        return rows[0] if rows else None
+            client = await get_supabase()
+            rows = await _exec(
+                client.table("modules").select("*").eq("id", str(module_id))
+            )
+            return rows[0] if rows else None
 
     @staticmethod
     async def get_module_by_code(module_code: str):
@@ -108,7 +108,7 @@ class ModuleRepository:
             client.table("modules").select("*").eq("code", str(module_code)).limit(1)
         )
         return rows[0] if rows else None
-
+    
     @staticmethod
     async def list_modules(user):
         client = await get_supabase()
@@ -141,32 +141,37 @@ class ModuleRepository:
         ) or []
 
     @staticmethod
-    async def add_challenge(module_id: UUID, challenge: ChallengeCreate, lecturer_id: int):
+    async def add_challenge(module_code: str, challenge: ChallengeCreate, lecturer_id: int):
         client = await get_supabase()
         module = await _exec(
             client.table("modules")
-            .select("id")
-            .eq("id", str(module_id))
+            .select("code, lecturer_id")
+            .eq("code", module_code)
             .eq("lecturer_id", lecturer_id)
         )
         if not module:
             return None
         data = {
             "id": str(uuid.uuid4()),
-            "module_id": str(module_id),
+            "module_code": module_code,
             "title": challenge.title,
             "description": challenge.description,
             "max_score": challenge.max_score,
+            "is_active": True,
+            "created_at": datetime.now(),
+            "updated_at": datetime.now(),
         }
         rows = await _exec(client.table("challenges").insert(data))
         return rows[0] if rows else None
 
     @staticmethod
-    async def get_challenges(module_id: UUID):
+    async def get_challenges(module_code: str):
         client = await get_supabase()
-        return await _exec(
-            client.table("challenges").select("*").eq("module_id", str(module_id))
-        ) or []
+        res = await _exec(
+            client.table("challenges").select("*").eq("module_code", module_code)
+        )
+        return res or []
+
 
     @staticmethod
     async def is_enrolled(module_id: UUID, student_id: int) -> bool:
@@ -174,7 +179,7 @@ class ModuleRepository:
         rows = await _exec(
             client.table("enrolments")
             .select("id")
-            .eq("module_id", str(module_id))
+            .eq("module_id", module_id)
             .eq("student_id", student_id)
         )
         return bool(rows)
@@ -186,35 +191,44 @@ class ModuleRepository:
         return rows[0] if rows else None
 
     @staticmethod
-    async def add_enrolment_if_not_exists(module_id: UUID, student_id: int, semester_id: Optional[UUID] = None, status: str = "active") -> dict:
+    async def add_enrolment_if_not_exists(module_id: UUID,student_number: int, semester_id: Optional[UUID] = None, status: str = "active") -> dict:
         # Check existing enrolment first (idempotent)
-        exists = await ModuleRepository.is_enrolled(module_id, student_id)
+       # Check if student is already enrolled
+        exists = await ModuleRepository.is_enrolled(module_id, student_number)
         if exists:
-            return {"created": False, "reason": "already_enrolled", "student_id": student_id}
-        client = await get_supabase()
-        data = {"module_id": str(module_id), "student_id": student_id, "status": status}
-        if semester_id:
-            data["semester_id"] = str(semester_id)
-        rows = await _exec(client.table("enrolments").insert(data))
-        if rows:
-            return {"created": True, "row": rows[0]}
-        return {"created": False, "reason": "insert_failed", "student_id": student_id}
+            return {"created": False, "reason": "already_enrolled", "student_id": student_number}
 
+        # Reuse add_enrolment to insert and handle UUID conversions
+        row = await ModuleRepository.add_enrolment(module_id, student_number, semester_id, status)
+        if row:
+            return {"created": True, "row": row}
+
+        return {"created": False, "reason": "insert_failed", "student_number": student_number}
+    
     @staticmethod
-    async def add_enrolment(module_id: UUID, student_id: int, semester_id: Optional[UUID] = None, status: str = "active") -> Optional[dict]:
+    async def add_enrolment(module_id: UUID, student_number: int, semester_id: Optional[UUID] = None, status: str = "active") -> Optional[dict]:
         client = await get_supabase()
         data = {
             "module_id": str(module_id),
-            "student_id": student_id,
+            "student_number": student_number,
             "status": status,
         }
         if semester_id:
             data["semester_id"] = str(semester_id)
+
         rows = await _exec(client.table("enrolments").insert(data))
-        return rows[0] if rows else None
+        if not rows:
+            return None
+
+        # Convert UUIDs in the returned row to strings for JSON safety
+        row = rows[0]
+        for k, v in row.items():
+            if isinstance(v, UUID):
+                row[k] = str(v)
+        return row
 
     @staticmethod
-    async def add_enrolments_batch(module_id: UUID, student_ids: List[int], semester_id: Optional[UUID] = None, status: str = "active") -> dict:
+    async def add_enrolments_batch(module_id: UUID, student_numbers: List[int], semester_id: Optional[UUID] = None, status: str = "active") -> dict:
         """
         Idempotent batch enrolment: for each student, try add_enrolment_if_not_exists.
         Returns a summary dict with created/skipped/failed lists for transparency.
@@ -222,15 +236,15 @@ class ModuleRepository:
         created = []
         skipped = []
         failed = []
-        for sid in student_ids:
+        for sn in student_numbers:
             try:
-                res = await ModuleRepository.add_enrolment_if_not_exists(module_id, sid, semester_id, status)
+                res = await ModuleRepository.add_enrolment_if_not_exists(module_id, sn, semester_id, status)
                 if res.get("created"):
-                    created.append(res.get("row") or {"student_id": sid})
+                    created.append(res.get("row") or {"student_number": sn})
                 else:
-                    skipped.append({"student_id": sid, "reason": res.get("reason")})
+                    skipped.append({"student_number": sn, "reason": res.get("reason")})
             except Exception as e:
-                failed.append({"student_id": sid, "error": str(e)})
+                failed.append({"student_number": sn, "error": str(e)})
         return {"created": created, "skipped": skipped, "failed": failed}
 
     @staticmethod
