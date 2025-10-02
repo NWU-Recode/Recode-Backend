@@ -43,7 +43,7 @@ class ModuleResponse(ModuleBase):
 class ChallengeBase(BaseModel):
     title: str = Field(..., example="Final Project")
     description: Optional[str] = Field(None, example="Build a small app")
-    max_score: int = Field(..., example=100)
+    challenge_type: str = Field(..., example="weekly") 
 
 
 class ChallengeCreate(ChallengeBase):
@@ -61,11 +61,19 @@ class ChallengeUpdate(BaseModel):
 class ChallengeResponse(ChallengeBase):
     id: UUID
     module_code: str
-    is_active: bool = False
+    challenge_type: str
+    title: str
+    description: Optional[str] = None
+    status: Optional[str] = None
+    release_date: datetime
+    due_date: datetime
     created_at: datetime
     updated_at: datetime
-    week: Optional[int] = None
-    max_score: Optional[int] = None
+    
+    # Conditional fields based on challenge_type
+    week_number: Optional[int] = None  # Only for weekly challenges
+    tier: Optional[str] = None  # Only for special challenges
+    trigger_event: Optional[dict] = None  # Only for special challenges (jsonb)
 
     class Config:
         from_attributes = True
@@ -75,9 +83,7 @@ class ChallengeResponse(ChallengeBase):
 # STUDENT SCHEMAS
 # ===========================
 class StudentResponse(BaseModel):
-    id: int
-    full_name: Optional[str]
-    email: Optional[str]
+    student_number: int
 
     class Config:
         from_attributes = True
