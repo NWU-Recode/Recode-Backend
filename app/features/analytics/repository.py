@@ -3,9 +3,6 @@ from sqlalchemy import text
 from typing import Optional
 from fastapi import HTTPException
 # ------------------- Students -------------------
-
-
-
 # Student Challenge Feedback
 def get_student_challenges(db: Session, student_id: int):
     query = text("SELECT * FROM student_challenge_feedback WHERE student_id = :student_id")
@@ -183,6 +180,7 @@ def get_module_overview(db: Session, lecturer_id: Optional[int] = None):
     else:
         query = text("""
         SELECT 
+            m.id,
             m.code,
             m.name,
             m.description,

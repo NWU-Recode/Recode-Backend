@@ -67,6 +67,7 @@ class ModuleService:
     @staticmethod
     async def get_challenges(module_code: str, user: CurrentUser) -> Optional[List[ChallengeResponse]]:
         """Get challenges with conditional fields based on challenge_type."""
+        
         if user.role.lower() == "student":
             enrolled = await ModuleRepository.is_enrolled_by_code(module_code, user.id)
             if not enrolled:
@@ -100,7 +101,6 @@ class ModuleService:
                 challenge_data["week_number"] = c.get("week_number")
             elif c.get("challenge_type") == "special":
                 challenge_data["tier"] = c.get("tier")
-                challenge_data["trigger_event"] = c.get("trigger_event")
             
             result.append(ChallengeResponse(**challenge_data))
         
