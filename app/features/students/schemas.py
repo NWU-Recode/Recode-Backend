@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, UUID4
 from typing import Optional, List
+#from uuid import UUID
 from datetime import datetime
 
 # -------------------
@@ -9,6 +10,7 @@ class StudentProfile(BaseModel):
     id: int
     email: EmailStr
     full_name: str
+    title_name: str
     avatar_url: Optional[str]
     bio: Optional[str]
     role: Optional[str]
@@ -17,6 +19,7 @@ class StudentProfile(BaseModel):
 
 class StudentProfileUpdate(BaseModel):
     email: Optional[EmailStr]
+    title: UUID4
     full_name: Optional[str]
     avatar_url: Optional[str]
     phone: Optional[str]
@@ -66,6 +69,7 @@ class ChallengeProgress(BaseModel):
     passed: int
     total: int
     score: Optional[float]
+
 
 class StudentProgress(BaseModel):
     profile: StudentProfile

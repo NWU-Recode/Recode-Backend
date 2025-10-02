@@ -4,8 +4,16 @@ from app.features.students.schemas import StudentProfile, ModuleProgress
 
 async def get_student_profile(user_id: int) -> dict:
     client = await get_supabase()
-    resp = await client.table("profiles").select("*").eq("id", user_id).single().execute()
-    return resp.data
+    resp = await client.table("profiles").select("*, titles(name)").eq("id", user_id).single().execute()
+    data = resp.data
+    if data:
+            if data.get("titles"):
+                data["title_name"] = data["titles"]["name"]
+                del data["titles"]  # Remove nested object
+            
+            # Remove title_id since frontend doesn't need it
+            data.pop("title_id", None)
+    return data
 
 async def get_student_modules(user_id: int) -> List[ModuleProgress]:
     client = await get_supabase()

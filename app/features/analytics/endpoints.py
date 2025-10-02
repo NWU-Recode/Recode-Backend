@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from .service import *
 from .schema import *
@@ -19,9 +18,32 @@ def student_challenges(current_user=Depends(get_current_user), db: Session = Dep
 
 # Badge Summary
 @router.get("/badges", response_model=List[BadgeSummaryOut])
-def badges(db: Session = Depends(get_db)):
-    return badge_summary_service(db)
-
+def badges(
+    module_code: str = Query(..., description="Module code (e.g., CMPG323)"),
+    challenge_id: Optional[str] = Query(None, description="Optional: Filter by specific challenge ID"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get badge summary for a specific module.
+    
+    Required:
+    - module_code: The module to get badges for
+    
+    Optional:
+    - challenge_id: Filter to specific challenge within the module
+    
+    Examples:
+    - GET /badges?module_code=CMPG323  (all badges for CMPG323)
+    - GET /badges?module_code=CMPG323&challenge_id=xxx  (badges for specific challenge)
+    """
+    return badge_summary_service(
+        db, 
+        current_user.id, 
+        current_user.role, 
+        module_code,
+        challenge_id
+    )
 # Challenge Progress
 @router.get("/challenges/progress", response_model=List[ChallengeProgressOut])
 def challenge_progress(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
