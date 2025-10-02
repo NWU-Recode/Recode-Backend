@@ -25,8 +25,7 @@ def badge_summary_service(
     
     return get_badge_summary(db, user_id, module_code, challenge_id)
 
-# Challenge Progress
-def challenge_progress_service(db: Session,user_id: int, role: str):
+def challenge_progress_services(db: Session,user_id: int, role: str):
     if role == "lecturer":
         return get_challenge_progress(db, user_id)
     else:
