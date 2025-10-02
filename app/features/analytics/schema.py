@@ -1,4 +1,4 @@
-from pydantic import BaseModel,computed_field
+from pydantic import BaseModel,computed_field, Field
 from typing import List, Optional, Dict
 from uuid import UUID
 
@@ -47,12 +47,14 @@ class ModuleOverviewOut(BaseModel):
     total_enrolled_students: int
     total_challenges: int
 class AdminModuleOverviewOut(BaseModel):
-    module_id: UUID
-    module_code: str
-    module_name: str
-    lecturer_id: Optional[int]
-    
-    
+    code: str = Field(..., example="CS101")
+    name: str = Field(..., example="Introduction to Programming")
+    description: Optional[str] = Field(None, example="Learn the basics of programming")
+    semester_id: UUID = Field(..., example="d290f1ee-6c54-4b01-90e6-d701748f0851")
+    lecturer_id: Optional[int] = Field(..., example=12345)
+    code_language: Optional[str] = Field(None, example="Python")
+    credits: Optional[int] = Field(None, example=12)
+
 # ------------------- Leaderboards -------------------
 class ModuleLeaderboardOut(BaseModel):
     module_id: UUID

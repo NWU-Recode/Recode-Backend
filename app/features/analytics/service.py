@@ -20,13 +20,18 @@ def badge_summary_service(
     module_code: str,
     challenge_id: Optional[str] = None
 ):
-    if role != "lecturer":
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    return get_badge_summary(db, user_id, module_code, challenge_id)
+    """Get badge summary - lecturers see all, students see their own."""
+    if role == "lecturer":
+        return get_badge_summary(db, user_id, module_code, challenge_id)
+    elif role == "student":
+        return get_student_badges(db, user_id, module_code, challenge_id)
+    else:
+        raise HTTPException(
+            status_code=403, 
+            detail="Access denied. Must be student or lecturer."
+        )
 
-# Challenge Progress
-def challenge_progress_service(db: Session,user_id: int, role: str):
+def challenge_progress_services(db: Session,user_id: int, role: str):
     if role == "lecturer":
         return get_challenge_progress(db, user_id)
     else:

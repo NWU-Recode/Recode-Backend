@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 from app.features.challenges.repository import challenge_repository
 from app.DB.supabase import get_supabase
 from .repository import *
+from fastapi import HTTPException
 class DashboardService:
     async def get_dashboard(self, user_id: str) -> List[Dict[str, Any]]:
         challenges = await challenge_repository.list_challenges()
@@ -53,5 +54,17 @@ class DashboardService:
     
 def student_dashboard_service(student_id: int, db):
     return get_student_dashboard_from_db(student_id, db)
+
+def current_week_service(db: Session) -> dict:
+    """Get current week number - available to all authenticated users."""
+    week = get_current_week_number(db)
+    
+    if week is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No active semester found"
+        )
+    
+    return {"current_week": week}
 
 dashboard_service = DashboardService()
