@@ -1,11 +1,17 @@
+
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from uuid import UUID
 from fastapi import UploadFile, File
 from app.features.semester.schemas import SemesterCreate, SemesterResponse
 from app.features.semester.service import SemesterService
+from app.common.deps import get_current_user, CurrentUser
+from app.DB.session import get_db
+from sqlalchemy.orm import Session
 
-
+from app.features.analytics.schema import AdminModuleOverviewOut,ModuleOverviewOut
+from app.features.analytics.repository import get_module_overview
+from app.features.analytics.service import module_overview_service
 
 from .schemas import (
     ModuleCreate, ModuleResponse,
@@ -35,6 +41,13 @@ from app.demo.timekeeper import (
 )
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+
+
+@router.get("/modules", response_model=List[AdminModuleOverviewOut])
+def admin_modules(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return get_module_overview(db)  # no lecturer_id filter
 
 # lecturer only : get current lecturer profile
 @router.get(

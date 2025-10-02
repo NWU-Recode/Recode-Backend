@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel,computed_field
 from typing import List, Optional, Dict
 from uuid import UUID
 
@@ -44,11 +44,15 @@ class ChallengeProgressOut(BaseModel):
 class ModuleOverviewOut(BaseModel):
     module_code: str
     module_name: str
-    lecturer_id: Optional[int]
-    lecturer_name: Optional[str]
     total_enrolled_students: int
     total_challenges: int
-
+class AdminModuleOverviewOut(BaseModel):
+    module_id: UUID
+    module_code: str
+    module_name: str
+    lecturer_id: Optional[int]
+    
+    
 # ------------------- Leaderboards -------------------
 class ModuleLeaderboardOut(BaseModel):
     module_id: UUID
@@ -91,3 +95,24 @@ class QuestionProgressOut(BaseModel):
     success_rate: Optional[float]
     avg_elo_earned: Optional[float]
     avg_completion_time_minutes: Optional[float]
+
+class ChallengeProgressResponse(BaseModel):
+    student_number: int
+    student_name: str
+    challenge_name: str
+    highest_badge: str  # bronze, silver, gold, ruby, emerald, diamond, or none
+    total_time_ms: int  # Sum of (finished_at - created_at) for all submissions
+    total_submissions: int  # Number of code submissions
+    
+    @computed_field
+    @property
+    def total_time(self) -> str:
+        """Format time as HH:MM:SS"""
+        seconds = int(self.total_time_ms // 1000)
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    
+    class Config:
+        from_attributes = True

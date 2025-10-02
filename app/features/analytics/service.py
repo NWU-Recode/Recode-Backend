@@ -42,7 +42,9 @@ def question_progress_service(db: Session, user_id: int, role: str):
 # Module Overview
 def module_overview_service(db: Session, user_id: int, role: str):
     if role == "lecturer":
-        return get_module_overview(db, user_id)
+        return get_module_overview(db, lecturer_id=user_id)
+    elif role == "admin":
+        return get_module_overview(db) 
     else:
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -60,3 +62,15 @@ def module_leaderboard_service(db: Session, user_id: int, role: str):
 # Global Leaderboard
 def global_leaderboard_service(db: Session):
     return get_global_leaderboard(db)
+
+def challenge_progress_service(
+    db: Session,
+    user_id: int,
+    role: str,
+    module_code: str,
+    challenge_id: Optional[str] = None
+):
+    if role != "lecturer":
+        raise HTTPException(status_code=403, detail="Access denied. Lecturer role required.")
+    
+    return get_challenge_progress_per_student(db, user_id, module_code, challenge_id)
