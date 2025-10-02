@@ -50,8 +50,6 @@ import re
 # compile origin regex once for reuse
 _CORS_ORIGIN_REGEX = re.compile(r"https?://(.+\.)?vercel\.app|https?://(localhost|127\.0\.0\.1)(:\d+)?", re.I)
 
-print("DEBUG: CORS allowed origins:", _FRONTEND_ORIGINS)
-print("DEBUG: CORS origin regex:", _CORS_ORIGIN_REGEX.pattern)
 
 app.add_middleware(
     CORSMiddleware,
@@ -222,3 +220,103 @@ async def spa_catch_all(request: Request, full_path: str):
     except Exception:
         pass
     return PlainTextResponse("Not Found", status_code=404)
+
+
+# Background publisher: periodically compute current week for each module and publish challenges
+@app.on_event("startup")
+async def _start_background_publisher():
+    import asyncio, logging
+    from datetime import datetime, timezone
+    logger = logging.getLogger("publisher")
+
+    async def _compute_week_from_start(start_date):
+        from datetime import datetime, timezone
+        try:
+            if not start_date:
+                return None
+            # start_date may be ISO string or date; attempt parse
+            if isinstance(start_date, str):
+                try:
+                    start = datetime.fromisoformat(start_date).date()
+                except Exception:
+                    return None
+            else:
+                start = start_date
+            today = datetime.now(timezone.utc).date()
+            delta_days = (today - start).days
+            if delta_days < 0:
+                return None
+            week = (delta_days // 7) + 1
+            if week < 1:
+                week = 1
+            if week > 12:
+                week = 12
+            return week
+        except Exception:
+            return None
+
+    async def _publisher_loop():
+        # Lazy imports to avoid startup import cycles
+        from app.features.admin.repository import ModuleRepository
+        from app.features.challenges.repository import challenge_repository
+        from app.demo.timekeeper import apply_demo_offset_to_semester_start
+
+        while True:
+            try:
+                # Fetch all modules and determine their semester windows
+                try:
+                    # ModuleRepository.list_modules is not present as static fetch; use DB directly via ModuleRepository.get_module_by_code over modules list
+                    client = await __import__("app.DB.supabase", fromlist=["get_supabase"]).get_supabase()
+                    all_modules_resp = await client.table("modules").select("code, semester_id").execute()
+                    modules = all_modules_resp.data or []
+                except Exception:
+                    modules = []
+
+                for mod in modules:
+                    try:
+                        module_code = mod.get("code")
+                        semester_id = mod.get("semester_id")
+                        # Resolve semester window
+                        window = await ModuleRepository.get_semester_window_for_module_code(module_code)
+                        start_date = window.get("start_date")
+                        # apply demo offset if helper exists
+                        try:
+                            start_date = apply_demo_offset_to_semester_start(start_date, module_code)
+                        except Exception:
+                            pass
+                        week = await _compute_week_from_start(start_date)
+                        if week is None:
+                            continue
+                        # Publish challenges for this week scoped to module+semester if method exists
+                        try:
+                            pub_fn = getattr(challenge_repository, "publish_for_week", None)
+                            if callable(pub_fn):
+                                await pub_fn(week, module_code=module_code, semester_id=semester_id)
+                            else:
+                                logger.debug("publish_for_week not available on challenge_repository; skipping for module %s", module_code)
+                        except Exception as e:
+                            logger.exception("Failed to publish for week %s module %s: %s", week, module_code, e)
+                        # Enforce active limit per module if method exists
+                        try:
+                            enforce_fn = getattr(challenge_repository, "enforce_active_limit", None)
+                            if callable(enforce_fn):
+                                await enforce_fn(module_code=module_code, semester_id=semester_id, keep_count=2)
+                            else:
+                                logger.debug("enforce_active_limit not available on challenge_repository; skipping for module %s", module_code)
+                        except Exception as e:
+                            logger.exception("Failed to enforce active limit for module %s: %s", module_code, e)
+                    except Exception:
+                        logger.exception("Error while handling module in publisher loop: %s", mod)
+                # Sleep for interval (default 60s)
+                await asyncio.sleep(int(os.getenv("PUBLISHER_INTERVAL_SEC", "60")))
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Background publisher loop failed unexpectedly")
+                await asyncio.sleep(60)
+
+    # Schedule the background publisher
+    try:
+        asyncio.create_task(_publisher_loop())
+    except Exception:
+        logging.getLogger("publisher").exception("Failed to start background publisher")
