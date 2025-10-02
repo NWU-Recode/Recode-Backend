@@ -21,16 +21,17 @@ async def list_slides_endpoint(
         db=db, weeks=week, module_codes=module_code, search=search
     )
     return [
-        schemas.SlideMetadata(
-            id=s.id,
-            filename=s.filename or "",
-            week_number=s.week_number,
-            module_code=s.module_code,
-            topic_id=s.topic_id,
-            has_file=bool(s.slides_key),
-        )
-        for s in slides
-    ]
+    schemas.SlideMetadata(
+        id=s.id,
+        filename=s.filename or "",
+        week_number=s.week_number,
+        module_code=s.module_code,
+        topic_id=s.topic_id,
+        has_file=bool(s.slides_key),
+        detected_topic=s.detected_topic,  # add this if you want it in schema
+    )
+    for s in slides
+]
 
 
 @router.get("/{slide_id}", response_model=schemas.SlideMetadata)
@@ -44,6 +45,7 @@ async def get_slide(slide_id: int, db: AsyncSession = Depends(get_db)):
         week_number=slide.week_number,
         module_code=slide.module_code,
         topic_id=slide.topic_id,
+        detected_topic=slide.detected_topic,
         has_file=bool(slide.slides_key),
     )
 

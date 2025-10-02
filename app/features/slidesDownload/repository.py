@@ -21,6 +21,10 @@ async def list_slides(
     if module_codes:
         query = query.where(Slide.module_code.in_(module_codes))
     if search:
-        query = query.where(Slide.filename.ilike(f"%{search}%"))
+        # search both filename and detected_topic
+        query = query.where(
+            (Slide.filename.ilike(f"%{search}%")) |
+            (Slide.detected_topic.ilike(f"%{search}%"))
+        )
     result =  db.execute(query)
     return result.scalars().all()
