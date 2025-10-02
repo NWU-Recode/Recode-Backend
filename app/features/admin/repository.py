@@ -1,7 +1,7 @@
 from fastapi import HTTPException, status
 import uuid 
 from datetime import datetime, date
-from typing import List, Optional 
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 from app.DB.supabase import get_supabase
 import uuid
@@ -346,6 +346,33 @@ class ModuleRepository:
         rows = await _exec(client.table("semesters").select("*").eq("id", str(semester_id)).limit(1))
         return rows[0] if rows else None
     
+    @staticmethod
+    async def get_semester_window_for_module_code(module_code: str) -> Dict[str, Any]:
+        client = await get_supabase()
+        module = await ModuleRepository.get_module_by_code(module_code)
+        start_date = None
+        end_date = None
+        semester_id = None
+        if module:
+            semester_id = module.get("semester_id")
+            if semester_id:
+                sem = await ModuleRepository.get_semester_by_id(semester_id)
+                if sem:
+                    start_date = sem.get("start_date")
+                    end_date = sem.get("end_date")
+        if start_date is None:
+            current = await ModuleRepository.get_current_semester()
+            if current:
+                semester_id = semester_id or current.get("id")
+                start_date = current.get("start_date")
+                end_date = current.get("end_date")
+        return {
+            "module": module,
+            "semester_id": semester_id,
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+    
 class LecturerRepository:
     @staticmethod
     async def get_lecturer_by_id(lecturer_id: str) -> Optional[dict]:
@@ -358,3 +385,30 @@ class LecturerRepository:
         )
         return rows[0] if rows else None
 
+
+@staticmethod
+async def get_semester_window_for_module_code(module_code: str) -> Dict[str, Any]:
+    client = await get_supabase()
+    module = await ModuleRepository.get_module_by_code(module_code)
+    start_date = None
+    end_date = None
+    semester_id = None
+    if module:
+        semester_id = module.get("semester_id")
+        if semester_id:
+            sem = await ModuleRepository.get_semester_by_id(semester_id)
+            if sem:
+                start_date = sem.get("start_date")
+                end_date = sem.get("end_date")
+    if start_date is None:
+        current = await ModuleRepository.get_current_semester()
+        if current:
+            semester_id = semester_id or current.get("id")
+            start_date = current.get("start_date")
+            end_date = current.get("end_date")
+    return {
+        "module": module,
+        "semester_id": semester_id,
+        "start_date": start_date,
+        "end_date": end_date,
+    }

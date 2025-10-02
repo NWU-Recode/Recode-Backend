@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import math
 import logging
+import os
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from datetime import datetime, date, timedelta
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .repository import achievements_repository, _parse_datetime
+from app.features.admin.repository import ModuleRepository
 from .schemas import (
     AchievementsResponse,
     BadgeBatchAddRequest,
@@ -97,6 +99,65 @@ class AchievementsService:
         self.repo = achievements_repository
         self.log = logger
 
+    def _env_semester_start(self) -> date:
+        val = os.environ.get("SEMESTER_START")
+        if val:
+            try:
+                return date.fromisoformat(val)
+            except Exception:
+                pass
+        return date(2025, 8, 31)
+
+    def _default_semester_window(self) -> Tuple[date, date]:
+        start = self._env_semester_start()
+        end = start + timedelta(weeks=12) - timedelta(days=1)
+        return start, end
+
+    def _coerce_date(self, value: Any) -> Optional[date]:
+        if isinstance(value, date):
+            return value
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value.split("T")[0])
+            except Exception:
+                return None
+        return None
+
+    async def _resolve_semester_context(self, module_code: Optional[str]) -> Tuple[Optional[str], date, Optional[date]]:
+        start, end = self._default_semester_window()
+        semester_id: Optional[str] = None
+        window: Optional[Dict[str, Any]] = None
+        if module_code:
+            try:
+                window = await ModuleRepository.get_semester_window_for_module_code(module_code)
+            except Exception:
+                window = None
+        if not window or not window.get("start_date"):
+            try:
+                current = await ModuleRepository.get_current_semester()
+            except Exception:
+                current = None
+            if current:
+                window = {
+                    "start_date": current.get("start_date"),
+                    "end_date": current.get("end_date"),
+                    "semester_id": current.get("id"),
+                }
+        if window:
+            maybe_start = self._coerce_date(window.get("start_date"))
+            maybe_end = self._coerce_date(window.get("end_date"))
+            if maybe_start:
+                start = maybe_start
+            if maybe_end:
+                end = maybe_end
+            raw_id = window.get("semester_id") or window.get("id")
+            if raw_id not in (None, ""):
+                semester_id = str(raw_id)
+        return semester_id, start, end
+
+
     # ------------------------------------------------------------------
     # Public API used by FastAPI endpoints
     # ------------------------------------------------------------------
@@ -126,13 +187,42 @@ class AchievementsService:
 
     async def update_elo(self, user_id: str, req: EloUpdateRequest) -> EloResponse:
         summary = await self._load_attempt_summary(req.submission_id, user_id)
-        elo_record = await self._ensure_user_elo_record(user_id)
+        module_code = summary.module_code
+        if not module_code and isinstance(summary.metadata, dict):
+            perf = summary.metadata.get("performance")
+            if isinstance(perf, dict):
+                module_code = perf.get("module_code") or module_code
+        semester_id, semester_start, semester_end = await self._resolve_semester_context(module_code)
+        elo_record = await self._ensure_user_elo_record(
+            user_id,
+            module_code=module_code,
+            semester_id=semester_id,
+            semester_start=semester_start,
+            semester_end=semester_end,
+        )
         old_elo = _safe_int(elo_record.get("elo_points"), default=BASE_ELO)
         delta = self._compute_elo_delta(summary)
-        new_elo = max(0, old_elo + delta)
+        new_elo = max(BASE_ELO, min(4000, old_elo + delta))
         gpa = await self._compute_running_gpa(user_id)
-        await self.repo.update_user_elo(user_id, elo_points=new_elo, gpa=gpa)
-        await self._maybe_log_elo_event(user_id, summary, delta, new_elo, gpa)
+        await self.repo.update_user_elo(
+            user_id,
+            elo_points=new_elo,
+            gpa=gpa,
+            module_code=module_code,
+            semester_id=semester_id,
+            semester_start=semester_start,
+            semester_end=semester_end,
+        )
+        await self._maybe_log_elo_event(
+            user_id,
+            summary,
+            delta,
+            new_elo,
+            gpa,
+            semester_id=semester_id,
+            semester_start=semester_start,
+            semester_end=semester_end,
+        )
         return EloResponse(elo=new_elo, gpa=gpa)
 
     async def get_badges(self, user_id: str) -> List[BadgeResponse]:
@@ -208,13 +298,42 @@ class AchievementsService:
         if req.badge_tiers:
             summary.metadata["badge_tiers"] = list(req.badge_tiers)
 
-        elo_record = await self._ensure_user_elo_record(user_id)
+        module_code = summary.module_code
+        if not module_code and isinstance(summary.metadata, dict):
+            perf = summary.metadata.get("performance")
+            if isinstance(perf, dict):
+                module_code = perf.get("module_code") or module_code
+        semester_id, semester_start, semester_end = await self._resolve_semester_context(module_code)
+        elo_record = await self._ensure_user_elo_record(
+            user_id,
+            module_code=module_code,
+            semester_id=semester_id,
+            semester_start=semester_start,
+            semester_end=semester_end,
+        )
         old_elo = _safe_int(elo_record.get("elo_points"), default=BASE_ELO)
         delta = req.elo_delta_override if req.elo_delta_override is not None else self._compute_elo_delta(summary)
-        new_elo = max(0, old_elo + delta)
+        new_elo = max(BASE_ELO, min(4000, old_elo + delta))
         gpa = await self._compute_running_gpa(user_id)
-        await self.repo.update_user_elo(user_id, elo_points=new_elo, gpa=gpa)
-        await self._maybe_log_elo_event(user_id, summary, delta, new_elo, gpa)
+        await self.repo.update_user_elo(
+            user_id,
+            elo_points=new_elo,
+            gpa=gpa,
+            module_code=module_code,
+            semester_id=semester_id,
+            semester_start=semester_start,
+            semester_end=semester_end,
+        )
+        await self._maybe_log_elo_event(
+            user_id,
+            summary,
+            delta,
+            new_elo,
+            gpa,
+            semester_id=semester_id,
+            semester_start=semester_start,
+            semester_end=semester_end,
+        )
 
         badge_defs = await self.repo.list_badge_definitions()
         owned_rows = await self.repo.get_badges_for_user(user_id)
@@ -249,12 +368,35 @@ class AchievementsService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _ensure_user_elo_record(self, user_id: str) -> Dict[str, Any]:
-        record = await self.repo.get_user_elo(user_id)
+    async def _ensure_user_elo_record(
+        self,
+        user_id: str,
+        *,
+        module_code: Optional[str] = None,
+        semester_id: Optional[str] = None,
+        semester_start: Optional[date] = None,
+        semester_end: Optional[date] = None,
+    ) -> Dict[str, Any]:
+        record = await self.repo.get_user_elo(user_id, module_code=module_code, semester_id=semester_id)
         if record:
             return record
-        inserted = await self.repo.insert_user_elo(user_id, elo_points=BASE_ELO, gpa=0.0)
-        return inserted or {"user_id": user_id, "elo_points": BASE_ELO, "running_gpa": 0.0}
+        inserted = await self.repo.insert_user_elo(
+            user_id,
+            elo_points=BASE_ELO,
+            gpa=0.0,
+            module_code=module_code,
+            semester_id=semester_id,
+            semester_start=semester_start,
+            semester_end=semester_end,
+        )
+        if inserted:
+            return inserted
+        base_record: Dict[str, Any] = {"user_id": user_id, "elo_points": BASE_ELO, "running_gpa": 0.0}
+        if module_code is not None:
+            base_record["module_code"] = module_code
+        if semester_id is not None:
+            base_record["semester_id"] = semester_id
+        return base_record
 
     async def _compute_running_gpa(self, user_id: str) -> float:
         attempts = await self.repo.list_submitted_attempts(user_id)
@@ -328,17 +470,20 @@ class AchievementsService:
     def _compute_elo_delta(self, summary: AttemptSummary) -> int:
         tier = _normalise_slug(summary.tier) or "plain"
         tier_weights: Dict[str, int] = {
-            "plain": 15,
-            "bronze": 8,
-            "silver": 12,
-            "gold": 18,
-            "ruby": 24,
-            "emerald": 30,
-            "diamond": 36,
+            "plain": 235,
+            "base": 235,
+            "common": 235,
+            "bronze": 35,
+            "silver": 50,
+            "gold": 65,
+            "ruby": 120,
+            "emerald": 190,
+            "diamond": 320,
         }
         base = tier_weights.get(tier, tier_weights["plain"])
         ratio = summary.ratio
         delta = round(base * (ratio * 2 - 1))
+        # discourage hint usage and resubmissions by trimming positive gains
         hints_used = _safe_int(summary.metadata.get("hints_used"), default=0)
         resubmissions = _safe_int(summary.metadata.get("resubmissions"), default=0)
         duration = _safe_int(summary.metadata.get("duration_seconds"), default=0)
@@ -358,6 +503,9 @@ class AchievementsService:
         delta: int,
         new_elo: int,
         gpa: float,
+        semester_id: Optional[str] = None,
+        semester_start: Optional[date] = None,
+        semester_end: Optional[date] = None,
     ) -> None:
         payload = {
             "user_id": user_id,
@@ -370,6 +518,14 @@ class AchievementsService:
             "gpa_snapshot": gpa,
             "recorded_at": datetime.utcnow().isoformat() + "Z",
         }
+        if summary.module_code:
+            payload["module_code"] = summary.module_code
+        if semester_id:
+            payload["semester_id"] = semester_id
+        if semester_start:
+            payload["semester_start"] = semester_start.isoformat()
+        if semester_end:
+            payload["semester_end"] = semester_end.isoformat()
         meta = summary.metadata if isinstance(summary.metadata, dict) else {}
         performance = meta.get("performance") if isinstance(meta.get("performance"), dict) else None
         if performance:

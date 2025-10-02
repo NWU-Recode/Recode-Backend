@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.DB.supabase import get_supabase
@@ -93,41 +93,132 @@ class AchievementsRepository:
 
     # --- Elo --------------------------------------------------------------
 
-    async def get_user_elo(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def get_user_elo(
+        self,
+        user_id: str,
+        module_code: Optional[str] = None,
+        semester_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         client = await self._client()
-        query = client.table("user_elo").select("*").eq("user_id", user_id).single().execute()
-        resp = await self._execute(query, op="user_elo.single")
+        if module_code is None and semester_id is None:
+            query = (
+                client.table("user_elo")
+                .select("*")
+                .eq("user_id", user_id)
+                .order("updated_at", desc=True)
+                .limit(1)
+            )
+            resp = await self._execute(query.execute(), op="user_elo.latest")
+            data = getattr(resp, "data", None)
+            if isinstance(data, list):
+                return data[0] if data else None
+            if isinstance(data, dict):
+                return data
+            return None
+
+        query = client.table("user_elo").select("*").eq("user_id", user_id)
+        if module_code is not None:
+            query = query.eq("module_code", module_code)
+        if semester_id is not None:
+            query = query.eq("semester_id", semester_id)
+        resp = await self._execute(query.maybe_single().execute(), op="user_elo.scoped")
         data = getattr(resp, "data", None)
+        if isinstance(data, list):
+            return data[0] if data else None
         return data or None
 
-    async def insert_user_elo(self, user_id: str, elo_points: int, gpa: Optional[float]) -> Optional[Dict[str, Any]]:
+    async def insert_user_elo(
+        self,
+        user_id: str,
+        elo_points: int,
+        gpa: Optional[float],
+        module_code: Optional[str] = None,
+        semester_id: Optional[str] = None,
+        semester_start: Optional[date] = None,
+        semester_end: Optional[date] = None,
+    ) -> Optional[Dict[str, Any]]:
         payload: Dict[str, Any] = {
             "user_id": user_id,
             "elo_points": elo_points,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         if gpa is not None:
             payload["running_gpa"] = gpa
-        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        optional_fields: Dict[str, Any] = {}
+        if module_code is not None:
+            optional_fields["module_code"] = module_code
+        if semester_id is not None:
+            optional_fields["semester_id"] = semester_id
+        if semester_start is not None:
+            optional_fields["semester_start"] = semester_start.isoformat()
+        if semester_end is not None:
+            optional_fields["semester_end"] = semester_end.isoformat()
+        payload.update(optional_fields)
         client = await self._client()
-        query = client.table("user_elo").insert(payload).execute()
-        resp = await self._execute(query, op="user_elo.insert")
+        resp = await self._execute(client.table("user_elo").insert(payload).execute(), op="user_elo.insert")
         data = getattr(resp, "data", None)
-        return data[0] if isinstance(data, list) and data else None
+        if not data and optional_fields:
+            fallback_payload: Dict[str, Any] = {
+                "user_id": user_id,
+                "elo_points": elo_points,
+                "updated_at": payload["updated_at"],
+            }
+            if gpa is not None:
+                fallback_payload["running_gpa"] = gpa
+            resp = await self._execute(
+                client.table("user_elo").insert(fallback_payload).execute(),
+                op="user_elo.insert_fallback",
+            )
+            data = getattr(resp, "data", None)
+        if isinstance(data, list):
+            return data[0] if data else None
+        return data or None
 
-    async def update_user_elo(self, user_id: str, elo_points: int, gpa: Optional[float]) -> Optional[Dict[str, Any]]:
-        payload: Dict[str, Any] = {"elo_points": elo_points}
+    async def update_user_elo(
+        self,
+        user_id: str,
+        elo_points: int,
+        gpa: Optional[float],
+        module_code: Optional[str] = None,
+        semester_id: Optional[str] = None,
+        semester_start: Optional[date] = None,
+        semester_end: Optional[date] = None,
+    ) -> Optional[Dict[str, Any]]:
+        payload: Dict[str, Any] = {
+            "elo_points": elo_points,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
         if gpa is not None:
             payload["running_gpa"] = gpa
-        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if module_code is not None:
+            payload.setdefault("module_code", module_code)
+        if semester_id is not None:
+            payload.setdefault("semester_id", semester_id)
+        if semester_start is not None:
+            payload.setdefault("semester_start", semester_start.isoformat())
+        if semester_end is not None:
+            payload.setdefault("semester_end", semester_end.isoformat())
         client = await self._client()
-        query = client.table("user_elo").update(payload).eq("user_id", user_id).execute()
-        resp = await self._execute(query, op="user_elo.update")
+        query = client.table("user_elo").update(payload).eq("user_id", user_id)
+        if module_code is not None:
+            query = query.eq("module_code", module_code)
+        if semester_id is not None:
+            query = query.eq("semester_id", semester_id)
+        resp = await self._execute(query.execute(), op="user_elo.update")
         data = getattr(resp, "data", None)
-        if data:
-            return data[0] if isinstance(data, list) else data
-        # If the update did not return a row it likely means the record did
-        # not exist yet – insert instead.
-        return await self.insert_user_elo(user_id, elo_points=elo_points, gpa=gpa)
+        if isinstance(data, list) and data:
+            return data[0]
+        if isinstance(data, dict) and data:
+            return data
+        return await self.insert_user_elo(
+            user_id,
+            elo_points=elo_points,
+            gpa=gpa,
+            module_code=module_code,
+            semester_id=semester_id,
+            semester_start=semester_start,
+            semester_end=semester_end,
+        )
 
     async def log_elo_event(self, payload: Dict[str, Any]) -> None:
         client = await self._client()
