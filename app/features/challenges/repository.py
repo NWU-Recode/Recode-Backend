@@ -144,311 +144,318 @@ class ChallengeRepository:
 
     async def list_user_attempts(self, student_number: int) -> List[Dict[str, Any]]:
         client = await get_supabase()
-        resp = await client.table("challenge_attempts").select("*").eq("user_id", student_number).execute()  # Supabase stores student_number in user_id column (integer)
+        try:
+            resp = await client.table("challenge_attempts").select("*").eq("user_id", student_number).execute()  # Supabase stores student_number in user_id column (integer)
+        except Exception:
+            # In demo environments the challenge_attempts table may not exist yet; treat as no attempts.
+            return []
         return resp.data or []
 
 
-def _extract_role(self, current_user: Any) -> str:
-    if current_user is None:
-        return ""
-    if isinstance(current_user, dict):
-        role = current_user.get("role")
-    else:
-        role = getattr(current_user, "role", None)
-    return str(role or "").lower()
-
-def _extract_user_id(self, current_user: Any) -> Optional[int]:
-    if current_user is None:
-        return None
-    value = None
-    if isinstance(current_user, dict):
-        value = current_user.get("id")
-    else:
-        value = getattr(current_user, "id", None)
-    try:
-        return int(value) if value is not None else None
-    except Exception:
-        return None
-
-async def resolve_module_access(self, module_code: str, current_user: Any) -> Dict[str, Any]:
-    if not module_code:
-        raise ValueError("module_code_required")
-    client = await get_supabase()
-    resp = await (
-        client.table("modules")
-        .select("id, code, semester_id, lecturer_id")
-        .eq("code", module_code)
-        .limit(1)
-        .execute()
-    )
-    rows = resp.data or []
-    if not rows:
-        raise ValueError("module_not_found")
-    module = rows[0]
-    role = self._extract_role(current_user)
-    user_id = self._extract_user_id(current_user)
-    if role == "lecturer":
-        ta = await (
-            client.table("teaching_assignments")
-            .select("id")
-            .eq("module_id", module.get("id"))
-            .eq("lecturer_profile_id", user_id)
-            .limit(1)
-            .execute()
-        )
-        if not (ta.data or []):
-            raise PermissionError("module_forbidden")
-    elif role == "student":
-        enrol = await (
-            client.table("enrolments")
-            .select("id")
-            .eq("module_id", module.get("id"))
-            .eq("student_id", user_id)
-            .limit(1)
-            .execute()
-        )
-        if not (enrol.data or []):
-            raise PermissionError("module_forbidden")
-    # admins or other roles fall through
-    return module
-
-async def list_challenges_by_module_and_week(
-    self,
-    *,
-    module_code: str,
-    week_number: int,
-    statuses: Optional[List[str]] = None,
-    include_questions: bool = False,
-    limit: int = 20,
-    cursor: Optional[str] = None,
-) -> tuple[List[Dict[str, Any]], Optional[str]]:
-    if limit <= 0:
-        return [], None
-    client = await get_supabase()
-    fetch_limit = max(limit * 3, limit + 1)
-    query = (
-        client.table("challenges")
-        .select("*")
-        .eq("module_code", module_code)
-        .order("created_at")
-    )
-    if cursor:
-        query = query.gt("created_at", cursor)
-    if statuses:
-        statuses_clean = [s.strip().lower() for s in statuses if s.strip()]
-        if statuses_clean:
-            query = query.in_("status", statuses_clean)
-    resp = await query.limit(fetch_limit).execute()
-    rows = resp.data or []
-
-    bundles: List[Dict[str, Any]] = []
-    if not rows:
-        return bundles, None
-
-    import re as _re
-
-    week_pattern = _re.compile(r"w(\d{2})", _re.IGNORECASE)
-    filtered: List[Dict[str, Any]] = []
-    for row in rows:
-        week_value = row.get("week_number")
-        effective_week: Optional[int] = None
-        if isinstance(week_value, (int, float)):
-            effective_week = int(week_value)
+    def _extract_role(self, current_user: Any) -> str:
+        if current_user is None:
+            return ""
+        if isinstance(current_user, dict):
+            role = current_user.get("role")
         else:
-            slug = str(row.get("slug") or "")
-            match = week_pattern.search(slug)
-            if match:
-                try:
-                    effective_week = int(match.group(1))
-                except Exception:
-                    effective_week = None
-        if effective_week == week_number:
-            filtered.append(row)
-        if len(filtered) >= limit + 1:
-            break
+            role = getattr(current_user, "role", None)
+        return str(role or "").lower()
 
-    if not filtered:
-        return [], None
+    def _extract_user_id(self, current_user: Any) -> Optional[int]:
+        if current_user is None:
+            return None
+        value = None
+        if isinstance(current_user, dict):
+            value = current_user.get("id")
+        else:
+            value = getattr(current_user, "id", None)
+        try:
+            return int(value) if value is not None else None
+        except Exception:
+            return None
 
-    challenge_ids = [str(item.get("id")) for item in filtered]
-    question_map: Dict[str, List[Dict[str, Any]]] = {}
-    if challenge_ids:
-        q_resp = await (
-            client.table("questions")
-            .select("id, challenge_id, question_number, sub_number, position, question_text, starter_code, reference_solution, language_id, tier")
-            .in_("challenge_id", challenge_ids)
-            .order("question_number")
-            .order("sub_number")
-            .order("position")
+    async def resolve_module_access(self, module_code: str, current_user: Any) -> Dict[str, Any]:
+        if not module_code:
+            raise ValueError("module_code_required")
+        client = await get_supabase()
+        resp = await (
+            client.table("modules")
+            .select("id, code, semester_id, lecturer_id")
+            .eq("code", module_code)
+            .limit(1)
             .execute()
         )
-        for item in q_resp.data or []:
-            cid = str(item.get("challenge_id"))
-            question_map.setdefault(cid, []).append(item)
+        rows = resp.data or []
+        if not rows:
+            raise ValueError("module_not_found")
+        module = rows[0]
+        role = self._extract_role(current_user)
+        user_id = self._extract_user_id(current_user)
+        if role == "lecturer":
+            ta = await (
+                client.table("teaching_assignments")
+                .select("id")
+                .eq("module_id", module.get("id"))
+                .eq("lecturer_profile_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if not (ta.data or []):
+                raise PermissionError("module_forbidden")
+        elif role == "student":
+            enrol = await (
+                client.table("enrolments")
+                .select("id")
+                .eq("module_id", module.get("id"))
+                .eq("student_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if not (enrol.data or []):
+                raise PermissionError("module_forbidden")
+        # admins or other roles fall through
+        return module
 
-    items: List[Dict[str, Any]] = []
-    for row in filtered[:limit]:
-        cid = str(row.get("id"))
-        questions = question_map.get(cid, [])
-        items.append({"challenge": row, "questions": questions if include_questions else None, "question_count": len(questions)})
+    async def list_challenges_by_module_and_week(
+        self,
+        *,
+        module_code: str,
+        week_number: int,
+        statuses: Optional[List[str]] = None,
+        include_questions: bool = False,
+        limit: int = 20,
+    ) -> tuple[List[Dict[str, Any]], Optional[str]]:
+        if limit <= 0:
+            return [], None
 
-    next_cursor = None
-    if len(filtered) > limit:
-        last = filtered[limit - 1]
-        cursor_value = last.get("created_at")
-        if cursor_value:
-            next_cursor = str(cursor_value)
-    return items, next_cursor
+        client = await get_supabase()
+        fetch_limit = max(limit, 50)
+        statuses_clean = [s.strip().lower() for s in (statuses or []) if s.strip()]
 
-async def fetch_challenge_with_questions(
-    self,
-    challenge_id: str,
-    *,
-    include_questions: bool = False,
-    include_testcases: bool = False,
-) -> Dict[str, Any]:
-    client = await get_supabase()
-    resp = await client.table("challenges").select("*").eq("id", challenge_id).single().execute()
-    data = resp.data or None
-    if not data:
-        raise ValueError("challenge_not_found")
-    questions: List[Dict[str, Any]] = []
-    if include_questions:
+        base_query = client.table("challenges").select("*").eq("module_code", module_code)
+        if statuses_clean:
+            base_query = base_query.in_("status", statuses_clean)
+
+        try:
+            resp = await (
+                base_query
+                .eq("week_number", week_number)
+                .order("release_date", desc=True)
+                .order("created_at", desc=True)
+                .limit(fetch_limit)
+                .execute()
+            )
+            rows = resp.data or []
+        except Exception:
+            rows = []
+
+        week_tag = f"w{week_number:02d}"
+        if not rows:
+            try:
+                fallback_resp = await (
+                    base_query
+                    .order("created_at", desc=True)
+                    .limit(fetch_limit)
+                    .execute()
+                )
+                candidates = fallback_resp.data or []
+                rows = [row for row in candidates if week_tag in str(row.get("slug", ""))]
+            except Exception:
+                rows = []
+
+        if not rows:
+            return [], None
+
+        rows = rows[:limit]
+        challenge_ids = [str(item.get("id")) for item in rows if item.get("id")]
+
+        question_map: Dict[str, List[Dict[str, Any]]] = {}
+        question_counts: Dict[str, int] = {cid: 0 for cid in challenge_ids}
+        if challenge_ids:
+            if include_questions:
+                q_query = (
+                    client.table("questions")
+                    .select("id, challenge_id, question_number, sub_number, question_text, starter_code, reference_solution, language_id, tier")
+                    .in_("challenge_id", challenge_ids)
+                    .order("question_number")
+                    .order("sub_number")
+                    .order("id")
+                )
+            else:
+                q_query = (
+                    client.table("questions")
+                    .select("id, challenge_id")
+                    .in_("challenge_id", challenge_ids)
+                )
+            q_resp = await q_query.execute()
+            for item in q_resp.data or []:
+                cid = str(item.get("challenge_id"))
+                question_counts[cid] = question_counts.get(cid, 0) + 1
+                if include_questions:
+                    question_map.setdefault(cid, []).append(item)
+
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            cid = str(row.get("id"))
+            questions = question_map.get(cid, []) if include_questions else None
+            items.append({
+                "challenge": row,
+                "questions": questions,
+                "question_count": question_counts.get(cid, 0),
+            })
+
+        return items, None
+
+    async def fetch_challenge_with_questions(
+        self,
+        challenge_id: str,
+        *,
+        include_questions: bool = False,
+        include_testcases: bool = False,
+    ) -> Dict[str, Any]:
+        client = await get_supabase()
+        resp = await client.table("challenges").select("*").eq("id", challenge_id).single().execute()
+        data = resp.data or None
+        if not data:
+            raise ValueError("challenge_not_found")
+        questions: List[Dict[str, Any]] = []
+        if include_questions:
+            q_resp = await (
+                client.table("questions")
+                .select("*")
+                .eq("challenge_id", challenge_id)
+                .order("question_number")
+                .order("sub_number")
+                .order("id")
+                .execute()
+            )
+            questions = q_resp.data or []
+            if include_testcases and questions:
+                ids = [str(q.get("id")) for q in questions if q.get("id")]
+                if ids:
+                    tests = await self._fetch_testcases_for_questions(ids)
+                    for q in questions:
+                        qid = str(q.get("id"))
+                        q["testcases"] = tests.get(qid, [])
+        return {"challenge": data, "questions": questions}
+
+    async def list_questions_for_challenge(
+        self,
+        challenge_id: str,
+        *,
+        include_testcases: bool = False,
+    ) -> List[Dict[str, Any]]:
+        client = await get_supabase()
         q_resp = await (
             client.table("questions")
             .select("*")
             .eq("challenge_id", challenge_id)
             .order("question_number")
             .order("sub_number")
-            .order("position")
+            .order("id")
             .execute()
         )
         questions = q_resp.data or []
-        if include_testcases and questions:
+        if not questions:
+            return []
+        if include_testcases:
             ids = [str(q.get("id")) for q in questions if q.get("id")]
             if ids:
                 tests = await self._fetch_testcases_for_questions(ids)
                 for q in questions:
                     qid = str(q.get("id"))
                     q["testcases"] = tests.get(qid, [])
-    return {"challenge": data, "questions": questions}
+        return questions
 
-async def list_questions_for_challenge(
-    self,
-    challenge_id: str,
-    *,
-    include_testcases: bool = False,
-) -> List[Dict[str, Any]]:
-    client = await get_supabase()
-    q_resp = await (
-        client.table("questions")
-        .select("*")
-        .eq("challenge_id", challenge_id)
-        .order("question_number")
-        .order("sub_number")
-        .order("position")
-        .execute()
-    )
-    questions = q_resp.data or []
-    if not questions:
-        return []
-    if include_testcases:
-        ids = [str(q.get("id")) for q in questions if q.get("id")]
-        if ids:
-            tests = await self._fetch_testcases_for_questions(ids)
-            for q in questions:
-                qid = str(q.get("id"))
-                q["testcases"] = tests.get(qid, [])
-    return questions
+    async def fetch_question_detail(
+        self,
+        question_id: str,
+        *,
+        include_testcases: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        client = await get_supabase()
+        resp = await client.table("questions").select("*").eq("id", question_id).single().execute()
+        question = resp.data or None
+        if not question:
+            return None
+        if include_testcases:
+            tests = await self._fetch_testcases_for_questions([question_id])
+            question["testcases"] = tests.get(str(question_id), [])
+        return question
 
-async def fetch_question_detail(
-    self,
-    question_id: str,
-    *,
-    include_testcases: bool = False,
-) -> Optional[Dict[str, Any]]:
-    client = await get_supabase()
-    resp = await client.table("questions").select("*").eq("id", question_id).single().execute()
-    question = resp.data or None
-    if not question:
-        return None
-    if include_testcases:
-        tests = await self._fetch_testcases_for_questions([question_id])
-        question["testcases"] = tests.get(str(question_id), [])
-    return question
+    async def list_question_testcases(self, question_id: str) -> List[Dict[str, Any]]:
+        mapping = await self._fetch_testcases_for_questions([question_id])
+        return mapping.get(question_id, [])
 
-async def list_question_testcases(self, question_id: str) -> List[Dict[str, Any]]:
-    mapping = await self._fetch_testcases_for_questions([question_id])
-    return mapping.get(question_id, [])
-
-async def _fetch_testcases_for_questions(self, question_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
-    if not question_ids:
-        return {}
-    client = await get_supabase()
-    tests_map: Dict[str, List[Dict[str, Any]]] = {qid: [] for qid in question_ids}
-    try:
-        # Try to select the newer column name `expected_output` first; some DBs
-        # may still use `expected` so we normalize afterward.
-        resp = await (
-            client.table("question_tests")
-            .select("id, question_id, input, expected_output, visibility, order_index")
-            .in_("question_id", question_ids)
-            .order("order_index")
-            .order("id")
-            .execute()
-        )
-        for item in resp.data or []:
-            # Normalize field names for callers
-            if item.get("expected_output") is None and item.get("expected") is not None:
-                item["expected_output"] = item.get("expected")
-            # Normalize visibility values
-            vis = item.get("visibility")
-            if isinstance(vis, str) and vis.strip().lower() == "private":
-                item["visibility"] = "hidden"
-            qid = str(item.get("question_id"))
-            tests_map.setdefault(qid, []).append(item)
-    except Exception:
-        # If selecting `expected_output` failed because the column doesn't exist,
-        # try a looser select that requests `expected` instead.
+    async def _fetch_testcases_for_questions(self, question_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not question_ids:
+            return {}
+        client = await get_supabase()
+        tests_map: Dict[str, List[Dict[str, Any]]] = {qid: [] for qid in question_ids}
         try:
+            # Try to select the newer column name `expected_output` first; some DBs
+            # may still use `expected` so we normalize afterward.
             resp = await (
                 client.table("question_tests")
-                .select("id, question_id, input, expected, visibility, order_index")
+                .select("id, question_id, input, expected_output, visibility, order_index")
                 .in_("question_id", question_ids)
                 .order("order_index")
                 .order("id")
                 .execute()
             )
             for item in resp.data or []:
-                # Normalize to expected_output for callers
-                if item.get("expected") is not None and item.get("expected_output") is None:
+                # Normalize field names for callers
+                if item.get("expected_output") is None and item.get("expected") is not None:
                     item["expected_output"] = item.get("expected")
+                # Normalize visibility values
                 vis = item.get("visibility")
                 if isinstance(vis, str) and vis.strip().lower() == "private":
                     item["visibility"] = "hidden"
                 qid = str(item.get("question_id"))
                 tests_map.setdefault(qid, []).append(item)
         except Exception:
-            pass
-    missing = [qid for qid, vals in tests_map.items() if not vals]
-    if missing:
-        try:
-            legacy = await (
-                client.table("tests")
-                .select("id, question_id, input, expected, visibility, order_index")
-                .in_("question_id", missing)
-                .order("order_index")
-                .order("id")
-                .execute()
-            )
-            for item in legacy.data or []:
-                qid = str(item.get("question_id"))
-                if item.get("expected") and not item.get("expected_output"):
-                    item["expected_output"] = item.get("expected")
-                tests_map.setdefault(qid, []).append(item)
-        except Exception:
-            pass
-    return tests_map
+            # If selecting `expected_output` failed because the column doesn't exist,
+            # try a looser select that requests `expected` instead.
+            try:
+                resp = await (
+                    client.table("question_tests")
+                    .select("id, question_id, input, expected, visibility, order_index")
+                    .in_("question_id", question_ids)
+                    .order("order_index")
+                    .order("id")
+                    .execute()
+                )
+                for item in resp.data or []:
+                    # Normalize to expected_output for callers
+                    if item.get("expected") is not None and item.get("expected_output") is None:
+                        item["expected_output"] = item.get("expected")
+                    vis = item.get("visibility")
+                    if isinstance(vis, str) and vis.strip().lower() == "private":
+                        item["visibility"] = "hidden"
+                    qid = str(item.get("question_id"))
+                    tests_map.setdefault(qid, []).append(item)
+            except Exception:
+                pass
+        missing = [qid for qid, vals in tests_map.items() if not vals]
+        if missing:
+            try:
+                legacy = await (
+                    client.table("tests")
+                    .select("id, question_id, input, expected, visibility, order_index")
+                    .in_("question_id", missing)
+                    .order("order_index")
+                    .order("id")
+                    .execute()
+                )
+                for item in legacy.data or []:
+                    qid = str(item.get("question_id"))
+                    if item.get("expected") and not item.get("expected_output"):
+                        item["expected_output"] = item.get("expected")
+                    tests_map.setdefault(qid, []).append(item)
+            except Exception:
+                pass
+        return tests_map
+
     async def _build_snapshot(self, challenge_id: str) -> List[Dict[str, Any]]:
         """Fetch questions and return a frozen snapshot list.
 
