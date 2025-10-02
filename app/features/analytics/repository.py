@@ -108,7 +108,18 @@ def get_module_overview(db: Session, lecturer_id: Optional[int] = None):
         """)
         result = db.execute(query, {"lecturer_id": lecturer_id})
     else:
-        query = text("SELECT * FROM module_overview")  # admin: all modules
+        query = text("""
+        SELECT 
+            m.code,
+            m.name,
+            m.description,
+            m.semester_id,
+            m.lecturer_id,
+            m.code_language,
+            m.credits
+        FROM modules m
+        ORDER BY m.code
+    """)  # admin: all modules
         result = db.execute(query)
     
     columns = result.keys()

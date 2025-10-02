@@ -87,7 +87,7 @@ async def create_module(
     if not created:
         raise HTTPException(status_code=400, detail="Failed to create module")
     return created
-
+#e
 
 # Admin: Update module
 @router.put("/{module_code}", response_model=ModuleResponse)
