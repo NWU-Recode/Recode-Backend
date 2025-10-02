@@ -151,6 +151,39 @@ class ChallengeRepository:
             return []
         return resp.data or []
 
+    async def list_available_statuses(
+        self,
+        module_code: str,
+        *,
+        week_number: Optional[int] = None,
+    ) -> List[str]:
+        client = await get_supabase()
+        try:
+            query = (
+                client.table("challenges")
+                .select("status")
+                .eq("module_code", module_code)
+            )
+            if week_number is not None and week_number > 0:
+                query = query.eq("week_number", week_number)
+            resp = await query.execute()
+        except Exception:
+            return []
+        seen: set[str] = set()
+        statuses: List[str] = []
+        for row in resp.data or []:
+            value = row.get("status")
+            if not value:
+                continue
+            text = str(value).strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key not in seen:
+                seen.add(key)
+                statuses.append(text)
+        return statuses
+
 
     def _extract_role(self, current_user: Any) -> str:
         if current_user is None:

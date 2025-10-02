@@ -129,6 +129,7 @@ class ChallengeSummaryItem(BaseModel):
 class ChallengeListResponse(BaseModel):
     items: List[ChallengeSummaryItem] = Field(default_factory=list)
     next_cursor: Optional[str] = None
+    available_statuses: List[str] = Field(default_factory=list)
 
 
 class ChallengeDetailResponse(ChallengeSummaryItem):
