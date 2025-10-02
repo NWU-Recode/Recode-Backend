@@ -14,6 +14,80 @@ def get_student_challenges(db: Session, student_id: int):
     return [dict(zip(columns, row)) for row in result.fetchall()]
 
 # Badge Summary
+def get_student_badges(
+    db: Session,
+    student_id: int,
+    module_code: str,
+    challenge_id: Optional[str] = None
+):
+    """
+    Get badge summary for a specific student in a module using user_badge table.
+    Joins through questions to get to challenges.
+    """
+    # Verify student is enrolled in the module
+    verify_query = text("""
+        SELECT e.id 
+        FROM enrolments e
+        JOIN modules m ON e.module_id = m.id
+        WHERE m.code = :module_code 
+          AND e.student_id = :student_id
+          AND e.status = 'active'
+    """)
+    enrollment_check = db.execute(verify_query, {
+        "module_code": module_code,
+        "student_id": student_id
+    }).fetchone()
+    
+    if not enrollment_check:
+        raise HTTPException(
+            status_code=403,
+            detail="Not enrolled in this module or module not found"
+        )
+    
+    if challenge_id:
+        # Filter by specific challenge
+        query = text("""
+            SELECT 
+                b.badge_type::text as badge_type,
+                COUNT(ub.id) as badge_count,
+                MAX(ub.awarded_at)::text as latest_award
+            FROM user_badge ub
+            JOIN badges b ON ub.badge_id = b.id
+            JOIN questions q ON ub.question_id = q.id
+            WHERE q.challenge_id = :challenge_id::uuid
+              AND ub.profile_id = :student_id
+            GROUP BY b.badge_type
+            ORDER BY b.badge_type
+        """)
+        result = db.execute(query, {
+            "challenge_id": challenge_id,
+            "student_id": student_id
+        })
+    else:
+        # All badges for challenges in this module
+        query = text("""
+            SELECT 
+                b.badge_type::text as badge_type,
+                COUNT(ub.id) as badge_count,
+                MAX(ub.awarded_at)::text as latest_award
+            FROM user_badge ub
+            JOIN badges b ON ub.badge_id = b.id
+            JOIN questions q ON ub.question_id = q.id
+            JOIN challenges c ON q.challenge_id = c.id
+            WHERE c.module_code = :module_code
+              AND ub.profile_id = :student_id
+            GROUP BY b.badge_type
+            ORDER BY b.badge_type
+        """)
+        result = db.execute(query, {
+            "module_code": module_code,
+            "student_id": student_id
+        })
+    
+    columns = result.keys()
+    return [dict(zip(columns, row)) for row in result.fetchall()]
+
+
 def get_badge_summary(
     db: Session, 
     lecturer_id: int, 
@@ -21,10 +95,10 @@ def get_badge_summary(
     challenge_id: Optional[str] = None
 ):
     """
-    Get badge summary for a specific module owned by lecturer.
-    If challenge_id provided, filter to that specific challenge.
+    Get badge summary for a module owned by lecturer using user_badge table.
+    Shows all students' badges aggregated.
     """
-    # First verify lecturer owns this module
+    # Verify lecturer owns this module
     verify_query = text("""
         SELECT code FROM modules 
         WHERE code = :module_code AND lecturer_id = :lecturer_id
@@ -41,34 +115,33 @@ def get_badge_summary(
         )
     
     if challenge_id:
-        # Filter by specific challenge within the module
+        # Filter by specific challenge
         query = text("""
             SELECT 
-                b.badge_type,
-                COUNT(*) as badge_count,
+                b.badge_type::text as badge_type,
+                COUNT(ub.id) as badge_count,
                 MAX(ub.awarded_at)::text as latest_award
-            FROM user_badges ub
+            FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
-            JOIN challenges c ON ub.challenge_id = c.id
-            WHERE c.module_code = :module_code
-              AND c.id = :challenge_id
+            JOIN questions q ON ub.question_id = q.id
+            WHERE q.challenge_id = :challenge_id::uuid
             GROUP BY b.badge_type
             ORDER BY b.badge_type
         """)
         result = db.execute(query, {
-            "module_code": module_code,
             "challenge_id": challenge_id
         })
     else:
-        # All badges for the entire module
+        # All badges for all challenges in this module
         query = text("""
             SELECT 
-                b.badge_type,
-                COUNT(*) as badge_count,
+                b.badge_type::text as badge_type,
+                COUNT(ub.id) as badge_count,
                 MAX(ub.awarded_at)::text as latest_award
-            FROM user_badges ub
+            FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
-            JOIN challenges c ON ub.challenge_id = c.id
+            JOIN questions q ON ub.question_id = q.id
+            JOIN challenges c ON q.challenge_id = c.id
             WHERE c.module_code = :module_code
             GROUP BY b.badge_type
             ORDER BY b.badge_type
