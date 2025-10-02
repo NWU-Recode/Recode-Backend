@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, date, timezone, timedelta
+from typing import Optional
 import re, uuid, os
 
 # Robust timezone handling: fall back to fixed UTC+2 if tzdata not present
@@ -44,10 +45,16 @@ def build_slide_object_key(
     topic_name: str,
     given_at: datetime,
     semester_start: date,
+    semester_end: Optional[date] = None,
 ) -> SlideKey:
     d_local = given_at.astimezone(SA_TZ)
-    season = season_from_date(d_local.date())
-    week = week_from_date(semester_start, d_local.date())
+    target_date = d_local.date()
+    if target_date < semester_start:
+        target_date = semester_start
+    if semester_end and target_date > semester_end:
+        target_date = semester_end
+    season = season_from_date(target_date)
+    week = week_from_date(semester_start, target_date)
     topic_slug = to_topic_slug(topic_name)
     ts = int(d_local.timestamp())
     unique = uuid.uuid4().hex[:8]

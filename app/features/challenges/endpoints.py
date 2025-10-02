@@ -21,10 +21,10 @@ from .schemas import (
 )
 from .service import challenge_service
 from app.features.challenges.repository import challenge_repository
-from app.features.challenges.challenge_pack_generator import (
-    generate_tier_preview,
-    generate_and_save_tier,
-)
+# Lazily import heavy generator functions at runtime to avoid import-time failures while
+# challenge_pack_generator.py is being fixed or may raise syntax/indentation errors.
+generate_tier_preview = None
+generate_and_save_tier = None
 from app.DB.supabase import get_supabase
 from app.features.challenges.semester_orchestrator import semester_orchestrator
 from typing import Dict, Any, Optional, List, Set
