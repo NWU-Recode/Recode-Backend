@@ -159,9 +159,10 @@ async def list_challenges(
         if message == "module_not_found":
             raise HTTPException(status_code=404, detail=message) from None
         raise HTTPException(status_code=400, detail=message) from None
+    resolved_module_code = module.get("code") or module_code
     try:
         records, next_cursor = await challenge_repository.list_challenges_by_module_and_week(
-            module_code=module.get("code") or module_code,
+            module_code=resolved_module_code,
             week_number=week,
             statuses=statuses,
             include_questions=include_questions,
@@ -169,6 +170,14 @@ async def list_challenges(
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    try:
+        available_statuses = await challenge_repository.list_available_statuses(
+            resolved_module_code,
+            week_number=None if statuses is None else week,
+        )
+    except Exception:
+        available_statuses = []
 
     items: List[ChallengeSummaryItem] = []
     for entry in records:
@@ -183,7 +192,7 @@ async def list_challenges(
                 include_questions=include_questions,
             )
         )
-    return ChallengeListResponse(items=items, next_cursor=next_cursor)
+    return ChallengeListResponse(items=items, next_cursor=next_cursor, available_statuses=available_statuses)
 
 
 @router.get("/{challenge_id}", response_model=ChallengeDetailResponse, summary="Get challenge detail", tags=["challenges"])
