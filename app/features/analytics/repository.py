@@ -180,6 +180,7 @@ def get_module_overview(db: Session, lecturer_id: Optional[int] = None):
     else:
         query = text("""
         SELECT 
+            m.id,
             m.code,
             m.name,
             m.description,

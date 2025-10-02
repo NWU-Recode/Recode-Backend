@@ -50,6 +50,7 @@ class ModuleOverviewOut(BaseModel):
     total_enrolled_students: int
     total_challenges: int
 class AdminModuleOverviewOut(BaseModel):
+    id: UUID
     code: str = Field(..., example="CS101")
     name: str = Field(..., example="Introduction to Programming")
     description: Optional[str] = Field(None, example="Learn the basics of programming")
