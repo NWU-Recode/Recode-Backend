@@ -387,6 +387,8 @@ async def _fetch_testcases_for_questions(self, question_ids: List[str]) -> Dict[
     client = await get_supabase()
     tests_map: Dict[str, List[Dict[str, Any]]] = {qid: [] for qid in question_ids}
     try:
+        # Try to select the newer column name `expected_output` first; some DBs
+        # may still use `expected` so we normalize afterward.
         resp = await (
             client.table("question_tests")
             .select("id, question_id, input, expected_output, visibility, order_index")
@@ -396,10 +398,38 @@ async def _fetch_testcases_for_questions(self, question_ids: List[str]) -> Dict[
             .execute()
         )
         for item in resp.data or []:
+            # Normalize field names for callers
+            if item.get("expected_output") is None and item.get("expected") is not None:
+                item["expected_output"] = item.get("expected")
+            # Normalize visibility values
+            vis = item.get("visibility")
+            if isinstance(vis, str) and vis.strip().lower() == "private":
+                item["visibility"] = "hidden"
             qid = str(item.get("question_id"))
             tests_map.setdefault(qid, []).append(item)
     except Exception:
-        pass
+        # If selecting `expected_output` failed because the column doesn't exist,
+        # try a looser select that requests `expected` instead.
+        try:
+            resp = await (
+                client.table("question_tests")
+                .select("id, question_id, input, expected, visibility, order_index")
+                .in_("question_id", question_ids)
+                .order("order_index")
+                .order("id")
+                .execute()
+            )
+            for item in resp.data or []:
+                # Normalize to expected_output for callers
+                if item.get("expected") is not None and item.get("expected_output") is None:
+                    item["expected_output"] = item.get("expected")
+                vis = item.get("visibility")
+                if isinstance(vis, str) and vis.strip().lower() == "private":
+                    item["visibility"] = "hidden"
+                qid = str(item.get("question_id"))
+                tests_map.setdefault(qid, []).append(item)
+        except Exception:
+            pass
     missing = [qid for qid, vals in tests_map.items() if not vals]
     if missing:
         try:
@@ -564,7 +594,7 @@ async def _fetch_testcases_for_questions(self, question_ids: List[str]) -> Dict[
         resp = await client.table("challenges").select("id").eq("tier", "plain").execute()
         return len(resp.data or [])
 
-    async def publish_for_week(self, week_number: int) -> Dict[str, int]:
+    async def publish_for_week(self, week_number: int, *, module_code: Optional[str] = None, semester_id: Optional[str] = None) -> Dict[str, int]:
         """Publish challenges for the given week.
 
         New behaviour:
@@ -580,18 +610,31 @@ async def _fetch_testcases_for_questions(self, question_ids: List[str]) -> Dict[
         release_iso = now.isoformat()
         due_iso = (now + timedelta(days=7)).isoformat()
 
-        # Fetch candidates by explicit week_number first
+        # Fetch candidates by explicit week_number first, optionally scoped to a module and semester
         try:
-            resp = await client.table("challenges").select("id, tier, slug, status, week_number").eq("week_number", week_number).execute()
+            query = client.table("challenges").select("id, tier, slug, status, week_number, module_code, semester_id")
+            query = query.eq("week_number", week_number)
+            if module_code:
+                query = query.eq("module_code", module_code)
+            if semester_id:
+                query = query.eq("semester_id", semester_id)
+            resp = await query.execute()
             rows = resp.data or []
         except Exception:
             rows = []
 
         # Fallback to slug-based detection if none found
         if not rows:
-            resp_all = await client.table("challenges").select("id, tier, slug, status").execute()
-            rows_all = resp_all.data or []
-            rows = [r for r in rows_all if week_tag in str(r.get("slug", ""))]
+            try:
+                resp_all = await client.table("challenges").select("id, tier, slug, status, module_code, semester_id").execute()
+                rows_all = resp_all.data or []
+                if module_code:
+                    rows_all = [r for r in rows_all if (r.get("module_code") or None) == module_code]
+                if semester_id:
+                    rows_all = [r for r in rows_all if (r.get("semester_id") or None) == semester_id]
+                rows = [r for r in rows_all if week_tag in str(r.get("slug", ""))]
+            except Exception:
+                rows = []
 
         # Partition into base vs special tiers
         base_rows = [r for r in rows if (r.get("tier") or r.get("kind") or "").strip().lower() in {"plain", "common", "base"}]
@@ -637,6 +680,54 @@ async def _fetch_testcases_for_questions(self, question_ids: List[str]) -> Dict[
                 # ignore and continue
                 continue
         return {"updated": updated}
+
+    async def enforce_active_limit(self, *, module_code: Optional[str] = None, semester_id: Optional[str] = None, keep_count: int = 2) -> Dict[str, int]:
+        """Ensure no more than `keep_count` active challenges exist per module+semester scope.
+
+        If module_code and/or semester_id are provided, limit enforcement to that scope; otherwise enforce globally by module.
+        Older active challenges (by release_date or created_at) will be set to status 'inactive'.
+        """
+        client = await get_supabase()
+        updated = 0
+        try:
+            # Fetch active challenges, optionally scoped
+            query = client.table("challenges").select("id, module_code, semester_id, release_date, created_at").eq("status", "active")
+            if module_code:
+                query = query.eq("module_code", module_code)
+            if semester_id:
+                query = query.eq("semester_id", semester_id)
+            resp = await query.execute()
+            rows = resp.data or []
+        except Exception:
+            rows = []
+
+        # Group by module_code + semester_id
+        groups: Dict[tuple, List[Dict[str, Any]]] = {}
+        for r in rows:
+            key = (r.get("module_code") or "", r.get("semester_id") or "")
+            groups.setdefault(key, []).append(r)
+
+        for key, items in groups.items():
+            if len(items) <= keep_count:
+                continue
+            # sort by release_date (newest first), fallback to created_at
+            def _sort_key(it: Dict[str, Any]):
+                return str(it.get("release_date") or it.get("created_at") or "")
+
+            items_sorted = sorted(items, key=_sort_key, reverse=True)
+            to_keep = items_sorted[:keep_count]
+            to_deactivate = items_sorted[keep_count:]
+            for r in to_deactivate:
+                cid = r.get("id")
+                if not cid:
+                    continue
+                try:
+                    upd = await client.table("challenges").update({"status": "draft"}).eq("id", cid).execute()
+                    if getattr(upd, "data", None):
+                        updated += 1
+                except Exception:
+                    continue
+        return {"deactivated": updated}
 
     async def list_published_for_week(self, week_number: int) -> List[Dict[str, Any]]:
         """Return all challenges with status='published' for the given week.

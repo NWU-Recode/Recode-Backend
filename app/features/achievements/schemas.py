@@ -12,9 +12,35 @@ class AchievementsResponse(BaseModel):
     title: Optional[TitleResponse]
 
 #ELO
+class RewardEloSummary(BaseModel):
+    before: int
+    after: int
+    delta: int
+    reasons: List[str]
+
+
+class RewardGpaSummary(BaseModel):
+    before: Optional[float]
+    after: Optional[float]
+
+
+class RewardBadgeSummary(BaseModel):
+    badge_id: UUID
+    badge_name: str
+    reason: str
+
+
+class RewardSummary(BaseModel):
+    elo: Optional[RewardEloSummary] = None
+    gpa: Optional[RewardGpaSummary] = None
+    badges: List[RewardBadgeSummary] = []
+
+
 class EloResponse(BaseModel):
     elo: int
     gpa: Optional[float] = None
+    summary: Optional[RewardSummary] = None
+
 
 class EloUpdateRequest(BaseModel):
     submission_id : str
@@ -75,4 +101,5 @@ class CheckAchievementsResponse(BaseModel):
     gpa: Optional[float] = None
     unlocked_badges: Optional[List[BadgeResponse]]
     new_title: Optional[TitleResponse] = None
+    summary: Optional[RewardSummary] = None
 

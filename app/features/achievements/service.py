@@ -20,6 +20,10 @@ from .schemas import (
     CheckAchievementsResponse,
     EloResponse,
     EloUpdateRequest,
+    RewardSummary,
+    RewardEloSummary,
+    RewardGpaSummary,
+    RewardBadgeSummary,
     TitleInfo,
     TitleResponse,
 )
@@ -201,7 +205,10 @@ class AchievementsService:
             semester_end=semester_end,
         )
         old_elo = _safe_int(elo_record.get("elo_points"), default=BASE_ELO)
-        delta = self._compute_elo_delta(summary)
+        gpa_before = elo_record.get("running_gpa")
+        if gpa_before is None:
+            gpa_before = await self._compute_running_gpa(user_id)
+        delta, reasons = self._compute_elo_delta_with_reasons(summary)
         new_elo = max(BASE_ELO, min(4000, old_elo + delta))
         gpa = await self._compute_running_gpa(user_id)
         await self.repo.update_user_elo(
@@ -219,11 +226,20 @@ class AchievementsService:
             delta,
             new_elo,
             gpa,
+            reasons=reasons,
             semester_id=semester_id,
             semester_start=semester_start,
             semester_end=semester_end,
         )
-        return EloResponse(elo=new_elo, gpa=gpa)
+        reward_summary = RewardSummary(
+            elo=RewardEloSummary(before=old_elo, after=new_elo, delta=delta, reasons=reasons),
+            gpa=RewardGpaSummary(before=gpa_before, after=gpa),
+            badges=[],
+        )
+        return EloResponse(elo=new_elo, gpa=gpa, summary=reward_summary)
+
+
+
 
     async def get_badges(self, user_id: str) -> List[BadgeResponse]:
         rows = await self.repo.get_badges_for_user(user_id)
@@ -304,6 +320,7 @@ class AchievementsService:
             if isinstance(perf, dict):
                 module_code = perf.get("module_code") or module_code
         semester_id, semester_start, semester_end = await self._resolve_semester_context(module_code)
+
         elo_record = await self._ensure_user_elo_record(
             user_id,
             module_code=module_code,
@@ -312,7 +329,16 @@ class AchievementsService:
             semester_end=semester_end,
         )
         old_elo = _safe_int(elo_record.get("elo_points"), default=BASE_ELO)
-        delta = req.elo_delta_override if req.elo_delta_override is not None else self._compute_elo_delta(summary)
+        gpa_before = elo_record.get("running_gpa")
+        if gpa_before is None:
+            gpa_before = await self._compute_running_gpa(user_id)
+
+        if req.elo_delta_override is not None:
+            delta = int(req.elo_delta_override)
+            reasons = ["Manual override applied via API request"]
+        else:
+            delta, reasons = self._compute_elo_delta_with_reasons(summary)
+
         new_elo = max(BASE_ELO, min(4000, old_elo + delta))
         gpa = await self._compute_running_gpa(user_id)
         await self.repo.update_user_elo(
@@ -330,6 +356,7 @@ class AchievementsService:
             delta,
             new_elo,
             gpa,
+            reasons=reasons,
             semester_id=semester_id,
             semester_start=semester_start,
             semester_end=semester_end,
@@ -356,13 +383,35 @@ class AchievementsService:
             combined.append(badge)
             seen_ids.add(key)
 
+        badge_summaries: List[RewardBadgeSummary] = []
+        for badge in combined:
+            reason = f"Unlocked {badge.badge_name}"
+            if summary.tier:
+                reason += f" after completing a {summary.tier.title()} challenge"
+            if summary.week_number:
+                reason += f" in week {summary.week_number}"
+            badge_summaries.append(
+                RewardBadgeSummary(
+                    badge_id=badge.badge_id,
+                    badge_name=badge.badge_name,
+                    reason=reason,
+                )
+            )
+
         title_resp = await self.check_title_after_elo_update(user_id, old_elo)
+        reward_summary = RewardSummary(
+            elo=RewardEloSummary(before=old_elo, after=new_elo, delta=delta, reasons=reasons),
+            gpa=RewardGpaSummary(before=gpa_before, after=gpa),
+            badges=badge_summaries,
+        )
         return CheckAchievementsResponse(
             updated_elo=new_elo,
             gpa=gpa,
             unlocked_badges=combined or None,
             new_title=title_resp if title_resp.title_changed else None,
+            summary=reward_summary,
         )
+
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -467,7 +516,7 @@ class AchievementsService:
             metadata=metadata,
         )
 
-    def _compute_elo_delta(self, summary: AttemptSummary) -> int:
+    def _compute_elo_delta_with_reasons(self, summary: AttemptSummary) -> tuple[int, List[str]]:
         tier = _normalise_slug(summary.tier) or "plain"
         tier_weights: Dict[str, int] = {
             "plain": 235,
@@ -482,18 +531,31 @@ class AchievementsService:
         }
         base = tier_weights.get(tier, tier_weights["plain"])
         ratio = summary.ratio
-        delta = round(base * (ratio * 2 - 1))
-        # discourage hint usage and resubmissions by trimming positive gains
+        reasons: List[str] = []
+        reasons.append(f"Base tier weight {base} applied for {tier.title()} challenge")
+        performance_component = base * (ratio * 2 - 1)
+        delta = round(performance_component)
+        reasons.append(f"Performance ratio {ratio * 100:.0f}% contributes {round(performance_component)} ELO")
         hints_used = _safe_int(summary.metadata.get("hints_used"), default=0)
-        resubmissions = _safe_int(summary.metadata.get("resubmissions"), default=0)
-        duration = _safe_int(summary.metadata.get("duration_seconds"), default=0)
         if hints_used:
-            delta -= min(hints_used, 5)
+            penalty = min(hints_used, 5)
+            delta -= penalty
+            reasons.append(f"-{penalty} for using {hints_used} hint(s)")
+        resubmissions = _safe_int(summary.metadata.get("resubmissions"), default=0)
         if resubmissions:
-            delta -= min(resubmissions, 5)
+            penalty = min(resubmissions, 5)
+            delta -= penalty
+            reasons.append(f"-{penalty} for {resubmissions} re-submission(s)")
+        duration = _safe_int(summary.metadata.get("duration_seconds"), default=0)
         if duration and summary.total > 0 and duration > 60 * summary.total:
-            penalty_steps = (duration - 60 * summary.total) // 120
-            delta -= int(penalty_steps)
+            penalty_steps = int((duration - 60 * summary.total) // 120)
+            if penalty_steps > 0:
+                delta -= penalty_steps
+                reasons.append(f"-{penalty_steps} late penalty for exceeding expected time")
+        return delta, reasons
+
+    def _compute_elo_delta(self, summary: AttemptSummary) -> int:
+        delta, _ = self._compute_elo_delta_with_reasons(summary)
         return delta
 
     async def _maybe_log_elo_event(
@@ -503,6 +565,8 @@ class AchievementsService:
         delta: int,
         new_elo: int,
         gpa: float,
+        *,
+        reasons: Optional[List[str]] = None,
         semester_id: Optional[str] = None,
         semester_start: Optional[date] = None,
         semester_end: Optional[date] = None,
@@ -518,6 +582,8 @@ class AchievementsService:
             "gpa_snapshot": gpa,
             "recorded_at": datetime.utcnow().isoformat() + "Z",
         }
+        if reasons:
+            payload["reasons"] = reasons
         if summary.module_code:
             payload["module_code"] = summary.module_code
         if semester_id:
