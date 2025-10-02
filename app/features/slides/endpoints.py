@@ -3,50 +3,93 @@ from __future__ import annotations
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from datetime import datetime, date, time, timedelta
 import os
-
-def _read_semester_start() -> date:
-    val = os.environ.get("SEMESTER_START")
-    if not val:
-        return date(2025, 7, 7)
-    try:
-        # accept YYYY-MM-DD
-        return date.fromisoformat(val)
-    except Exception:
-        # fallback to default if parsing fails
-        return date(2025, 7, 7)
-from typing import List
+from typing import Any, List, Optional, Tuple
 import asyncio
+import logging
 
 from app.common.deps import get_current_user, CurrentUser, require_role
 from .upload import upload_slide_bytes
 from .upload import create_topic_from_extraction
 from .pathing import parse_week_topic_from_filename, SA_TZ
-import logging
-from app.features.admin.service import ModuleService
-from app.features.challenges.challenge_pack_generator import generate_and_save_tier
+from app.features.admin.repository import ModuleRepository
+# Lazy import generate_and_save_tier where it's used to avoid import-time errors
+generate_and_save_tier = None
 from app.features.challenges.repository import challenge_repository
 from app.demo.timekeeper import apply_demo_offset_to_semester_start
 
-router = APIRouter(prefix="/slides", tags=["slides"])
+DEFAULT_SEMESTER_WEEKS = 12
 
-# Helper: resolve current semester start date from the DB; fallback to env default
-async def _resolve_semester_start_date() -> date:
+
+def _read_semester_start() -> date:
+    val = os.environ.get("SEMESTER_START")
+    if not val:
+        return date(2025, 8, 31)
     try:
-        curr = await ModuleService.get_current_semester()
-        if curr:
-            sd = curr.get("start_date") or curr.get("start")
-            if isinstance(sd, str):
-                try:
-                    return date.fromisoformat(sd)
-                except Exception:
-                    pass
-            if isinstance(sd, date):
-                return sd
+        # accept YYYY-MM-DD
+        return date.fromisoformat(val)
     except Exception:
-        # If lookup fails, fall back to env-based read
-        pass
-    return _read_semester_start()
+        # fallback to default if parsing fails
+        return date(2025, 8, 31)
 
+
+def _coerce_date(value: Any) -> Optional[date]:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value.split("T")[0])
+        except Exception:
+            return None
+    return None
+
+
+def _semester_env_window() -> Tuple[date, date]:
+    start = _read_semester_start()
+    end = start + timedelta(weeks=DEFAULT_SEMESTER_WEEKS) - timedelta(days=1)
+    return start, end
+
+
+async def _resolve_semester_window(module_code: Optional[str]) -> Tuple[date, Optional[date], Optional[str]]:
+    env_start, env_end = _semester_env_window()
+    resolved_start = env_start
+    resolved_end: Optional[date] = env_end
+    semester_id: Optional[str] = None
+
+    window: Optional[dict] = None
+    if module_code:
+        try:
+            window = await ModuleRepository.get_semester_window_for_module_code(module_code)
+        except Exception:
+            window = None
+    if not window or not window.get("start_date"):
+        try:
+            current = await ModuleRepository.get_current_semester()
+        except Exception:
+            current = None
+        if current:
+            window = {
+                "start_date": current.get("start_date"),
+                "end_date": current.get("end_date"),
+                "semester_id": current.get("id"),
+            }
+    if window:
+        maybe_start = _coerce_date(window.get("start_date"))
+        maybe_end = _coerce_date(window.get("end_date"))
+        if maybe_start:
+            resolved_start = maybe_start
+        if maybe_end:
+            resolved_end = maybe_end
+        raw_semester_id = window.get("semester_id") or window.get("id")
+        if raw_semester_id not in (None, ""):
+            semester_id = str(raw_semester_id)
+
+    return resolved_start, resolved_end, semester_id
+
+
+
+router = APIRouter(prefix="/slides", tags=["slides"])
 
 @router.post(
     "/upload",
@@ -79,14 +122,29 @@ async def upload_slide(
         else:
             # Use now; week will be derived from SEMESTER_START in pathing.build_slide_object_key
             given_at_dt = datetime.now(tz=SA_TZ)
-        # Prefer module-specific semester start (if module has semester assigned)
-        module_sem_start = await ModuleService.get_semester_start_for_module_code(module_code)
-        semester_start = module_sem_start or await _resolve_semester_start_date()
-        # apply demo offset so admin can 'skip' weeks during demos (module-scoped when module_code provided)
-        semester_start = apply_demo_offset_to_semester_start(semester_start, module_code)
+        # Resolve the active semester window for this module (DB first, env fallback)
+        raw_semester_start, raw_semester_end, semester_id = await _resolve_semester_window(module_code)
+        semester_start = apply_demo_offset_to_semester_start(raw_semester_start, module_code)
+        semester_end = raw_semester_end
+        if semester_end and raw_semester_start:
+            semester_end = semester_end + (semester_start - raw_semester_start)
         out = await upload_slide_bytes(
-            data, file.filename, tn, given_at_dt, semester_start, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
+            data,
+            file.filename,
+            tn,
+            given_at_dt,
+            semester_start,
+            module_code=module_code,
+            signed_url_ttl_sec=signed_ttl_sec,
+            semester_end_date=semester_end,
         )
+        if isinstance(out, dict):
+            out.setdefault("semester_context", {
+                "module_code": module_code,
+                "semester_id": semester_id,
+                "start_date": semester_start.isoformat(),
+                "end_date": semester_end.isoformat() if semester_end else None,
+            })
         # After successful extraction/topic creation, trigger challenge generation according to week rules.
         try:
             week_num = None
@@ -99,19 +157,23 @@ async def upload_slide(
                 slide_stack_id = None
             lecturer_id = int(getattr(current_user, "id", 0) or 0)
             if week_num and 0 < week_num <= 12:
-                await generate_and_save_tier("base", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                # Import generator lazily to avoid importing heavy/fragile modules at app import time
+                from importlib import import_module
+                gen_mod = import_module("app.features.challenges.challenge_pack_generator")
+                generate_and_save_tier = getattr(gen_mod, "generate_and_save_tier")
+                await generate_and_save_tier("base", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id, semester_id=semester_id)
                 optional_generators = []
                 if week_num % 2 == 0:
                     optional_generators.append(
-                        generate_and_save_tier("ruby", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                        generate_and_save_tier("ruby", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id, semester_id=semester_id)
                     )
                 if week_num % 4 == 0:
                     optional_generators.append(
-                        generate_and_save_tier("emerald", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                        generate_and_save_tier("emerald", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id, semester_id=semester_id)
                     )
                 if week_num == 12:
                     optional_generators.append(
-                        generate_and_save_tier("diamond", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id)
+                        generate_and_save_tier("diamond", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id, semester_id=semester_id)
                     )
                 for coro in optional_generators:
                     try:
@@ -153,7 +215,13 @@ async def batch_upload_slides(
 ):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
-    
+
+    base_semester_start, base_semester_end, semester_id = await _resolve_semester_window(module_code)
+    semester_start = apply_demo_offset_to_semester_start(base_semester_start, module_code)
+    semester_end = base_semester_end
+    if semester_end:
+        semester_end = semester_end + (semester_start - base_semester_start)
+
     # Limit concurrency to prevent overwhelming the server/storage
     semaphore = asyncio.Semaphore(14)  # Max 14 concurrent uploads
     
@@ -168,12 +236,23 @@ async def batch_upload_slides(
                 # For batch uploads we may want to assign weeks by order later; default behavior here
                 # is to use now. The outer dispatcher will override given_at_dt when assign_weeks_by_order=True.
                 given_at_dt = datetime.now(tz=SA_TZ)
-                module_sem_start = await ModuleService.get_semester_start_for_module_code(module_code)
-                semester_start = module_sem_start or await _resolve_semester_start_date()
-                semester_start = apply_demo_offset_to_semester_start(semester_start, module_code)
                 result = await upload_slide_bytes(
-                    data, file.filename, tn, given_at_dt, semester_start, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
+                    data,
+                    file.filename,
+                    tn,
+                    given_at_dt,
+                    semester_start,
+                    module_code=module_code,
+                    signed_url_ttl_sec=signed_ttl_sec,
+                    semester_end_date=semester_end,
                 )
+                if isinstance(result, dict):
+                    result.setdefault("semester_context", {
+                        "module_code": module_code,
+                        "semester_id": semester_id,
+                        "start_date": semester_start.isoformat(),
+                        "end_date": semester_end.isoformat() if semester_end else None,
+                    })
                 # Do not expose signed URL unless explicitly requested
                 if not include_signed_url:
                     result.pop("signed_url", None)
@@ -189,11 +268,9 @@ async def batch_upload_slides(
         for idx, file in enumerate(files):
             # compute week offset (0-based index -> week 1..)
             week_offset = idx
-            module_sem_start = await ModuleService.get_semester_start_for_module_code(module_code)
-            semester_start = module_sem_start or await _resolve_semester_start_date()
-            semester_start = apply_demo_offset_to_semester_start(semester_start, module_code)
             target_date = semester_start + timedelta(weeks=week_offset)
             given_at_dt = datetime.combine(target_date, time(10, 0)).astimezone(SA_TZ)
+
             async def process_with_given(file=file, given_at_dt=given_at_dt):
                 async with semaphore:
                     try:
@@ -201,8 +278,22 @@ async def batch_upload_slides(
                         _, parsed_topic = parse_week_topic_from_filename(file.filename)
                         tn = topic_name or parsed_topic or "Coding"
                         result = await upload_slide_bytes(
-                            data, file.filename, tn, given_at_dt, semester_start, signed_url_ttl_sec=signed_ttl_sec, module_code=module_code
+                            data,
+                            file.filename,
+                            tn,
+                            given_at_dt,
+                            semester_start,
+                            module_code=module_code,
+                            signed_url_ttl_sec=signed_ttl_sec,
+                            semester_end_date=semester_end,
                         )
+                        if isinstance(result, dict):
+                            result.setdefault("semester_context", {
+                                "module_code": module_code,
+                                "semester_id": semester_id,
+                                "start_date": semester_start.isoformat(),
+                                "end_date": semester_end.isoformat() if semester_end else None,
+                            })
                         if not include_signed_url:
                             result.pop("signed_url", None)
                         return {"filename": file.filename, "success": True, "data": result}

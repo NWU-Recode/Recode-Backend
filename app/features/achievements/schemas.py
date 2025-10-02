@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
 
@@ -68,7 +68,7 @@ class CheckAchievementsRequest(BaseModel):
     submission_id: str
     elo_delta_override: Optional[int] = None
     badge_tiers: Optional[List[str]] = None
-    performance: Optional[Dict[str, float | int]] = None
+    performance: Optional[Dict[str, Any]] = None
 
 class CheckAchievementsResponse(BaseModel):
     updated_elo: int

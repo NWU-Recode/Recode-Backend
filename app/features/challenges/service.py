@@ -131,6 +131,7 @@ class ChallengeService:
             "challenge_id": str(req.challenge_id),
             "tier": tier,
             "topic_id": challenge.get("topic_id"),
+            "module_code": challenge.get("module_code"),
         }
         performance_payload = {k: v for k, v in performance_payload.items() if v is not None}
 

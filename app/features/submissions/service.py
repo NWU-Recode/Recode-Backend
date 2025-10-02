@@ -23,32 +23,32 @@ from app.features.submissions.schemas import (
     TestRunResultSchema,
 )
 
-MAX_SCORING_ATTEMPTS = 3
+MAX_SCORING_ATTEMPTS = 1
 DEFAULT_TIME_BUDGET_MS = 5000
 DEFAULT_MEMORY_BUDGET_KB = 256 * 1024
 
 _FAIL_ELO_BY_TIER = {
-    "base": -10,
-    "plain": -10,
-    "common": -10,
-    "bronze": -10,
-    "silver": -10,
-    "gold": -10,
-    "ruby": -20,
-    "emerald": -20,
-    "diamond": -30,
+    "base": -40,
+    "plain": -40,
+    "common": -40,
+    "bronze": -55,
+    "silver": -70,
+    "gold": -90,
+    "ruby": -150,
+    "emerald": -220,
+    "diamond": -320,
 }
 
 _BASE_ELO_BY_TIER = {
-    "base": 12,
-    "plain": 12,
-    "common": 12,
-    "bronze": 12,
-    "silver": 12,
-    "gold": 12,
-    "ruby": 20,
-    "emerald": 20,
-    "diamond": 28,
+    "base": 25,
+    "plain": 25,
+    "common": 25,
+    "bronze": 35,
+    "silver": 50,
+    "gold": 65,
+    "ruby": 120,
+    "emerald": 190,
+    "diamond": 320,
 }
 
 
@@ -81,12 +81,12 @@ class _GradingWeights:
 
 _GRADING_WEIGHTS = _GradingWeights(
     gpa_by_tier={
-        "bronze": 10,
-        "silver": 20,
-        "gold": 40,
-        "ruby": 100,
-        "emerald": 100,
-        "diamond": 100,
+        "bronze": 12,
+        "silver": 18,
+        "gold": 24,
+        "ruby": 40,
+        "emerald": 50,
+        "diamond": 60,
     }
 )
 

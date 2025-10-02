@@ -3,7 +3,7 @@ from __future__ import annotations
 import mimetypes
 import logging
 import inspect
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from .pathing import build_slide_object_key, to_topic_slug
 from app.DB.supabase import get_supabase
@@ -93,8 +93,9 @@ async def upload_slide_bytes(
     module_code: str,
     signed_url_ttl_sec: int = 900,
     create_topic: bool = True,
+    semester_end_date: Optional[date] = None,
 ) -> Dict[str, Any]:
-    key = build_slide_object_key(original_filename, topic_name, given_at_dt, semester_start_date)
+    key = build_slide_object_key(original_filename, topic_name, given_at_dt, semester_start_date, semester_end_date)
     content_type = mimetypes.guess_type(original_filename)[0] or "application/octet-stream"
     client = await get_supabase()
 

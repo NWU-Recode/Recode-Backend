@@ -1,50 +1,29 @@
 # Challenge System Map
 
-## Overview
-- **FastAPI entrypoint**: `app/main.py` wires routers, CORS, and session middleware. Auth-protected routers include challenges, Judge0, profiles, dashboard, slides.
-- **Persistence layers**:
-  - **Supabase** via `app/DB/supabase.py` for challenge metadata (`challenges`, `questions`, `challenge_attempts`, etc.).
-  - **Postgres (SQLAlchemy)** via `app/DB/session.py` for Judge0 submission history tables (`CodeSubmission`, `CodeResult`).
-- **Caching**: lightweight in-memory cache through `app.common.cache` reused by repositories.
+## Slide → Challenge Pipeline
+- `POST /slides/upload` reads slide bytes, extracts topics, and resolves the **active semester window** using `ModuleRepository` with an environment fallback (`SEMESTER_START`).
+- Upload metadata is saved into Supabase `slide_extractions`, topics are created/linked in `topics`, and the resolved `week_number` is preserved on the extraction as well as the generated challenges.
+- Automatic generation triggers `ChallengePackGenerator.generate_and_save_tier` for base (every week) and optional ruby/emerald/diamond tiers based on the computed week. Each generator call persists into Supabase `challenges`/`questions`/`question_tests` and re-uses the detected topics.
 
-## Challenge lifecycle
-1. **Generation** (`app/features/challenges/claude_generator.py`)
-   - Generates tiered challenge sets (base/ruby/emerald/diamond) using Claude or fallback templates.
-   - Persists challenge rows and their questions into Supabase.
-   - Normalises question metadata (language, starter code, reference solution, tier) and **inserts per-question tests** into the `tests` (aka `question_tests`) table via `_insert_tests`.
-   - Public test expected output is stored back on the question row for quick comparisons.
+## Challenge Generation
+- `ChallengePackGenerator` builds a context from slides/topics, calls the Bedrock-backed template, normalises returned questions, and persists the challenge.
+- Week numbers are explicitly supplied to `_insert_challenge` so that `week_number` is always written for every tier (emerald/diamond included). Duplicate-week checks are module aware.
+- Challenges can be published immediately via `challenge_repository.publish_for_week` once generation finishes.
 
-2. **Repository access** (`app/features/challenges/repository.py`)
-   - Provides cached fetch for challenges, questions, and open attempts.
-   - Creates and updates `challenge_attempts`, snapshots the first 5 questions (base challenges), and finalises attempts with aggregated score + correctness count.
-   - Utility methods fetch attempts, plain challenge counts, etc.
+## Submissions & Scoring
+- `MAX_SCORING_ATTEMPTS = 1` enforces a single scored submission per question. Additional attempts return `attempt_limit_reached` without affecting scores.
+- ELO base rewards are tuned per tier (25/35/50/65/120/190/320 for base→diamond) with proportional fail penalties. Efficiency bonuses scale from these new baselines.
+- GPA weights mirror the new tiers (`bronze` 12 → `diamond` 60).
+- Achievements now scope ELO records by `(user_id, module_code, semester_id)` and reset every semester/module. Helper methods resolve the active semester window and persist `semester_start`/`semester_end` metadata alongside each `user_elo` row.
 
-3. **Challenge service** (`app/features/challenges/service.py`)
-   - Orchestrates student submissions.
-   - Resolves/creates open attempt, fetches snapshot metadata, and re-runs Judge0 for missing question attempts.
-   - Uses `Judge0Service.execute_batch` to run code and marks correctness using stored expected output per snapshot question.
-   - Summarises attempt scores (currently 1 point per question) and finalises challenge attempt once all snapshot questions have attempts.
+## Judge0 API Surface
+- Public endpoints: `GET /judge0/languages`, `GET /judge0/statuses`, `POST /judge0/execute`, `/execute/stdout`, `/execute/simple`, `/execute/batch`.
+- Auth-protected endpoints: `POST /judge0/submit/full` (async token) and `GET /judge0/result/{token}`.
+- All endpoints rely on `Judge0Service` for submission orchestration and respond with normalised stdout/status payloads.
 
-4. **Judge0 integration** (`app/features/judge0/service.py`)
-   - Normalises language IDs, submits code to configured Judge0 instance, and resolves acceptance by comparing stdout with expected output.
-   - Supports synchronous waits, batch execution, result retrieval, and caching of language/status metadata.
-
-5. **Routing** (`app/features/challenges/endpoints.py`)
-   - Currently exposes lecturer-facing generation endpoints (`/generate/{tier}`, `/publish/{week_number}`, `/semester/overview`).
-   - Student-facing retrieval/submit endpoints are pending wiring to the `ChallengeService` orchestration.
-
-## Data relationships (Supabase)
-- `challenges` → `questions` (1:N). Questions include metadata such as `expected_output`, `language_id`, difficulty tier, `max_time_ms`, `max_memory_kb`.
-- `questions` → `question_tests` (1:N). Each test stores `input`, `expected`, and `visibility` (public/private). The first public test is considered the base validation.
-- `challenge_attempts` snapshot up to five questions by storing `snapshot_questions` array with per-question execution constraints and expected output.
-- Additional tables track attempts per question (via Supabase RPC `latest_attempts_for_challenge`).
-
-## Scoring today
-- `app/features/challenges/scoring.py` contains GPA-style aggregation for semester progress, blending plain and special tiers (ruby/emerald/diamond).
-- `ChallengeService.submit` currently collapses per-question pass/fail into a total `score` and `correct_count`, but GPA/ELO specific logic is not yet implemented.
-
-## Identified gaps for new grading flow
-- Question test cases are persisted but not surfaced/linked when students view or attempt questions.
-- No unified submissions module exists to tie attempts, Judge0 execution, GPA, and future ELO calculations together.
-- Need to extend challenge endpoints to serve bundled question + test-case data, run quick public-test validations, and update challenge attempts accordingly.
-
+## Key Tables
+- **slides** bucket: uploaded PPTX/PDF assets referenced by `slide_extractions`.
+- **slide_extractions / topics**: derived from slide uploads, carry `week_number`, `module_code`, and topic metadata.
+- **challenges / questions / question_tests**: generated challenge packs and their graded tests.
+- **challenge_attempts**: student submissions with snapshot questions, correctness counts, and ELO/GPA deltas.
+- **user_elo**: per-user, per-module, per-semester scoring records that feed achievements, analytics dashboards, and titles.
