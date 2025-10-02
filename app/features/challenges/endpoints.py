@@ -39,8 +39,11 @@ def _parse_include(value: Optional[str]) -> Set[str]:
         return set()
     return {part.strip().lower() for part in value.split(',') if part.strip()}
 
-
+def _parse_statuses(value: Optional[str]) -> Optional[List[str]]:
+    if value is None:
+        return None
     items = [part.strip().lower() for part in value.split(',') if part.strip()]
+    return items or None
 
 
 def _build_testcase_payload(data: Dict[str, Any]) -> QuestionTestCase:
