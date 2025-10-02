@@ -136,7 +136,7 @@ class ModuleRepository:
             return None
         return await _exec(
             client.table("enrolments")
-            .select("student_id, profiles(full_name, email)")
+            .select("student_number")
             .eq("module_id", str(module_id))
         ) or []
 
@@ -168,7 +168,14 @@ class ModuleRepository:
     async def get_challenges(module_code: str):
         client = await get_supabase()
         res = await _exec(
-            client.table("challenges").select("*").eq("module_code", module_code)
+            client.table("challenges")
+            .select(
+                "id, module_code, challenge_type, title, description, "
+                "status, release_date, due_date, created_at, updated_at, "
+                "week_number, tier, trigger_event"
+            )
+            .eq("module_code", module_code)
+            .order("release_date", desc=False)  # Order by release date
         )
         return res or []
 

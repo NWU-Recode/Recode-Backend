@@ -54,17 +54,9 @@ class ModuleService:
 
         result = []
         for s in students:
-            if not s or "student_id" not in s or s["student_id"] is None:
-                continue  # skip invalid entries
-
-            profiles = s.get("profiles") or {}
-            result.append(
-                StudentResponse(
-                    id=int(s["student_id"]),  # ensure it's an int
-                    full_name=profiles.get("full_name", ""),
-                    email=profiles.get("email", ""),
-                )
-            )
+            if not s or "student_number" not in s or s["student_number"] is None:
+                continue
+            result.append(StudentResponse(student_number=int(s["student_number"])))
         return result if result else None
     
     @staticmethod
@@ -74,22 +66,46 @@ class ModuleService:
 
     @staticmethod
     async def get_challenges(module_code: str, user: CurrentUser) -> Optional[List[ChallengeResponse]]:
-        module = await ModuleRepository.get_module_by_code(module_code)
-        if not module:
-            return None
-
-        module_id = module["id"] 
-
+        """Get challenges with conditional fields based on challenge_type."""
         if user.role.lower() == "student":
-            enrolled = await ModuleRepository.is_enrolled(module_id, user.id)
+            enrolled = await ModuleRepository.is_enrolled_by_code(module_code, user.id)
             if not enrolled:
                 return None
         elif user.role.lower() == "lecturer":
-            module = await ModuleRepository.get_module(module_id)
+            module = await ModuleRepository.get_module_by_code(module_code)
             if not module or module["lecturer_id"] != user.id:
                 return None
+        
         challenges = await ModuleRepository.get_challenges(module_code)
-        return [ChallengeResponse(**c) for c in challenges]
+        
+        # Transform to response objects
+        result = []
+        for c in challenges:
+            # Create response with all fields
+            challenge_data = {
+                "id": c.get("id"),
+                "module_code": c.get("module_code"),
+                "challenge_type": c.get("challenge_type"),
+                "title": c.get("title"),
+                "description": c.get("description"),
+                "status": c.get("status"),
+                "release_date": c.get("release_date"),
+                "due_date": c.get("due_date"),
+                "created_at": c.get("created_at"),
+                "updated_at": c.get("updated_at"),
+            }
+            
+            # Add conditional fields based on challenge_type
+            if c.get("challenge_type") == "weekly":
+                challenge_data["week_number"] = c.get("week_number")
+            elif c.get("challenge_type") == "special":
+                challenge_data["tier"] = c.get("tier")
+                challenge_data["trigger_event"] = c.get("trigger_event")
+            
+            result.append(ChallengeResponse(**challenge_data))
+        
+        return result
+
 
     @staticmethod
     async def enrol_student(module_code: str, student_number: int, lecturer_id: int, semester_id: Optional[UUID] = None) -> Optional[dict]:
@@ -206,10 +222,7 @@ class ModuleService:
 
     @staticmethod
     async def get_challenges_by_code(module_code: str, user: CurrentUser):
-        mod = await ModuleRepository.get_module_by_code(module_code)
-        if not mod:
-            return None
-        return await ModuleService.get_challenges(mod.get("code"), user)
+        return await ModuleService.get_challenges(module_code, user)
 
     @staticmethod
     async def enrol_student_by_code(module_code: str, student_number: int, lecturer_id: int, semester_id: Optional[UUID] = None):

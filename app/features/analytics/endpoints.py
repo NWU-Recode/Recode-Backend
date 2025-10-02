@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from .service import *
 from .schema import *
@@ -19,9 +18,20 @@ def student_challenges(current_user=Depends(get_current_user), db: Session = Dep
 
 # Badge Summary
 @router.get("/badges", response_model=List[BadgeSummaryOut])
-def badges(db: Session = Depends(get_db)):
-    return badge_summary_service(db)
+def badges(
+    module_code: str = Query(..., description="Module code (e.g., CMPG323)"),
+    challenge_id: Optional[str] = Query(None, description="Optional: Filter by specific challenge ID"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
 
+    return badge_summary_service(
+        db, 
+        current_user.id, 
+        current_user.role, 
+        module_code,
+        challenge_id
+    )
 # Challenge Progress
 @router.get("/challenges/progress", response_model=List[ChallengeProgressOut])
 def challenge_progress(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -38,10 +48,16 @@ def question_progress(current_user=Depends(get_current_user), db: Session = Depe
 
 # Module Overview
 @router.get("/modules/overview", response_model=List[ModuleOverviewOut])
-def modules_overview(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+def lecturer_modules(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "lecturer":
         raise HTTPException(status_code=403, detail="Lecturer access required")
-    return module_overview_service(db, current_user.id, current_user.role)
+    return get_module_overview(db, lecturer_id=current_user.id)
+
+@router.get("/admin/modules", response_model=List[AdminModuleOverviewOut])
+def admin_modules(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return get_module_overview(db)  # no lecturer_id filter
 
 # High-Risk Students
 @router.get("/students/high-risk", response_model=List[HighRiskStudentOut])
@@ -61,3 +77,34 @@ def module_leaderboard(current_user=Depends(get_current_user), db: Session = Dep
 @router.get("/global/leaderboard", response_model=List[GlobalLeaderboardOut])
 def global_leaderboard(db: Session = Depends(get_db)):
     return global_leaderboard_service(db)
+
+@router.get(
+    "/challenge-progress",
+    response_model=List[ChallengeProgressResponse],
+    summary="Get student progress per challenge (Lecturer only)",
+    description=(
+        "Get detailed student progress for challenges in a module.\n\n"
+        "Returns for each student:\n"
+        "- Student number and name\n"
+        "- Challenge name\n"
+        "- Highest badge earned (bronze → diamond, or none)\n"
+        "- Total time spent (sum of execution times)\n"
+        "- Total number of submissions\n\n"
+        "Required: module_code\n"
+        "Optional: challenge_id (filter to specific challenge)"
+    )
+)
+def challenge_progress(
+    module_code: str = Query(..., description="Module code (e.g., CMPG323)"),
+    challenge_id: Optional[str] = Query(None, description="Optional: Filter by specific challenge UUID"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    
+    return challenge_progress_service(
+        db,
+        current_user.id,
+        current_user.role,
+        module_code,
+        challenge_id
+    )
