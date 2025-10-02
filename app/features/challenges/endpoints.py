@@ -40,11 +40,7 @@ def _parse_include(value: Optional[str]) -> Set[str]:
     return {part.strip().lower() for part in value.split(',') if part.strip()}
 
 
-def _parse_statuses(value: Optional[str]) -> List[str]:
-    if not value:
-        return ["active"]
     items = [part.strip().lower() for part in value.split(',') if part.strip()]
-    return items or ["active"]
 
 
 def _build_testcase_payload(data: Dict[str, Any]) -> QuestionTestCase:
@@ -144,7 +140,7 @@ def _build_challenge_detail(challenge: Dict[str, Any], questions: List[Dict[str,
 async def list_challenges(
     module_code: str,
     week: int,
-    status: Optional[str] = "active",
+    status: Optional[str] = Query(None, description="Filter by status (comma-delimited). Leave blank to include all statuses."),
     include: Optional[str] = Query(None, description="Comma-delimited includes (e.g. questions)"),
     limit: int = Query(20, ge=1, le=100),
     current_user: CurrentUser = Depends(get_current_user),
