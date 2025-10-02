@@ -19,6 +19,11 @@ from app.demo.timekeeper import apply_demo_offset_to_semester_start
 
 DEFAULT_SEMESTER_WEEKS = 12
 
+# Background generation queue/worker state
+_generation_queue: asyncio.Queue | None = None
+_generation_worker_task: asyncio.Task | None = None
+_generation_worker_lock: asyncio.Lock | None = None
+
 
 def _read_semester_start() -> date:
     val = os.environ.get("SEMESTER_START")
@@ -88,6 +93,172 @@ async def _resolve_semester_window(module_code: Optional[str]) -> Tuple[date, Op
     return resolved_start, resolved_end, semester_id
 
 
+async def _get_generator_callable():
+    global generate_and_save_tier
+    if generate_and_save_tier is None:
+        from importlib import import_module
+        gen_mod = import_module("app.features.challenges.challenge_pack_generator")
+        generate_and_save_tier = getattr(gen_mod, "generate_and_save_tier")
+    return generate_and_save_tier
+
+
+async def _ensure_generation_worker() -> asyncio.Queue:
+    global _generation_queue, _generation_worker_task, _generation_worker_lock
+    loop = asyncio.get_running_loop()
+    if _generation_worker_lock is None:
+        _generation_worker_lock = asyncio.Lock()
+    async with _generation_worker_lock:
+        if _generation_queue is None:
+            _generation_queue = asyncio.Queue(maxsize=64)
+        if _generation_worker_task is None or _generation_worker_task.done():
+            _generation_worker_task = loop.create_task(_generation_worker_loop())
+    return _generation_queue
+
+
+async def _generation_worker_loop() -> None:
+    logger = logging.getLogger("slides")
+    queue = _generation_queue
+    if queue is None:
+        return
+    while True:
+        job = await queue.get()
+        week_num = job.get("week_num")
+        try:
+            await _run_generation_job(**job)
+        except asyncio.CancelledError as exc:
+            logger.warning(
+                "Generation worker cancelled while processing week %s (%s); requeueing job",
+                week_num,
+                type(exc).__name__,
+            )
+            try:
+                queue.put_nowait(job)
+            except Exception:
+                logger.exception("Failed to requeue job for week %s after cancellation", week_num)
+                try:
+                    await queue.put(job)
+                except Exception:
+                    logger.exception("Failed to await requeue for week %s; discarding job", week_num)
+            continue
+        except Exception:
+            logger.exception("Unhandled error while generating challenges for week %s", week_num)
+        finally:
+            queue.task_done()
+
+
+async def _enqueue_generation_job(*, week_num: int, slide_stack_id: Optional[int], module_code: Optional[str], lecturer_id: int, semester_id: Optional[str]) -> None:
+    queue = await _ensure_generation_worker()
+    job = {
+        "week_num": week_num,
+        "slide_stack_id": slide_stack_id,
+        "module_code": module_code,
+        "lecturer_id": lecturer_id,
+        "semester_id": semester_id,
+    }
+    try:
+        queue.put_nowait(job)
+    except asyncio.QueueFull:
+        await queue.put(job)
+    logging.getLogger("slides").info(
+        "Queued challenge generation job for week %s (module=%s)",
+        week_num,
+        module_code,
+    )
+
+
+async def _run_generation_job(*, week_num: int, slide_stack_id: Optional[int], module_code: Optional[str], lecturer_id: int, semester_id: Optional[str]) -> None:
+    logger = logging.getLogger("slides")
+    generator = await _get_generator_callable()
+
+    tiers: List[str] = ["base"]
+    if week_num in {2, 6, 10}:
+        tiers.append("ruby")
+    if week_num in {4, 8}:
+        tiers.append("emerald")
+    if week_num == 12:
+        tiers.append("diamond")
+
+    successes = 0
+    for tier_name in tiers:
+        attempts = 0
+        while attempts < 3:
+            try:
+                await generator(
+                    tier_name,
+                    week_num,
+                    slide_stack_id=slide_stack_id,
+                    module_code=module_code,
+                    lecturer_id=lecturer_id,
+                    semester_id=semester_id,
+                )
+                successes += 1
+                break
+            except asyncio.CancelledError as exc:
+                exc_name = type(exc).__name__
+                # Treat timeout-related cancellations as transient and retry.
+                if "Timeout" in exc_name or "Cancel" in exc_name:
+                    attempts += 1
+                    logger.warning(
+                        "Generation tier %s week %s cancelled attempt %s (%s); retrying",
+                        tier_name,
+                        week_num,
+                        attempts,
+                        exc_name,
+                    )
+                    await asyncio.sleep(1.0)
+                    continue
+                logger.warning(
+                    "Generation tier %s week %s cancelled (%s); aborting tier",
+                    tier_name,
+                    week_num,
+                    exc_name,
+                )
+                raise
+            except RuntimeError as rte:
+                logger.warning(
+                    "Generation tier %s week %s skipped: %s",
+                    tier_name,
+                    week_num,
+                    rte,
+                )
+                break
+            except Exception as exc:
+                logger.exception(
+                    "Generation tier %s week %s failed: %s",
+                    tier_name,
+                    week_num,
+                    exc,
+                )
+                break
+
+    if successes:
+        try:
+            publish_fn = getattr(challenge_repository, "publish_for_week", None)
+            if publish_fn is not None:
+                await publish_fn(week_num)
+        except Exception as pub_exc:
+            logger.exception("Failed to publish generated challenges for week %s: %s", week_num, pub_exc)
+
+        try:
+            enforce_fn = getattr(challenge_repository, "enforce_active_limit", None)
+            if enforce_fn is not None:
+                await enforce_fn(module_code=module_code, semester_id=semester_id)
+        except Exception:
+            logger.exception("Failed to enforce active challenge limit for week %s", week_num)
+
+        logger.info(
+            "Completed generation job for week %s with %s tier(s) (module=%s)",
+            week_num,
+            successes,
+            module_code,
+        )
+    else:
+        logger.warning(
+            "Generation job for week %s completed with no successful tiers",
+            week_num,
+        )
+
+
 
 router = APIRouter(prefix="/slides", tags=["slides"])
 
@@ -145,6 +316,23 @@ async def upload_slide(
                 "start_date": semester_start.isoformat(),
                 "end_date": semester_end.isoformat() if semester_end else None,
             })
+        # For single uploads, persist a topic record from the extraction so
+        # challenge generation can use persisted topic_ids. Batch upload handles
+        # topic creation in a later phase; single uploads should create the topic
+        # before generation runs.
+        try:
+            extraction = out.get("extraction") if isinstance(out, dict) else None
+            if extraction and isinstance(extraction, dict):
+                try:
+                    topic_row = await create_topic_from_extraction(extraction, module_code)
+                    # Attach the created topic back into the response extraction
+                    if topic_row and isinstance(topic_row, dict):
+                        extraction.setdefault("topic_created", True)
+                        extraction.setdefault("topic", topic_row)
+                except Exception:
+                    logging.getLogger("slides").exception("Failed to create topic from extraction for upload")
+        except Exception:
+            logging.getLogger("slides").exception("Error while persisting topic for upload")
         # After successful extraction/topic creation, trigger challenge generation according to week rules.
         try:
             week_num = None
@@ -157,34 +345,16 @@ async def upload_slide(
                 slide_stack_id = None
             lecturer_id = int(getattr(current_user, "id", 0) or 0)
             if week_num and 0 < week_num <= 12:
-                # Import generator lazily to avoid importing heavy/fragile modules at app import time
-                from importlib import import_module
-                gen_mod = import_module("app.features.challenges.challenge_pack_generator")
-                generate_and_save_tier = getattr(gen_mod, "generate_and_save_tier")
-                await generate_and_save_tier("base", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id, semester_id=semester_id)
-                optional_generators = []
-                if week_num % 2 == 0:
-                    optional_generators.append(
-                        generate_and_save_tier("ruby", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id, semester_id=semester_id)
-                    )
-                if week_num % 4 == 0:
-                    optional_generators.append(
-                        generate_and_save_tier("emerald", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id, semester_id=semester_id)
-                    )
-                if week_num == 12:
-                    optional_generators.append(
-                        generate_and_save_tier("diamond", week_num, slide_stack_id=slide_stack_id, module_code=module_code, lecturer_id=lecturer_id, semester_id=semester_id)
-                    )
-                for coro in optional_generators:
-                    try:
-                        await coro
-                    except Exception as gen_exc:
-                        logging.getLogger("slides").exception("Challenge generation failed for week %s tier task: %s", week_num, gen_exc)
-                # publish the week challenges we just generated
                 try:
-                    await challenge_repository.publish_for_week(week_num)
+                    await _enqueue_generation_job(
+                        week_num=week_num,
+                        slide_stack_id=slide_stack_id,
+                        module_code=module_code,
+                        lecturer_id=lecturer_id,
+                        semester_id=semester_id,
+                    )
                 except Exception:
-                    logging.getLogger("slides").exception("Failed to publish generated challenges for week %s", week_num)
+                    logging.getLogger("slides").exception("Failed to queue challenge generation for week %s", week_num)
         except Exception:
             logging.getLogger("slides").exception("Automatic challenge generation failed for uploaded slide")
         # Do not expose signed URL unless explicitly requested

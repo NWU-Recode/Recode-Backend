@@ -372,3 +372,47 @@ async def _resolve_module_code_value(module_code: Optional[str]) -> Optional[str
     return module_code
 
 __all__ = ['router', 'questions_router']
+
+
+@router.post("/admin/generate-debug/{tier}")
+async def admin_generate_debug(
+    tier: str,
+    body: ChallengeGenerateRequest = Body(...),
+    current_user: CurrentUser = Depends(require_role("admin", "lecturer")),
+):
+    """Synchronously run the generator for the given tier and return the persisted
+    challenge, questions and testcases for debugging. This is intended for admin use
+    only and may be slow.
+    """
+    # Lazy import in case generator module has heavy dependencies or may error at import time
+    global generate_and_save_tier
+    if generate_and_save_tier is None:
+        try:
+            from app.features.challenges.challenge_pack_generator import generate_and_save_tier as _gen
+            generate_and_save_tier = _gen
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail={"error_code": "E_GENERATOR_IMPORT", "message": str(exc)})
+
+    try:
+        result = await generate_and_save_tier(
+            tier,
+            body.week_number,
+            slide_stack_id=None,
+            module_code=body.module_code,
+            lecturer_id=int(current_user.id) if getattr(current_user, 'id', None) else None,
+            semester_id=None,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"error_code": "E_GENERATOR_FAILED", "message": str(exc)})
+
+    # Enrich with persisted questions and testcases using repository readers
+    try:
+        challenge = result.get("challenge") or {}
+        challenge_id = challenge.get("id")
+        questions = []
+        if challenge_id:
+            questions = await challenge_repository.list_questions_for_challenge(str(challenge_id), include_testcases=True)
+    except Exception:
+        questions = []
+
+    return {"result": result, "persisted_questions": questions}

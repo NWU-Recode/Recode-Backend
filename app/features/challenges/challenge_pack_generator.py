@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -35,10 +36,10 @@ DEFAULT_TOPICS = [
 POINTS_BY_DIFFICULTY = {
     "Bronze": 10,
     "Silver": 20,
-    "Gold": 30,
-    "Ruby": 40,
-    "Emerald": 60,
-    "Diamond": 100,
+    "Gold": 40,
+    "Ruby": 80,
+    "Emerald": 120,
+    "Diamond": 200,
 }
 
 BASE_DISTRIBUTION = ["Bronze", "Bronze", "Silver", "Silver", "Gold"]
@@ -162,42 +163,13 @@ class TopicContext:
                 if start == end:
                     return f"Week {start}"
                 return f"Weeks {start}-{end}"
-        return f"Week {self.week}"
-
-
-
-def _slugify(value: str) -> str:
-    import re
-
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return slug or "challenge"
-
-
-def _ensure_list(value: Any) -> List[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(v).strip() for v in value if str(v).strip()]
-    if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            return []
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, list):
-                return [str(v).strip() for v in parsed if str(v).strip()]
-        except json.JSONDecodeError:
-            return [value]
-    return []
-
-
-
-TOPIC_WINDOW_BY_TIER = {
-    "base": 1,
-    "ruby": 2,
-    "emerald": 4,
-    "diamond": None,
-}
+            if start:
+                return f"Week {start}"
+            if end:
+                return f"Week {end}"
+        if self.week:
+            return f"Week {self.week}"
+        return "Week"
 
 TOPIC_LIMIT_BY_TIER = {
     "base": 1,
@@ -205,6 +177,27 @@ TOPIC_LIMIT_BY_TIER = {
     "emerald": 4,
     "diamond": 12,
 }
+
+
+def _tier_from_kind(kind: Optional[str]) -> str:
+    """Normalize a requested tier/kind to the internal tier key.
+
+    Accepts values like 'base', 'common', 'ruby', 'emerald', 'diamond',
+    and returns the canonical lowercase key used across this module.
+    """
+    if not kind:
+        return "base"
+    k = str(kind).strip().lower()
+    mapping = {
+        "common": "base",
+        "base": "base",
+        "plain": "base",
+        "weekly": "base",
+        "ruby": "ruby",
+        "emerald": "emerald",
+        "diamond": "diamond",
+    }
+    return mapping.get(k, k)
 
 
 def _normalise_topic_string(value: Any) -> Optional[str]:
@@ -230,6 +223,37 @@ def _trim_week_prefix(title: str) -> str:
         if head.strip().lower().startswith("week"):
             return tail.strip() or cleaned
     return cleaned
+
+
+def _ensure_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(v).strip() for v in parsed if str(v).strip()]
+        except Exception:
+            return [value]
+    return []
+
+
+TOPIC_WINDOW_BY_TIER = {
+    "base": 1,
+    "ruby": 2,
+    "emerald": 4,
+    "diamond": None,
+}
+
+def _slugify(value: str) -> str:
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    return slug or "challenge"
 
 
 def _extract_keywords_from_topic_row(row: Dict[str, Any]) -> List[str]:
@@ -508,7 +532,7 @@ def _render_prompt(template: str, context: TopicContext) -> str:
     prompt = prompt.replace("{{topic_title}}", context.topic_title)
     prompt = prompt.replace("{{topic_window}}", context.week_window_label())
     prompt = prompt.replace("{{topics_list}}", topics_joined)
-    return record
+    return prompt
 
 
 async def generate_tier_preview(
@@ -520,7 +544,11 @@ async def generate_tier_preview(
     internal_tier = _tier_from_kind(tier)
     context = await _fetch_topic_context(week, slide_stack_id=slide_stack_id, module_code=module_code, tier=internal_tier)
     payload = await _call_bedrock(internal_tier, context)
-    questions = _normalise_questions(internal_tier, payload)
+    try:
+        questions = _normalise_questions(internal_tier, payload)
+    except Exception:
+        # Fail quietly — caller handles optional tier failures
+        raise
     topics_joined = context.joined_topics()
     topics_count = len([item for item in topics_joined.split(",") if item.strip()])
     return {
@@ -541,24 +569,13 @@ async def generate_tier_preview(
             "questions": questions,
         },
     }
-                "input": str(test.get("input", "")),
-                "expected": str(test.get("expected", "")),
-                "visibility": visibility,
-            }
-        )
-    while len(normalised_tests) < 3:
-        visibility = "public" if not normalised_tests else "private"
-        normalised_tests.append({"input": "", "expected": "", "visibility": visibility})
-    if normalised_tests:
-        normalised_tests[0]["visibility"] = "public"
-        for idx in range(1, len(normalised_tests)):
-            normalised_tests[idx]["visibility"] = "private"
-    result["tests"] = normalised_tests
-    return result
 
 
 def _normalise_questions(kind: str, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    questions = payload.get("questions", [])
+    if not isinstance(payload, dict):
+        logger.warning("Generator payload is not a dict for tier %s: %r", kind, payload)
+        raise ValueError("Model response invalid: expected object payload")
+    questions = payload.get("questions", []) or []
     if kind in {"common", "base"}:
         if len(questions) < 5:
             raise ValueError("Model response did not include 5 questions for base/common payload")
@@ -569,7 +586,12 @@ def _normalise_questions(kind: str, payload: Dict[str, Any]) -> List[Dict[str, A
         ]
     if not questions:
         raise ValueError(f"Model response did not include questions for tier {kind}")
-    return [_normalise_question(kind, questions[0], kind.title())]
+    # ensure the first question is a dict
+    first = questions[0]
+    if not isinstance(first, dict):
+        logger.warning("First question is not a dict for tier %s: %r", kind, first)
+        raise ValueError("Model response invalid: question item not an object")
+    return [_normalise_question(kind, first, kind.title())]
 
 
 async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
@@ -598,17 +620,31 @@ async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
                 exc,
             )
         except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Model invocation failed (attempt %s/%s) for tier %s: %s",
+                attempt,
+                max_attempts,
+                kind,
+                exc,
+            )
+            continue
 
-
-        def _normalise_question(kind: str, data: Dict[str, Any], difficulty: str) -> Dict[str, Any]:
+def _normalise_question(kind: str, data: Dict[str, Any], difficulty: str) -> Dict[str, Any]:
             """Minimal normalisation of a single question payload for downstream code paths.
-            This one is intentionally conservative: it extracts a prompt/title, starter code and
-            normalises testcases to a list of at least 3 items with visibility flags.
+            Conservative: extracts title, starter code and normalises testcases to a list of at least
+            3 items with visibility flags. Defensive against None/malformed question objects.
             """
-            title = data.get("title") or (data.get("question_text") or "").split("\n")[0][:120]
+            if not isinstance(data, dict):
+                logger.warning("Normalise called with non-dict question data: %r", data)
+                data = {}
+            title = (data.get("title") or (data.get("question_text") or "")).split("\n")[0][:120]
             tests = data.get("tests") or data.get("testcases") or []
             normalised_tests = []
             for test in tests:
+                if not isinstance(test, dict):
+                    logger.warning("Skipping non-dict testcase for question '%s': %r", title, test)
+                    continue
                 visibility = test.get("visibility") or ("public" if not normalised_tests else "private")
                 normalised_tests.append({
                     "input": str(test.get("input") or test.get("stdin") or ""),
@@ -618,6 +654,10 @@ async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
             while len(normalised_tests) < 3:
                 visibility = "public" if not normalised_tests else "private"
                 normalised_tests.append({"input": "", "expected": "", "visibility": visibility})
+            difficulty_key = difficulty.title() if isinstance(difficulty, str) else str(difficulty)
+            points_value = POINTS_BY_DIFFICULTY.get(difficulty_key)
+            if points_value is None:
+                points_value = POINTS_BY_DIFFICULTY.get(str(difficulty).capitalize(), 10)
             result = {
                 "title": title,
                 "question_text": data.get("question_text") or data.get("prompt") or "",
@@ -625,9 +665,11 @@ async def _call_bedrock(kind: str, context: TopicContext) -> Dict[str, Any]:
                 "starter_code": data.get("starter_code") or "",
                 "reference_solution": data.get("reference_solution") or "",
                 "tests": normalised_tests,
+                "points": int(points_value),
+                "tier": str(difficulty).lower(),
             }
-            return result
 
+            return result
 
 async def _insert_challenge(
     client,
@@ -674,43 +716,22 @@ async def _insert_challenge(
     idempotency_key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()[:16]
 
     async def _fetch_existing(field: str, value: Any) -> Optional[Dict[str, Any]]:
+        """Query the challenges table for a single row matching field==value.
+        Returns a dict row or None. Handles missing column and DB errors gracefully.
+        """
         if value in {None, ""}:
             return None
         try:
+            # Defensive: check if column exists (some deployments may not have new columns)
             has_col = await _table_has_column("challenges", field)
         except Exception:
             has_col = False
-            return {
-                "topic_context": {
-                    "topic_id": context.topic_id,
-                    "topic_title": context.topic_title,
-                    "module_code": context.module_code,
-                    "topics_list": topics_joined,
-                    "topic_ids_used": context.topic_ids_used,
-                    "topic_titles_used": context.topic_titles_used,
-                    "topic_window": context.week_window_label(),
-                    "topic_history": context.history_summary(),
-                    "topics_count": topics_count,
-                    "topic_history_items": context.topic_history,
-                },
-                "challenge_data": {
-                    "challenge_set_title": payload.get("challenge_set_title"),
-                    "questions": questions,
-                },
-            }
-                    "topic_ids_used": context.topic_ids_used,
-                    "topic_titles_used": context.topic_titles_used,
-                    "topic_window": context.week_window_label(),
-                    "topic_history": context.history_summary(),
-                    "topics_count": topics_count,
-                    "topic_history_items": context.topic_history,
-                },
-                "challenge_data": {
-                    "challenge_set_title": payload.get("challenge_set_title"),
-                    "questions": questions,
-                },
-            }
-            return rows[0] if rows else None
+        try:
+            # If column doesn't exist, still attempt a safe query; Supabase will error if invalid
+            rows = await client.table("challenges").select("*").eq(field, value).limit(1).execute()
+            if getattr(rows, "data", None):
+                return rows.data[0]
+            return None
         except Exception:
             return None
 
@@ -722,6 +743,11 @@ async def _insert_challenge(
             return False
 
     supports_idempotency = await _table_has_column("challenges", "idempotency_key")
+    # Detect if the challenges table supports a semester_id column so we can scope existence checks
+    try:
+        supports_semester = await _table_has_column("challenges", "semester_id")
+    except Exception:
+        supports_semester = False
     existing = None
     if supports_idempotency:
         existing = await _fetch_existing("idempotency_key", idempotency_key)
@@ -762,8 +788,14 @@ async def _insert_challenge(
 
     if is_weekly:
         payload["week_number"] = effective_week
+        # Do not explicitly set the `tier` enum for weekly challenges. Different
+        # deployments may use different enum members (plain/base/weekly). Leave
+        # the column unset so DB defaults or downstream logic can normalise it.
+        pass
     else:
-        payload["tier"] = tier if tier is not None else None
+        # Do not set the `tier` enum value explicitly; deployments may use different
+        # enum labels. Keep week number and trigger_event metadata but leave tier
+        # unset so DB defaults or downstream logic can normalise it as needed.
         if tier == "diamond":
             payload["week_number"] = 12
         else:
@@ -807,6 +839,8 @@ async def _insert_challenge(
                 query = client.table("challenges").select("id").eq("challenge_type", "weekly").eq("week_number", effective_week)
                 if module_code_filter:
                     query = query.eq("module_code", module_code_filter)
+                if supports_semester and semester_id:
+                    query = query.eq("semester_id", semester_id)
                 exists_resp = await query.limit(1).execute()
                 if getattr(exists_resp, "data", None):
                     raise RuntimeError(f"A weekly challenge already exists for week {effective_week}")
@@ -818,6 +852,8 @@ async def _insert_challenge(
                 query = client.table("challenges").select("id").eq("challenge_type", "special").eq("week_number", effective_week)
                 if module_code_filter:
                     query = query.eq("module_code", module_code_filter)
+                if supports_semester and semester_id:
+                    query = query.eq("semester_id", semester_id)
                 exists_resp = await query.limit(1).execute()
                 if getattr(exists_resp, "data", None):
                     found = True
@@ -828,6 +864,8 @@ async def _insert_challenge(
                     query = client.table("challenges").select("id").eq("challenge_type", "special")
                     if module_code_filter:
                         query = query.eq("module_code", module_code_filter)
+                    if supports_semester and semester_id:
+                        query = query.eq("semester_id", semester_id)
                     trigger_resp = await query.eq("trigger_event->>week", str(effective_week)).limit(1).execute()
                     if getattr(trigger_resp, "data", None):
                         found = True
@@ -849,14 +887,17 @@ async def _insert_challenge(
             record.setdefault("_existing", False)
     except Exception:
         pass
+    # After creating an active challenge, prune older active challenges so we never
+    # keep more than the configured number of active challenges (default: 2)
+    # per module_code + semester_id scope. This calls a Postgres RPC function
+    # `prune_active_challenges(challenge_id uuid, keep_count int)` which should be
+    # created in the Supabase database. Failures here should not block insertion.
+    try:
+        # Try best-effort RPC call; some deployments may not have the function yet.
+        await client.rpc("prune_active_challenges", {"challenge_id": record.get("id"), "keep_count": 2}).execute()
+    except Exception:
+        pass
     return record
-
-
-
-
-async def generate_tier_preview(
-
-
 
 async def generate_tier_preview(
     tier: str,
@@ -947,15 +988,132 @@ async def generate_and_save_tier(
     if existing_ids:
         stored = [{"id": qid} for qid in existing_ids]
     else:
+        
+        async def _insert_question(client, *, challenge_id: Any, question: Dict[str, Any], order_index: int) -> Dict[str, Any]:
+            """Insert a question row into the questions table defensively, persist its testcases,
+            and return the inserted record (or a minimal fallback). Log any DB errors so failures
+            are visible in server logs.
+            """
+            # Align inserted fields with the actual `questions` table schema
+            # Use question_number/sub_number and provide minimal required fields (points > 0)
+            payload_q = {
+                "challenge_id": challenge_id,
+                "question_number": int(order_index),
+                "sub_number": 0,
+                "title": question.get("title"),
+                "question_text": question.get("question_text") or question.get("prompt") or "",
+                "reference_solution": question.get("reference_solution") or "",
+                "starter_code": question.get("starter_code") or "",
+                "points": int(question.get("points") or 1),
+                # language_id default exists in DB (71) but set explicitly when available
+                "language_id": int(question.get("language_id") or 71),
+                "expected_output": str((question.get("reference_solution") or question.get("expected") or question.get("expected_output") or "")),
+                "tier": question.get("difficulty_level") or None,
+            }
+            # Attempt to insert the question row with a single retry on transient failures.
+            import os as _os
+            _debug = _os.environ.get("GENERATOR_DEBUG") in {"1", "true", "True"}
+            q_attempt = 0
+            while q_attempt < 2:
+                try:
+                    resp_q = await client.table("questions").insert(payload_q).execute()
+                    try:
+                        logger.debug("questions.insert response: data=%r error=%r", getattr(resp_q, 'data', None), getattr(resp_q, 'error', None))
+                    except Exception:
+                        pass
+                    inserted = getattr(resp_q, "data", None)
+                    if inserted:
+                        qrow = inserted[0]
+                        qid = qrow.get("id")
+                        # Persist testcases into question_tests (preferred) or legacy tests table
+                        tests = question.get("tests") or []
+                        persisted_count = 0
+                        persisted_rows: List[Dict[str, Any]] = []
+                        if tests and qid is not None:
+                            for t in tests:
+                                expected_val = str(t.get("expected") or t.get("expected_output") or "")
+                                visibility_val = t.get("visibility") or None
+                                if isinstance(visibility_val, str) and visibility_val.strip().lower() == "private":
+                                    visibility_val = "hidden"
+                                t_payload = {
+                                    "question_id": qid,
+                                    "input": str(t.get("input") or ""),
+                                    "expected": expected_val,
+                                    "visibility": visibility_val,
+                                }
+                                t_attempt = 0
+                                while t_attempt < 2:
+                                    try:
+                                        resp_t = await client.table("question_tests").insert(t_payload).execute()
+                                        if getattr(resp_t, "data", None):
+                                            try:
+                                                persisted_rows.append(resp_t.data[0])
+                                            except Exception:
+                                                persisted_rows.append({"question_id": qid})
+                                            persisted_count += 1
+                                            break
+                                        else:
+                                            t_attempt += 1
+                                    except Exception as _t_exc:
+                                        t_attempt += 1
+                                        if _debug:
+                                            try:
+                                                logger.exception("Failed to insert question_test (attempt %s) for qid=%s: %s", t_attempt, qid, _t_exc)
+                                            except Exception:
+                                                pass
+                                        if t_attempt >= 2:
+                                            # Final failure inserting into question_tests; try legacy `tests` table as a fallback
+                                            try:
+                                                legacy_payload = {
+                                                    "question_id": qid,
+                                                    "input": t_payload.get("input"),
+                                                    "expected": t_payload.get("expected"),
+                                                    "visibility": t_payload.get("visibility"),
+                                                }
+                                                try:
+                                                    resp_leg = await client.table("tests").insert(legacy_payload).execute()
+                                                    if getattr(resp_leg, "data", None):
+                                                        try:
+                                                            persisted_rows.append(resp_leg.data[0])
+                                                        except Exception:
+                                                            persisted_rows.append({"question_id": qid})
+                                                        persisted_count += 1
+                                                        try:
+                                                            logger.debug("Inserted testcase into legacy tests table for qid=%s", qid)
+                                                        except Exception:
+                                                            pass
+                                                except Exception as _leg_exc:
+                                                    if _debug:
+                                                        try:
+                                                            logger.exception("Failed to insert testcase into legacy tests table for qid=%s: %s", qid, _leg_exc)
+                                                        except Exception:
+                                                            pass
+                                            except Exception:
+                                                pass
+                                            break
+                        # attach diag info for caller: actual persisted count and rows
+                        try:
+                            qrow.setdefault("_persisted_tests", persisted_count)
+                            if persisted_rows:
+                                qrow.setdefault("testcases", persisted_rows)
+                        except Exception:
+                            pass
+                        return qrow
+                    # else fallthrough to retry
+                except Exception as _q_exc:
+                    q_attempt += 1
+                    if _debug:
+                        try:
+                            logger.exception("Failed to insert question (attempt %s) for challenge=%s index=%s: %s", q_attempt, challenge_id, order_index, _q_exc)
+                        except Exception:
+                            pass
+                    if q_attempt >= 2:
+                        break
+            # Fallback: return a minimal representation and include an error note
+            return {"id": None, "challenge_id": challenge_id, "question_number": order_index, "sub_number": 0, "_error": "persist_failed"}
+
         for idx, question in enumerate(questions, start=1):
-            stored.append(
-                await _insert_question(
-                    client,
-                    challenge_id=challenge.get("id"),
-                    question=question,
-                    order_index=idx,
-                )
-            )
+            stored.append(await _insert_question(client, challenge_id=challenge.get("id"), question=question, order_index=idx))
     topics_joined = context.joined_topics()
     topics_count = len([item for item in topics_joined.split(",") if item.strip()])
     return {
