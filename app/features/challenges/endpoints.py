@@ -58,10 +58,8 @@ def _build_testcase_payload(data: Dict[str, Any]) -> QuestionTestCase:
 
 
 def _build_question_detail(data: Dict[str, Any], include_testcases: bool = False) -> QuestionDetail:
+    # Testcases are disabled for the demo, so we always omit them regardless of the include flag.
     testcases = None
-    if include_testcases:
-        raw_cases = data.get("testcases") or []
-        testcases = [_build_testcase_payload(item) for item in raw_cases]
     return QuestionDetail(
         id=data.get("id"),
         challenge_id=data.get("challenge_id"),
@@ -149,7 +147,6 @@ async def list_challenges(
     status: Optional[str] = "active",
     include: Optional[str] = Query(None, description="Comma-delimited includes (e.g. questions)"),
     limit: int = Query(20, ge=1, le=100),
-    cursor: Optional[str] = Query(None, description="Cursor returned from a previous request"),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     if week <= 0:
@@ -173,7 +170,6 @@ async def list_challenges(
             statuses=statuses,
             include_questions=include_questions,
             limit=limit,
-            cursor=cursor,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -238,11 +234,13 @@ async def list_challenge_questions(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     includes = _parse_include(include)
-    include_testcases = "testcases" in includes
+    include_testcases = False
     challenge = await challenge_repository.get_challenge(str(challenge_id))
     if not challenge:
         raise HTTPException(status_code=404, detail="challenge_not_found")
     module_code = challenge.get("module_code")
+    if not module_code:
+        raise HTTPException(status_code=404, detail="module_not_found")
     try:
         await challenge_repository.resolve_module_access(module_code, current_user)
     except PermissionError:
@@ -270,7 +268,7 @@ async def get_question_detail(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     includes = _parse_include(include)
-    include_testcases = "testcases" in includes
+    include_testcases = False
     try:
         question = await challenge_repository.fetch_question_detail(
             str(question_id), include_testcases=include_testcases
@@ -281,7 +279,9 @@ async def get_question_detail(
         raise HTTPException(status_code=404, detail="question_not_found")
     challenge_id = question.get("challenge_id")
     challenge = await challenge_repository.get_challenge(str(challenge_id)) if challenge_id else None
-    module_code = (challenge or {}).get("module_code")
+    module_code = challenge.get("module_code") if challenge else None
+    if not module_code:
+        raise HTTPException(status_code=404, detail="module_not_found")
     try:
         await challenge_repository.resolve_module_access(module_code, current_user)
     except PermissionError:
@@ -300,12 +300,17 @@ async def get_question_testcases(
     question_id: UUID,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    question = await challenge_repository.fetch_question_detail(str(question_id), include_testcases=False)
+    try:
+        question = await challenge_repository.fetch_question_detail(str(question_id), include_testcases=False)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if not question:
         raise HTTPException(status_code=404, detail="question_not_found")
     challenge_id = question.get("challenge_id")
     challenge = await challenge_repository.get_challenge(str(challenge_id)) if challenge_id else None
-    module_code = (challenge or {}).get("module_code")
+    module_code = challenge.get("module_code") if challenge else None
+    if not module_code:
+        raise HTTPException(status_code=404, detail="module_not_found")
     try:
         await challenge_repository.resolve_module_access(module_code, current_user)
     except PermissionError:
@@ -315,12 +320,8 @@ async def get_question_testcases(
         if message == "module_not_found":
             raise HTTPException(status_code=404, detail=message) from None
         raise HTTPException(status_code=400, detail=message) from None
-    try:
-        cases = await challenge_repository.list_question_testcases(str(question_id))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    items = [_build_testcase_payload(case) for case in cases]
-    return QuestionTestCaseListResponse(items=items)
+    # Testcases are disabled for the current demo; always return an empty list.
+    return QuestionTestCaseListResponse(items=[])
 
 ALLOWED_TIERS = {"base", "ruby", "emerald", "diamond"}
 
