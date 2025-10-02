@@ -12,6 +12,7 @@ class SlideMetadata(BaseModel):
     module_code: Optional[str]
     topic_id: Optional[UUID]
     has_file: bool
+    detected_topic: Optional[str]
 
     class Config:
         orm_mode = True

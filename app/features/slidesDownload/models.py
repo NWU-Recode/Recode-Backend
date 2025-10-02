@@ -15,4 +15,5 @@ class Slide(Base):
     week_number = Column(Integer, nullable=True)
     module_code = Column(String, nullable=True)
     topic_id = Column(String, nullable=True)
+    detected_topic = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
