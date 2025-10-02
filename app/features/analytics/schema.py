@@ -16,6 +16,9 @@ class StudentChallengeFeedbackOut(BaseModel):
     total_questions: int
     questions_correct: int
     challenge_completion_rate: float
+    challenge_tier: Optional[str] = None
+
+
 
 # ------------------- Badges -------------------
 class BadgeSummaryOut(BaseModel):
