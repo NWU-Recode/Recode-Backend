@@ -4,9 +4,18 @@ from .service import dashboard_service
 from .service import *
 from .schema import *
 from app.DB.session import get_db
+from datetime import date, datetime
 
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+@router.get("/current-week", response_model=CurrentWeekResponse)
+def get_current_week(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get the current week number in the active semester."""
+    return current_week_service(db)
 
 @router.get("/")
 async def get_dashboard(current_user: CurrentUser = Depends(get_current_user)):
@@ -24,3 +33,4 @@ def student_dashboard(current_user = Depends(get_current_user), db: Session = De
     
     data = dict(row._mapping)  # convert Row to dict
     return data
+

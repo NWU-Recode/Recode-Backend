@@ -1,6 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from uuid import UUID
+from datetime import date, datetime
 
 class StudentDashboardOut(BaseModel):
     student_id: int
@@ -16,3 +17,9 @@ class StudentDashboardOut(BaseModel):
     unique_questions_attempted: int
     challenges_completed: int
     last_submission: Optional[str]
+
+class CurrentWeekResponse(BaseModel):
+    current_week: int
+    
+    class Config:
+        from_attributes = True
