@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from app.DB.supabase import get_supabase
 from sqlalchemy.orm import Session
 from .repository import *
@@ -13,11 +13,17 @@ def student_challenge_feedback_service(db: Session, student_id: int):
     return get_student_challenges(db, student_id)
 
 # Badge Summary
-def badge_summary_service(db: Session, user_id: int, role: str):
+def badge_summary_service(
+    db: Session, 
+    user_id: int, 
+    role: str, 
+    module_code: str,
+    challenge_id: Optional[str] = None
+):
     if role != "lecturer":
         raise HTTPException(status_code=403, detail="Access denied")
-    else:
-        return get_badge_summary(db,user_id)
+    
+    return get_badge_summary(db, user_id, module_code, challenge_id)
 
 # Challenge Progress
 def challenge_progress_service(db: Session,user_id: int, role: str):
