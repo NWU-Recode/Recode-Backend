@@ -96,8 +96,8 @@ supabase-auth==2.20.0
 supabase-functions==2.20.0
 thinc==8.3.6
 threadpoolctl==3.6.0
-tortoise==0.1.1
 tortoise-orm==0.25.1
+tqdm==4.67.1
 tqdm==4.67.1
 typer==0.19.2
 typing-inspection==0.4.1
