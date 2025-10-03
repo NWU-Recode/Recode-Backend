@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from app.DB.supabase import get_supabase
 from .schemas import ProfileCreate, ProfileUpdate
+from app.features.analytics.schema import GlobalLeaderboardOut
 import logging
 import asyncio, time, os
 from app.common import cache
@@ -41,7 +42,7 @@ class ProfileRepository:
         if not getattr(resp, "data", None):
             raise RuntimeError("Failed to create profile record")
         return resp.data[0]
-
+    """
     async def get_by_id(self, profile_id: int) -> Optional[dict]:
         key = f"profiles:id:{profile_id}"
         cached = cache.get(key)
@@ -55,6 +56,25 @@ class ProfileRepository:
         value = data[0] if isinstance(data, list) else data
         cache.set(key, value)
         return value
+    """
+    async def get_profile_with_title(self, profile_id: int) -> Optional[dict]:
+      client = await get_supabase()
+      resp = await self._exec(
+        client.table("profiles")
+        .select("*, titles!inner(name)")
+        .eq("id", profile_id)
+        .execute(),
+        op="profiles.select_with_title"
+    )
+      data = getattr(resp, "data", None)
+      if not data:
+        return None
+
+      profile = data[0]
+    # Extract title_name from joined table
+      profile["title_name"] = profile.get("titles", {}).get("name")
+      return profile
+
 
     async def get_by_supabase_id(self, supabase_id: str) -> Optional[dict]:
         key = f"profiles:sid:{supabase_id}"
@@ -123,5 +143,8 @@ class ProfileRepository:
         client = await get_supabase()
         resp = await self._exec(client.table("profiles").delete().eq("id", profile_id).execute(), op="profiles.delete")
         return bool(getattr(resp, "data", None) or getattr(resp, "count", None))
+     
+
+
 
 profile_repository = ProfileRepository()
