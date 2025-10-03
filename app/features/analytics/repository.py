@@ -150,10 +150,25 @@ def get_badge_summary(
 
 # Challenge Progress Summary
 def get_challenge_progress(db: Session,  lecturer_id: int):
-    query = text(""" SELECT *
+    query = text("""  SELECT 
+            cps.challenge_id,
+            cps.challenge_name,
+            cps.challenge_type,
+            cps.week_number,
+            cps.challenge_tier,
+            cps.module_code,
+            cps.total_enrolled_students,
+            cps.students_completed,
+            cps.total_question_attempts,
+            cps.challenge_participation_rate,
+            cps.challenge_completion_rate,
+            cps.difficulty_breakdown,
+            cps.avg_elo_of_successful_students,
+            cps.avg_completion_time_minutes
         FROM challenge_progress_summary cps
         JOIN modules m ON cps.module_code = m.code
-        WHERE m.lecturer_id = :lecturer_id""")
+        WHERE m.lecturer_id = :lecturer_id
+    """)
     result = db.execute(query, {"lecturer_id": lecturer_id})
     columns = result.keys()
     return [dict(zip(columns, row)) for row in result.fetchall()]
@@ -161,10 +176,23 @@ def get_challenge_progress(db: Session,  lecturer_id: int):
 # Question Progress Summary
 def get_question_progress(db: Session, lecturer_id: int):
     query = text("""
-        SELECT qps.* FROM question_progress_summary qps
+        SELECT 
+            qps.question_number,
+            qps.question_type,
+            qps.challenge_name,
+            qps.challenge_tier,
+            qps.module_code,
+            qps.students_attempted,
+            qps.total_submissions,
+            qps.correct_submissions,
+            qps.success_rate,
+            qps.avg_elo_earned,
+            qps.avg_completion_time_minutes
+        FROM question_progress_summary qps
         JOIN modules m ON qps.module_code = m.code
         WHERE m.lecturer_id = :lecturer_id
     """)
+
     result = db.execute(query, {"lecturer_id": lecturer_id})
     columns = result.keys()
     return [dict(zip(columns, row)) for row in result.fetchall()]
