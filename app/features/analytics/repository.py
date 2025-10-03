@@ -3,9 +3,6 @@ from sqlalchemy import text
 from typing import Optional
 from fastapi import HTTPException
 # ------------------- Students -------------------
-
-
-
 # Student Challenge Feedback
 def get_student_challenges(db: Session, student_id: int):
     query = text("SELECT * FROM student_challenge_feedback WHERE student_id = :student_id")
@@ -183,6 +180,7 @@ def get_module_overview(db: Session, lecturer_id: Optional[int] = None):
     else:
         query = text("""
         SELECT 
+            m.id,
             m.code,
             m.name,
             m.description,
@@ -225,23 +223,32 @@ def get_module_leaderboard(db: Session, user_id:int,role:str):
             WHERE e.student_id = :user_id AND e.status = 'active'
             ORDER BY ml.module_code, ml.rank_in_module
         """)
-    
+
     result = db.execute(query, {"user_id": user_id})
     columns = result.keys()
     return [dict(zip(columns, row)) for row in result.fetchall()]
 
+
 # Global Leaderboard
 def get_global_leaderboard(db: Session):
     query = text("""
-        SELECT gl.*
+        SELECT
+            gl.student_id,
+            gl.full_name,
+            gl.current_elo,
+            gl.total_badges,
+            gl.global_rank,
+            t.name AS title_name
         FROM global_leaderboard gl
         JOIN profiles p ON p.id = gl.student_id
-        WHERE p.role = 'student'
+        LEFT JOIN titles t ON t.id = p.title_id
         ORDER BY gl.current_elo DESC
     """)
     result = db.execute(query)
     columns = result.keys()
     return [dict(zip(columns, row)) for row in result.fetchall()]
+
+
 
 def get_challenge_progress_per_student(
     db: Session, 

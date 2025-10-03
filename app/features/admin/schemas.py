@@ -8,6 +8,7 @@ from typing import Optional
 # MODULE SCHEMAS
 # ===========================
 class ModuleBase(BaseModel):
+    module_id: UUID
     code: str = Field(..., example="CS101")
     name: str = Field(..., example="Introduction to Programming")
     description: Optional[str] = Field(None, example="Learn the basics of programming")
@@ -73,7 +74,6 @@ class ChallengeResponse(ChallengeBase):
     # Conditional fields based on challenge_type
     week_number: Optional[int] = None  # Only for weekly challenges
     tier: Optional[str] = None  # Only for special challenges
-    trigger_event: Optional[dict] = None  # Only for special challenges (jsonb)
 
     class Config:
         from_attributes = True

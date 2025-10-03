@@ -172,7 +172,7 @@ class ModuleRepository:
             .select(
                 "id, module_code, challenge_type, title, description, "
                 "status, release_date, due_date, created_at, updated_at, "
-                "week_number, tier, trigger_event"
+                "week_number, tier"
             )
             .eq("module_code", module_code)
             .order("release_date", desc=False)  # Order by release date
@@ -189,6 +189,29 @@ class ModuleRepository:
             .eq("module_id", module_id)
             .eq("student_id", student_id)
         )
+        return bool(rows)
+    
+    async def is_enrolled_by_code(module_code: str, student_id: int) -> bool:
+        client = await get_supabase()
+        
+        modules = await _exec(
+            client.table("modules")
+            .select("id")
+            .eq("code", module_code)
+        )
+        
+        if not modules:
+            return False  # Module not found
+        
+        module_id = modules[0]["id"]  # Extract the ID
+        
+        rows = await _exec(
+            client.table("enrolments")
+            .select("id")
+            .eq("module_id", module_id)
+            .eq("student_id", student_id)
+        )
+        
         return bool(rows)
 
     @staticmethod

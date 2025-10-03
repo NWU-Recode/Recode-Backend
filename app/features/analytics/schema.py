@@ -16,6 +16,9 @@ class StudentChallengeFeedbackOut(BaseModel):
     total_questions: int
     questions_correct: int
     challenge_completion_rate: float
+    challenge_tier: Optional[str] = None
+
+
 
 # ------------------- Badges -------------------
 class BadgeSummaryOut(BaseModel):
@@ -47,6 +50,7 @@ class ModuleOverviewOut(BaseModel):
     total_enrolled_students: int
     total_challenges: int
 class AdminModuleOverviewOut(BaseModel):
+    id: UUID
     code: str = Field(..., example="CS101")
     name: str = Field(..., example="Introduction to Programming")
     description: Optional[str] = Field(None, example="Learn the basics of programming")
@@ -70,6 +74,7 @@ class ModuleLeaderboardOut(BaseModel):
 class GlobalLeaderboardOut(BaseModel):
     student_id: int
     full_name: str
+    title_name: Optional[str] = None
     current_elo: Optional[int]
     total_badges: int
     global_rank: int
