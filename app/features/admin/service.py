@@ -64,6 +64,7 @@ class ModuleService:
         data = await ModuleRepository.add_challenge(module_code, challenge, lecturer_id)
         return ChallengeResponse(**data) if data else None
 
+
     @staticmethod
     async def get_challenges(module_code: str, user: CurrentUser) -> Optional[List[ChallengeResponse]]:
         """Get challenges with conditional fields based on challenge_type."""
@@ -106,7 +107,22 @@ class ModuleService:
         
         return result
 
+    async def get_module_by_code(module_code: str, user: CurrentUser):
+        """Fetch a module and check if the user is authorized to view it."""
+        module = await ModuleRepository.get_module_by_code(module_code)
+        if not module:
+            return None
 
+            # Authorization check
+        if user.role.lower() == "student":
+            enrolled = await ModuleRepository.is_enrolled_by_code(module_code, user.id)
+            if not enrolled:
+                return None
+        elif user.role.lower() == "lecturer":
+            if module["lecturer_id"] != user.id:
+                 return None
+
+        return module
     @staticmethod
     async def enrol_student(module_code: str, student_number: int, lecturer_id: int, semester_id: Optional[UUID] = None) -> Optional[dict]:
         # Ensure the lecturer owns the module
