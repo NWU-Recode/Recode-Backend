@@ -210,15 +210,23 @@ def get_high_risk_students(db: Session, lecturer_id: int):
     return [dict(zip(columns, row)) for row in result.fetchall()]
 
 # Module Leaderboard
-def get_global_leaderboard(db: Session):
-    query = text("""
-        SELECT gl.*, p.title_name  -- <-- add title_name if it exists in profiles
-        FROM global_leaderboard gl
-        JOIN profiles p ON p.id = gl.student_id
-        WHERE p.role = 'student'
-        ORDER BY gl.current_elo DESC
-    """)
-    result = db.execute(query)
+def get_module_leaderboard(db: Session, user_id:int,role:str):
+    if role == "lecturer":
+        query = text("""
+            SELECT ml.* FROM module_leaderboard ml
+            JOIN modules m ON ml.module_id = m.id
+            WHERE m.lecturer_id = :user_id
+            ORDER BY ml.module_code, ml.rank_in_module
+        """)
+    else:  # student
+        query = text("""
+            SELECT ml.* FROM module_leaderboard ml
+            JOIN enrolments e ON ml.module_id = e.module_id
+            WHERE e.student_id = :user_id AND e.status = 'active'
+            ORDER BY ml.module_code, ml.rank_in_module
+        """)
+
+    result = db.execute(query, {"user_id": user_id})
     columns = result.keys()
     return [dict(zip(columns, row)) for row in result.fetchall()]
 
