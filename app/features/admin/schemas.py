@@ -8,7 +8,6 @@ from typing import Optional
 # MODULE SCHEMAS
 # ===========================
 class ModuleBase(BaseModel):
-    module_id: UUID
     code: str = Field(..., example="CS101")
     name: str = Field(..., example="Introduction to Programming")
     description: Optional[str] = Field(None, example="Learn the basics of programming")
@@ -30,7 +29,7 @@ class ModuleUpdate(BaseModel):
 
 
 class ModuleResponse(ModuleBase):
-    id: UUID
+    id: UUID 
     created_at: datetime
     updated_at: datetime
 
