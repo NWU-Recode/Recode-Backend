@@ -1,5 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from .repository import profile_repository
 
 from app.common.deps import (
     get_current_user,
@@ -30,7 +31,7 @@ async def read_current_profile(
     The auth dependency returns a minimal CurrentUser (id/email/role). We need to
     fetch the persisted profile row to satisfy the full ProfileSchema contract.
     """
-    prof = await get_profile_by_id(current_user.id)
+    prof = await profile_repository.get_profile_with_title(current_user.id)
 
     if not prof:
         # Should not normally happen because provisioning occurs in auth deps

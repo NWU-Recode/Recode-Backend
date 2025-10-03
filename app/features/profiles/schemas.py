@@ -45,6 +45,7 @@ class Profile(BaseModel):
     phone: Optional[str] = None
     bio: Optional[str] = None
     role: str
+    title_name: Optional[str] = None
     is_active: bool
     is_superuser: bool
     email_verified: bool

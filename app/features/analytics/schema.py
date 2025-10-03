@@ -74,6 +74,7 @@ class ModuleLeaderboardOut(BaseModel):
 class GlobalLeaderboardOut(BaseModel):
     student_id: int
     full_name: str
+    title_name: Optional[str] = None
     current_elo: Optional[int]
     total_badges: int
     global_rank: int
