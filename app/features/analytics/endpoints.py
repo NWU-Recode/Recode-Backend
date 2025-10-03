@@ -33,8 +33,8 @@ def badges(
         challenge_id
     )
 # Challenge Progress
-@router.get("/challenges/progress", response_model=List[ChallengeProgressOut])
-def challenge_progress(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+@router.get("/challenge/progress", response_model=List[ChallengeProgressOut])
+def get_challenge_overview(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != "lecturer":
         raise HTTPException(status_code=403, detail="Lecturer access required")
     return challenge_progress_services(db, current_user.id, current_user.role)
