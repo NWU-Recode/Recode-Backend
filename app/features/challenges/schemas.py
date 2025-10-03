@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.features.submissions.schemas import ChallengeQuestionResultSchema
+from app.features.achievements.schemas import CheckAchievementsResponse
 
 
 class Challenge(BaseModel):
@@ -27,15 +28,15 @@ class ChallengeAttempt(BaseModel):
     status: str
 
 
-class ChallengeMissingCode(BaseModel):
+class ChallengeSubmissionOutput(BaseModel):
     question_id: UUID
-    source_code: str
+    output: str
     stdin: Optional[str] = None
 
 
 class ChallengeSubmitRequest(BaseModel):
     challenge_id: UUID
-    items: Optional[List[ChallengeMissingCode]] = None
+    items: Optional[List[ChallengeSubmissionOutput]] = None
 
 
 class ChallengeSubmitResponse(BaseModel):
@@ -58,6 +59,7 @@ class ChallengeSubmitResponse(BaseModel):
     failed_question_ids: List[UUID]
     missing_question_ids: List[UUID]
     question_results: List[ChallengeQuestionResultSchema]
+    achievements: Optional[CheckAchievementsResponse] = None
 
 
 class ChallengeAttemptQuestionStatus(BaseModel):

@@ -30,7 +30,8 @@ from .schemas import (
 
 logger = logging.getLogger("achievements.service")
 
-BASE_ELO = 1200
+BASE_ELO = 0
+MAX_ELO = 8000
 
 _TIER_COMPLETION_THRESHOLDS = {
     "bronze": 3,
@@ -39,6 +40,18 @@ _TIER_COMPLETION_THRESHOLDS = {
     "platinum": 2,
     "emerald": 1,
     "diamond": 1,
+}
+
+_ELO_TIER_CONFIG = {
+    "plain": {"rating": 1600, "k_factor": 360},
+    "base": {"rating": 1600, "k_factor": 360},
+    "common": {"rating": 1600, "k_factor": 360},
+    "bronze": {"rating": 1600, "k_factor": 420},
+    "silver": {"rating": 3000, "k_factor": 480},
+    "gold": {"rating": 4200, "k_factor": 540},
+    "ruby": {"rating": 5400, "k_factor": 580},
+    "emerald": {"rating": 6400, "k_factor": 600},
+    "diamond": {"rating": 7600, "k_factor": 500},
 }
 
 
@@ -208,8 +221,8 @@ class AchievementsService:
         gpa_before = elo_record.get("running_gpa")
         if gpa_before is None:
             gpa_before = await self._compute_running_gpa(user_id)
-        delta, reasons = self._compute_elo_delta_with_reasons(summary)
-        new_elo = max(BASE_ELO, min(4000, old_elo + delta))
+        delta, reasons = self._compute_elo_delta_with_reasons(summary, old_elo)
+        new_elo = max(BASE_ELO, min(MAX_ELO, old_elo + delta))
         gpa = await self._compute_running_gpa(user_id)
         await self.repo.update_user_elo(
             user_id,
@@ -337,9 +350,9 @@ class AchievementsService:
             delta = int(req.elo_delta_override)
             reasons = ["Manual override applied via API request"]
         else:
-            delta, reasons = self._compute_elo_delta_with_reasons(summary)
+            delta, reasons = self._compute_elo_delta_with_reasons(summary, old_elo)
 
-        new_elo = max(BASE_ELO, min(4000, old_elo + delta))
+        new_elo = max(BASE_ELO, min(MAX_ELO, old_elo + delta))
         gpa = await self._compute_running_gpa(user_id)
         await self.repo.update_user_elo(
             user_id,
@@ -516,46 +529,111 @@ class AchievementsService:
             metadata=metadata,
         )
 
-    def _compute_elo_delta_with_reasons(self, summary: AttemptSummary) -> tuple[int, List[str]]:
-        tier = _normalise_slug(summary.tier) or "plain"
-        tier_weights: Dict[str, int] = {
-            "plain": 235,
-            "base": 235,
-            "common": 235,
-            "bronze": 35,
-            "silver": 50,
-            "gold": 65,
-            "ruby": 120,
-            "emerald": 190,
-            "diamond": 320,
-        }
-        base = tier_weights.get(tier, tier_weights["plain"])
-        ratio = summary.ratio
+    def _performance_score_from_summary(self, summary: AttemptSummary) -> tuple[float, List[str]]:
         reasons: List[str] = []
-        reasons.append(f"Base tier weight {base} applied for {tier.title()} challenge")
-        performance_component = base * (ratio * 2 - 1)
-        delta = round(performance_component)
-        reasons.append(f"Performance ratio {ratio * 100:.0f}% contributes {round(performance_component)} ELO")
-        hints_used = _safe_int(summary.metadata.get("hints_used"), default=0)
+        meta = summary.metadata if isinstance(summary.metadata, dict) else {}
+        score = max(0.0, min(1.0, float(summary.ratio)))
+        reasons.append(f"Accuracy score contributes {score * 100:.1f}% toward Elo")
+
+        tests_total = _safe_int(meta.get("tests_total"), default=_safe_int(meta.get("total_questions"), default=summary.total))
+        if tests_total <= 0:
+            tests_total = summary.total
+        if score >= 0.999 and tests_total:
+            bonus = 0.05
+            score += bonus
+            reasons.append(f"Perfect accuracy bonus +{bonus * 100:.0f}% applied")
+
+        performance_meta = meta.get("performance") if isinstance(meta.get("performance"), dict) else {}
+        duration_seconds_raw = meta.get("duration_seconds")
+        if duration_seconds_raw in (None, ""):
+            duration_seconds_raw = performance_meta.get("time_used_seconds")
+        try:
+            duration_seconds = float(duration_seconds_raw) if duration_seconds_raw is not None else None
+        except Exception:
+            duration_seconds = None
+        time_limit_raw = performance_meta.get("time_limit_seconds")
+        try:
+            time_limit_seconds = float(time_limit_raw) if time_limit_raw not in (None, "") else None
+        except Exception:
+            time_limit_seconds = None
+        if duration_seconds and time_limit_seconds and time_limit_seconds > 0:
+            time_ratio = duration_seconds / max(1.0, time_limit_seconds)
+            if time_ratio <= 0:
+                time_ratio = 0.01
+            if time_ratio <= 0.5:
+                score += 0.12
+                reasons.append("Speed bonus +12% for finishing under 50% of allotted time")
+            elif time_ratio <= 0.75:
+                score += 0.08
+                reasons.append("Speed bonus +8% for finishing under 75% of allotted time")
+            elif time_ratio <= 1.0:
+                score += 0.04
+                reasons.append("Speed bonus +4% for finishing just-in-time")
+            elif time_ratio <= 1.25:
+                penalty = (time_ratio - 1.0) * 0.12
+                score -= penalty
+                reasons.append(f"Late finish penalty -{penalty * 100:.1f}% for exceeding expected time")
+            else:
+                penalty = min(0.25, (time_ratio - 1.0) * 0.18)
+                score -= penalty
+                reasons.append(f"Significant late penalty -{penalty * 100:.1f}% applied")
+
+        hints_used = _safe_int(meta.get("hints_used"), default=0)
         if hints_used:
-            penalty = min(hints_used, 5)
-            delta -= penalty
-            reasons.append(f"-{penalty} for using {hints_used} hint(s)")
-        resubmissions = _safe_int(summary.metadata.get("resubmissions"), default=0)
+            penalty = min(0.25, hints_used * 0.04)
+            score -= penalty
+            reasons.append(f"Hint penalty -{penalty * 100:.1f}% for {hints_used} hint(s)")
+
+        resubmissions = _safe_int(meta.get("resubmissions"), default=0)
         if resubmissions:
-            penalty = min(resubmissions, 5)
-            delta -= penalty
-            reasons.append(f"-{penalty} for {resubmissions} re-submission(s)")
-        duration = _safe_int(summary.metadata.get("duration_seconds"), default=0)
-        if duration and summary.total > 0 and duration > 60 * summary.total:
-            penalty_steps = int((duration - 60 * summary.total) // 120)
-            if penalty_steps > 0:
-                delta -= penalty_steps
-                reasons.append(f"-{penalty_steps} late penalty for exceeding expected time")
+            penalty = min(0.3, resubmissions * 0.05)
+            score -= penalty
+            reasons.append(f"Retry penalty -{penalty * 100:.1f}% for {resubmissions} re-submission(s)")
+
+        efficiency_bonus_total = performance_meta.get("efficiency_bonus_total")
+        if efficiency_bonus_total is not None:
+            try:
+                bonus = float(efficiency_bonus_total)
+                if bonus > 0:
+                    scaled = min(0.08, bonus / 2000.0)
+                    score += scaled
+                    reasons.append(f"Efficiency bonus +{scaled * 100:.1f}% from challenge efficiency score")
+            except Exception:
+                pass
+
+        score = max(0.0, min(1.0, score))
+        return score, reasons
+
+    def _compute_elo_delta_with_reasons(self, summary: AttemptSummary, current_elo: int) -> tuple[int, List[str]]:
+        tier_slug = _normalise_slug(summary.tier) or "plain"
+        config = _ELO_TIER_CONFIG.get(tier_slug, _ELO_TIER_CONFIG["plain"])
+        rating = config["rating"]
+        k_factor = config["k_factor"]
+        expected = 1.0 / (1.0 + math.pow(10.0, (rating - max(BASE_ELO, current_elo)) / 400.0))
+        score, perf_reasons = self._performance_score_from_summary(summary)
+
+        reasons: List[str] = []
+        reasons.append(
+            f"Tier rating {rating} with current Elo {current_elo} gives expected performance {expected * 100:.1f}%"
+        )
+        reasons.append(f"Effective performance score {score * 100:.1f}%")
+        reasons.extend(perf_reasons)
+
+        differential = score - expected
+        raw_delta = k_factor * differential
+        reasons.append(f"Applying k-factor {k_factor} yields delta {raw_delta:.1f}")
+
+        delta = int(round(raw_delta))
+        if delta == 0:
+            if differential > 0.02:
+                delta = 1
+            elif differential < -0.02:
+                delta = -1
+        delta = max(-k_factor, min(k_factor, delta))
         return delta, reasons
 
-    def _compute_elo_delta(self, summary: AttemptSummary) -> int:
-        delta, _ = self._compute_elo_delta_with_reasons(summary)
+    def _compute_elo_delta(self, summary: AttemptSummary, current_elo: int) -> int:
+        delta, _ = self._compute_elo_delta_with_reasons(summary, current_elo)
         return delta
 
     async def _maybe_log_elo_event(
@@ -903,7 +981,7 @@ class AchievementsService:
 
 achievements_service = AchievementsService()
 
-__all__ = ["achievements_service", "AchievementsService", "BASE_ELO"]
+__all__ = ["achievements_service", "AchievementsService", "BASE_ELO", "MAX_ELO"]
 
 
 
