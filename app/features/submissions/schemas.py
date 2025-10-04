@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+<<<<<<< HEAD
 from typing import Any, Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field
@@ -19,6 +20,12 @@ class QuestionTestSchema(BaseModel):
     compare_config: Dict[str, Any] = Field(default_factory=dict)
 
 
+=======
+from typing import Dict, List, Optional, Literal
+
+from pydantic import BaseModel, Field
+
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
 class QuestionBundleSchema(BaseModel):
     challenge_id: str
     question_id: str
@@ -26,30 +33,29 @@ class QuestionBundleSchema(BaseModel):
     prompt: str
     starter_code: str
     reference_solution: Optional[str] = None
+    expected_output: Optional[str] = None
     tier: Optional[str] = None
     language_id: int
     points: int
     max_time_ms: Optional[int] = None
     max_memory_kb: Optional[int] = None
     badge_id: Optional[str] = None
-    tests: List[QuestionTestSchema]
 
 
 class TestRunResultSchema(BaseModel):
+<<<<<<< HEAD
     test_id: Optional[str] = None
     visibility: Optional[str] = None
+=======
+    test_id: str = Field(default="expected_output")
+    visibility: Literal["public"] = Field(default="public")
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
     passed: bool
     stdout: Optional[str] = None
-    stderr: Optional[str] = None
-    compile_output: Optional[str] = None
-    status_id: int
-    status_description: str
-    token: Optional[str] = None
-    execution_time: Optional[str] = None
-    execution_time_seconds: Optional[float] = None
-    execution_time_ms: Optional[float] = None
-    memory_used: Optional[int] = None
-    memory_used_kb: Optional[int] = None
+    expected_output: Optional[str] = None
+    status_id: int = Field(default=3)
+    status_description: Literal["accepted", "mismatch"] = Field(default="accepted")
+    detail: Optional[str] = None
     score_awarded: int = 0
     gpa_contribution: int = 0
     compare_mode_applied: Optional[str] = None
@@ -59,11 +65,28 @@ class TestRunResultSchema(BaseModel):
 
 
 class QuestionEvaluationRequest(BaseModel):
+<<<<<<< HEAD
     source_code: str
+=======
+    output: str
+    language_id: Optional[int] = None
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
 
 
 class QuestionSubmissionRequest(QuestionEvaluationRequest):
     include_private: bool = True
+
+
+class BatchSubmissionEntry(BaseModel):
+    output: str
+
+    @classmethod
+    def validate_entry(cls, value: Dict[str, object]) -> "BatchSubmissionEntry":
+        if not isinstance(value, dict):
+            raise ValueError("submission entry must be an object with an output string")
+        if "output" not in value or not isinstance(value.get("output"), str):
+            raise ValueError("submission entry output must be provided as string")
+        return cls(output=value["output"])  # type: ignore[arg-type]
 
 
 class QuestionEvaluationResponse(BaseModel):

@@ -1,298 +1,181 @@
-# 🚀 Recode-Backend
+# Recode Backend
 
-**Transform NWU lecture slides into interactive coding exercises for semester-based gamified learning.**
+> **Transform lecture slides into engaging coding challenges with automated grading and gamified rewards**
 
-Recode is an educational platform that converts traditional lecture materials into engaging, interactive coding challenges. Built with FastAPI and powered by Supabase, this backend service provides the foundation for a gamified learning experience that adapts to each student's progress.
-
-## 🎯 Project Overview
-
-Recode addresses the challenge of making computer science education more interactive and engaging by:
-
-- **Transforming static slides** into dynamic coding exercises
-- **Summarising key points** from educational content automatically
-- **Creating gamified experiences** with semester-based progression
-- **Providing real-time feedback** and adaptive learning paths
-
-## 🏗️ Architecture
-
-### Tech Stack
-
-- **FastAPI** - Modern, fast web framework for building APIs
-- **Supabase** - Open-source Firebase alternative with PostgreSQL
-- **spaCy** - Industrial-strength NLP for content processing
-- **Pydantic** - Data validation using Python type hints
-- **Uvicorn** - Lightning-fast ASGI server
-
-### Project Structure
-
-```
-recode-backend/
-├── app/
-│   ├── api/
-│   │   └── endpoints/
-│   │       └── users.py          # User management endpoints
-│   ├── core/
-│   │   └── config.py             # Application configuration
-│   ├── db/
-│   │   └── client.py             # Supabase database client
-├── tests/                        # Test suite
-├── main.py                       # FastAPI application entry point
-├── requirements.txt              # Python dependencies
-└── .env.example                  # Environment variables template
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.8+
-- Supabase account and project
-
-### Installation
-
-1. **Clone the repository**
-
-```bash
-git clone https://github.com/your-org/recode-backend.git
-cd recode-backend
-```
-
-2. **Create virtual environment**
-
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. **Install dependencies**
-
-```bash
-pip install -r requirements.txt
-```
-
-4. **Set up environment variables**
-
-```bash
-cp .env.example .env
-# Edit .env with your Supabase credentials
-```
-
-5. **Run the application**
-
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Environment Variables
-
-Create a `.env` file with:
-
-```env
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_KEY=your_supabase_anon_key
-```
-
-## 📚 API Documentation
-
-### Base URL
-
-```
-http://localhost:8000
-```
-
-### Available Endpoints
-
-#### Users
-
-- `GET /users` - List all users
-- `GET /users/{id}` - Get user by ID
-- `POST /users` - Create new user
-- `PUT /users/{id}` - Update user
-- `DELETE /users/{id}` - Delete user
-
-### Interactive Documentation
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-### Note: Upload-triggered Challenge Generation
-
-The slides upload endpoints now act as a middleware that triggers challenge generation automatically after a successful slide extraction and topic creation. Generation rules:
-
-- Every upload will create a base weekly challenge for the detected week.
-- Weeks 2, 6, 10: also generate a "ruby" special challenge and publish it.
-- Weeks 4, 8: also generate an "emerald" special challenge and publish it.
-- Week 12: generate a "diamond" special challenge and publish it.
-
-Lecturer-facing generation endpoints have been removed; generation is now triggered automatically by upload to simplify the flow.
-
-## 🔧 Development
-
-### Running Tests
-
-```bash
-pytest tests/
-```
-
-### Code Quality
-
-```bash
-# Format code
-black app/
-
-# Type checking
-mypy app/
-
-# Linting
-flake8 app/
-```
-
-### Database Schema
-
-The application uses the following key tables:
-
-- **users** - User management and profiles
-- **exercises** - Interactive coding challenges
-- **submissions** - User exercise submissions
-- **progress** - Learning progress tracking
-
-## 🎯 Key Features
-
-### 1. Automated Content Processing
-
-- **Slide Analysis**: Extract key concepts from lecture slides
-- **Code Generation**: Create relevant coding exercises
-- **Difficulty Scaling**: Adjust challenge complexity based on student level
-
-### 2. Gamification System
-
-- **Progress Tracking**: Visual learning journey
-- **Achievement System**: Badges and milestones
-- **Leaderboards**: Competitive elements
-- **Streak Counters**: Daily engagement incentives
-
-### 3. Adaptive Learning
-
-- **Personalized Paths**: Tailored to individual progress
-- **Real-time Feedback**: Immediate exercise validation
-- **Performance Analytics**: Detailed learning insights
-
-## 🔄 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-
-- Follow PEP 8 style guidelines
-- Add tests for new features
-- Update documentation
-- Ensure all tests pass
-
-## 🗺️ Roadmap
-
-### Phase 1: Core Platform
-
-- [x] Basic API structure
-- [x] User management system
-- [ ] Exercise generation engine
-- [ ] Content upload system
-
-### Phase 2: Intelligence
-
-- [ ] Advanced content processing
-- [ ] Adaptive difficulty algorithms
-- [ ] Performance analytics dashboard
-
-### Phase 3: Gamification
-
-- [ ] Achievement system
-- [ ] Leaderboards
-- [ ] Social features
-
-### Phase 4: Scale
-
-- [ ] Multi-language support
-- [ ] Advanced reporting
-- [ ] Integration with LMS platforms
-
-## 📊 Performance
-
-The backend is optimized for:
-
-- **High concurrency**: Async FastAPI handling
-- **Low latency**: Efficient database queries
-- **Scalability**: Horizontal scaling ready
-- **Caching**: Redis integration ready
-
-## 🔐 Security
-
-- **JWT Authentication**: Secure user sessions
-- **Rate Limiting**: API abuse prevention
-- **Input Validation**: Pydantic models
-- **CORS Protection**: Cross-origin security
-
-## 📞 Support
-
-- **Documentation**: [Wiki](https://github.com/your-org/recode-backend/wiki)
-- **Issues**: [GitHub Issues](https://github.com/your-org/recode-backend/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/recode-backend/discussions)
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- North-West University for the educational partnership
-- FastAPI community for the excellent framework
-- Supabase team for the amazing backend-as-a-service
-- All contributors who made this project possible
+Recode converts lecture slides into weekly coding challenges, keeps the semester schedule in sync, and tracks rewards (ELO, GPA, badges) for every student attempt. Built on FastAPI with Supabase as the primary datastore.
 
 ---
 
-**Built with ❤️ by the Recode Team**
+## 🎯 What the System Does
 
-## Database migration: teaching_assignments
+### Slide Ingestion → Challenges
 
-The admin flows now create rows in a new `teaching_assignments` table which links `semesters`, `modules`, and `lecturers`.
+Admins upload slides, we extract topics, calculate the teaching week from the active semester, and auto-generate a base (and optional ruby/emerald/diamond) challenge for that week.
 
-1. SQL file is provided at `scripts/create_teaching_assignments.sql`.
+### Challenge Delivery
 
-2. To apply on Supabase (SQL editor):
+The challenge repository exposes base/special tiers with full question snapshots (including test cases) for lecturers and students.
 
-- Open your Supabase project → Database → SQL Editor → paste the contents and Run.
+### Submissions and Grading
 
-3. To apply via psql locally (pwsh example):
+Students submit their program output once per question; we normalise it, compare with the expected answer, compute GPA/ELO deltas, and persist attempt records without sending code to Judge0.
 
-```powershell
-# On Windows PowerShell (assuming psql is available and environment variables set):
-$env:PGHOST='your-db-host'
-$env:PGPORT='5432'
-$env:PGUSER='postgres'
-$env:PGPASSWORD='yourpassword'
-$env:PGDATABASE='postgres'
-psexec(pwsh) # optional
-psql -h $env:PGHOST -p $env:PGPORT -U $env:PGUSER -d $env:PGDATABASE -f "scripts/create_teaching_assignments.sql"
-```
+### Rewards
 
-4. After applying the migration, admin assign/remove endpoints will:
+Achievements service keeps `user_elo`, `elo_events`, and badge tables updated, attaching human-readable summaries so learners know why scores changed. The Elo ladder now spans **0 – 8 000** with a logistic scorer tuned for the 12-week, 18-challenge season:
 
-- POST /admin/assign-lecturer (body: { module_code: "CS101", lecturer_id: 123 })
-- POST /admin/remove-lecturer (body: { module_code: "CS101" })
+- Tier ratings: Bronze 1 600, Silver 3 000, Gold 4 200, Ruby 5 400, Emerald 6 400, Diamond 7 600 (plain/base map to Bronze).
+- K-factors scale from 420 → 500 so perfect clears trend toward 7 500+ while caps enforce the 8 000 ceiling.
+- Performance score blends accuracy, speed (time vs. limit), efficiency bonuses, and penalties for hints/resubmissions to reward thoughtful play.
+- API responses include full `achievements.summary` payloads (Elo/GPA before/after, badge unlock reasons, title changes) after every challenge submission.
 
-These endpoints will insert/delete rows in `teaching_assignments` and update `modules.lecturer_id` for backward compatibility.
+---
 
-5. Quick curl example for creating a semester (Admin).
+## 🏗️ Key Components
+
+<pre class="font-ui border-border-100/50 overflow-x-scroll w-full rounded border-[0.5px] shadow-[0_2px_12px_hsl(var(--always-black)/5%)]"><table class="bg-bg-100 min-w-full border-separate border-spacing-0 text-sm leading-[1.88888] whitespace-normal"><thead class="border-b-border-100/50 border-b-[0.5px] text-left"><tr class="[tbody>&]:odd:bg-bg-500/10"><th class="text-text-000 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] px-2 [&:not(:first-child)]:border-l-[0.5px]">Component</th><th class="text-text-000 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] px-2 [&:not(:first-child)]:border-l-[0.5px]">Purpose</th></tr></thead><tbody><tr class="[tbody>&]:odd:bg-bg-500/10"><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]"><code class="bg-text-200/5 border border-0.5 border-border-300 text-danger-000 whitespace-pre-wrap rounded-[0.4rem] px-1 py-px text-[0.9rem]">app/features/slides</code></td><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]">Upload endpoints, semester/week resolution, topic creation</td></tr><tr class="[tbody>&]:odd:bg-bg-500/10"><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]"><code class="bg-text-200/5 border border-0.5 border-border-300 text-danger-000 whitespace-pre-wrap rounded-[0.4rem] px-1 py-px text-[0.9rem]">app/features/challenges</code></td><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]">Generator (<code class="bg-text-200/5 border border-0.5 border-border-300 text-danger-000 whitespace-pre-wrap rounded-[0.4rem] px-1 py-px text-[0.9rem]">challenge_pack_generator.py</code>), repository helpers, public/admin endpoints</td></tr><tr class="[tbody>&]:odd:bg-bg-500/10"><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]"><code class="bg-text-200/5 border border-0.5 border-border-300 text-danger-000 whitespace-pre-wrap rounded-[0.4rem] px-1 py-px text-[0.9rem]">app/features/submissions</code></td><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]">Judge0 integration, scoring rules, attempt persistence</td></tr><tr class="[tbody>&]:odd:bg-bg-500/10"><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]"><code class="bg-text-200/5 border border-0.5 border-border-300 text-danger-000 whitespace-pre-wrap rounded-[0.4rem] px-1 py-px text-[0.9rem]">app/features/achievements</code></td><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]">ELO/GPA/badge logic and reward summaries</td></tr><tr class="[tbody>&]:odd:bg-bg-500/10"><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]"><code class="bg-text-200/5 border border-0.5 border-border-300 text-danger-000 whitespace-pre-wrap rounded-[0.4rem] px-1 py-px text-[0.9rem]">app/DB/supabase.py</code></td><td class="border-t-border-100/50 [&:not(:first-child)]:-x-[hsla(var(--border-100) / 0.5)] border-t-[0.5px] px-2 [&:not(:first-child)]:border-l-[0.5px]">Lightweight Supabase client factory used across repositories</td></tr></tbody></table></pre>
+
+---
+
+## 🚀 Run It Locally
+
+### 1. Python Environment
+
+bash
 
 ```bash
-curl -X POST "http://localhost:8000/admin/semesters" \
-	-H "Content-Type: application/json" \
-	-H "Cookie: YOUR_ADMIN_SESSION_COOKIE" \
-	-d '{"year":2026, "term_name":"Semester 1", "start_date":"2026-02-01", "end_date":"2026-06-30", "is_current":true}'
+python -m venv .venv
+.venv\Scripts\activate  # Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-If you want, I can tailor the psql snippet to your exact DB credentials or produce a one-line PowerShell-ready command.
+### 2. Environment Variables
+
+Create a `.env` file:
+
+env
+
+```env
+SUPABASE_URL=...              # required
+SUPABASE_KEY=...              # service role key recommended for local dev
+SEMESTER_START=2025-08-31     # fallback if no active semester in DB
+PUBLISHER_INTERVAL_SEC=300    # optional: auto-publish loop interval
+```
+
+### 3. Start FastAPI
+
+bash
+
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 4. API Documentation
+
+Swagger UI available at: **`http://localhost:8000/docs`**
+
+Access all endpoints including Judge0 helpers, slide upload, submissions, and achievements.
+
+---
+
+## 🔄 How the Pipeline Works
+
+### 1️⃣ Slide Upload (`POST /slides/upload`)
+
+- Reads the active semester (module-specific if set, otherwise env fallback)
+- Calculates the teaching week, stores slide extraction + topic
+- Triggers `generate_and_save_tier`
+- Generator writes challenges, questions, and question_tests to Supabase
+- Current-week challenges are promoted to `status="active"`
+- Older challenges are demoted by the background publisher in `app/main.py`
+
+### 2️⃣ Challenge Access
+
+Repositories expose:
+
+- `get_active_for_week`
+- `list_challenges_by_module`
+- `list_questions_for_challenge(include_testcases=True)`
+
+Points per question come from tier constants (`POINTS_BY_DIFFICULTY`), matching the gamified ladder:
+
+- **Base:** 10/20/40
+- **Ruby:** 80
+- **Emerald:** 120
+- **Diamond:** 200
+
+### 3️⃣ Submissions & Judge0
+
+- Students submit once per question (`MAX_SCORING_ATTEMPTS = 1`)
+- Judge0 validates outputs
+- Scoring service calculates:
+  - Base ELO
+  - Efficiency bonus
+  - GPA contribution
+- Stores attempt/test results
+
+### 4️⃣ Rewards Engine
+
+Achievements service:
+
+- Updates `user_elo` per module + semester
+- Logs `elo_events` with reasons (performance ratio, hint penalties, override notes)
+- Recomputes GPA
+- Awards badges
+- API responses include `summary` payloads describing before/after ELO, GPA deltas, and badge grants
+
+---
+
+## ⚙️ Operational Notes
+
+### Database
+
+All persistence uses Supabase PostgREST. Ensure these tables exist:
+
+- `challenges`
+- `questions`
+- `question_tests`
+- `slide_extractions`
+- `topics`
+- `user_elo`
+- `elo_events`
+- `user_badges` (or `user_badge`)
+
+### Semesters
+
+Admin tools rely on `semesters` table with `is_current=true` for auto week calculation. Set `SEMESTER_START` env only as a fallback.
+
+### Background Publisher
+
+On startup, we schedule a coroutine (in `app/main.py`) that:
+
+- Checks every module
+- Computes the current week
+- Calls `publish_for_week`
+- Enforces active limits
+
+### Judge0
+
+Configure base URL and keys in `.env` if you run a private instance; otherwise the default service wrapper expects the hosted Judge0 configured in Supabase secrets.
+
+---
+
+## 🧪 Testing
+
+`pytest` requires `SUPABASE_URL` and `SUPABASE_KEY`. Use disposable Supabase projects or mocked responses for CI.
+
+Integration tests live under `tests/`:
+
+- Generation fakes
+- Admin flows
+- Submissions
+
+---
+
+## 📦 Deployment Checklist
+
+- [ ] Supply the Supabase service role key to the container/instance
+- [ ] Run database migrations (see `alembic/versions` and SQL scripts under `scripts/`)
+- [ ] Configure environment vars for semester start (or seed the `semesters` table plus `teaching_assignments`)
+- [ ] Expose HTTP/HTTPS for FastAPI behind your load balancer
+- [ ] Ensure background publisher interval is reasonable for your traffic volume

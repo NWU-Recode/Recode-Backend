@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from app.DB.supabase import get_supabase
 
 
 class SubmissionsRepository:
-    """Lightweight data access helpers for question bundles and tests."""
+    """Lightweight data access helpers for question bundles."""
 
     _QUESTION_TABLE = "questions"
-    _TEST_TABLES = ("question_tests", "tests")
 
     async def get_question(self, question_id: str) -> Optional[Dict[str, Any]]:
         client = await get_supabase()
@@ -17,6 +16,7 @@ class SubmissionsRepository:
         rows = resp.data or []
         return rows[0] if rows else None
 
+<<<<<<< HEAD
     async def list_tests(self, question_id: str) -> List[Dict[str, Any]]:
         client = await get_supabase()
         tests: List[Dict[str, Any]] = []
@@ -63,6 +63,8 @@ class SubmissionsRepository:
         return normalised
 
 
+=======
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
 submissions_repository = SubmissionsRepository()
 
 __all__ = ["submissions_repository", "SubmissionsRepository"]

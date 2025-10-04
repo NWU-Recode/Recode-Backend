@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 # Initialize Supabase client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0b2VodmxvZHJtbXF6eXhvYWlsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDQxMjc0OSwiZXhwIjoyMDY5OTg4NzQ5fQ.-8QuL9HfjPgORJdRAVsGYF29mxJJYcQGBm6np8O-9gQ"
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 async def fetch_slide_by_id(db: AsyncSession, slide_id: int):

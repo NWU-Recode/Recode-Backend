@@ -1,25 +1,26 @@
 from __future__ import annotations
 
-import asyncio
 import math
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from statistics import mean
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
+<<<<<<< HEAD
 from app.features.judge0.schemas import CodeSubmissionCreate, CodeExecutionResult
 from app.features.judge0.service import judge0_service
+=======
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
 from app.features.challenges.repository import challenge_repository
 from app.features.submissions.code_results_repository import code_results_repository
 from app.features.submissions.repository import submissions_repository
-from app.DB.supabase import get_supabase
 from app.features.submissions.schemas import (
     ChallengeQuestionResultSchema,
     ChallengeSubmissionBreakdown,
     QuestionBundleSchema,
     QuestionEvaluationResponse,
-    QuestionTestSchema,
     TestRunResultSchema,
+    BatchSubmissionEntry,
 )
 from app.features.submissions.comparison import compare, CompareConfig, resolve_mode
 
@@ -27,8 +28,6 @@ DEFAULT_LANGUAGE_ID = 71
 MAX_QUESTION_SCORE = 100
 
 MAX_SCORING_ATTEMPTS = 1
-DEFAULT_TIME_BUDGET_MS = 5000
-DEFAULT_MEMORY_BUDGET_KB = 256 * 1024
 
 _FAIL_ELO_BY_TIER = {
     "base": -40,
@@ -117,12 +116,6 @@ def _late_multiplier(duration_seconds: Optional[int], limit_seconds: Optional[in
         return 1.0
     return 0.7 if duration_seconds > limit_seconds else 1.0
 
-
-
-def _clamp(value: float, lower: float, upper: float) -> float:
-    return max(lower, min(upper, value))
-
-
 def _resolve_tier(tier: Optional[str]) -> str:
     if not tier:
         return "base"
@@ -137,19 +130,36 @@ def _base_elo(tier: Optional[str]) -> int:
     return _BASE_ELO_BY_TIER.get(_resolve_tier(tier), 12)
 
 
+def _normalise_output(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Trim trailing whitespace without collapsing intentional internal spaces
+    lines = text.split("\n")
+    cleaned = [line.rstrip() for line in lines]
+    # Strip leading/trailing blank lines but keep meaningful spacing
+    while cleaned and cleaned[0] == "":
+        cleaned.pop(0)
+    while cleaned and cleaned[-1] == "":
+        cleaned.pop()
+    return "\n".join(cleaned)
+
+
 class SubmissionsService:
     async def get_question_bundle(self, challenge_id: str, question_id: str) -> QuestionBundleSchema:
         question = await submissions_repository.get_question(question_id)
         if not question:
             raise ValueError("question_not_found")
-        tests_raw = await submissions_repository.list_tests(question_id)
-        tests = [QuestionTestSchema(**test) for test in tests_raw]
         tier = (question.get("tier") or "").lower() or None
         weight = MAX_QUESTION_SCORE
         max_time = question.get("max_time_ms")
         max_memory = question.get("max_memory_kb")
         max_time_ms = int(max_time) if max_time not in (None, "") else None
         max_memory_kb = int(max_memory) if max_memory not in (None, "") else None
+        expected_output = question.get("expected_output")
+        if isinstance(expected_output, str):
+            expected_output = expected_output.strip("\n")
         return QuestionBundleSchema(
             challenge_id=str(question.get("challenge_id") or challenge_id),
             question_id=str(question_id),
@@ -157,15 +167,16 @@ class SubmissionsService:
             prompt=str(question.get("question_text") or ""),
             starter_code=str(question.get("starter_code") or ""),
             reference_solution=question.get("reference_solution"),
+            expected_output=expected_output,
             tier=tier,
             language_id=int(question.get("language_id") or DEFAULT_LANGUAGE_ID),
             points=weight,
             max_time_ms=max_time_ms,
             max_memory_kb=max_memory_kb,
             badge_id=str(question.get("badge_id")) if question.get("badge_id") else None,
-            tests=tests,
         )
 
+<<<<<<< HEAD
     async def _execute_test(
         self,
         source_code: str,
@@ -229,11 +240,13 @@ class SubmissionsService:
         sorted_items = sorted(indexed, key=_order_key)
         return [test for _, test in sorted_items]
 
+=======
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
     async def submit_question(
         self,
         challenge_id: str,
         question_id: str,
-        source_code: str,
+        submitted_output: str,
         *,
         user_id: int,
         language_id: Optional[int] = None,
@@ -262,6 +275,7 @@ class SubmissionsService:
             raise ValueError('attempt_limit_reached')
         bundle = await self.get_question_bundle(challenge_id, question_id)
         lang = int(language_id or snapshot_entry.get('language_id') or bundle.language_id or 71)
+        expected_output = snapshot_entry.get('expected_output') or bundle.expected_output
         started_at = _parse_iso_timestamp(attempt.get('started_at'))
         finished_at = datetime.now(timezone.utc)
         duration_seconds = int((finished_at - started_at).total_seconds()) if started_at else None
@@ -273,10 +287,11 @@ class SubmissionsService:
         result = await self.evaluate_question(
             challenge_id,
             question_id,
-            source_code,
+            submitted_output,
             lang,
             include_private=include_private_flag,
             bundle=bundle,
+            expected_output=expected_output,
             user_id=user_id,
             attempt_number=attempt_number,
             late_multiplier=late_multiplier,
@@ -290,16 +305,18 @@ class SubmissionsService:
         self,
         challenge_id: str,
         question_id: str,
-        source_code: str,
+        submitted_output: str,
         language_id: Optional[int] = None,
         include_private: bool = True,
         bundle: QuestionBundleSchema | None = None,
         *,
+        expected_output: Optional[str] = None,
         user_id: int,
         attempt_number: int,
         late_multiplier: float,
         attempt_id: Optional[str] = None,
         perform_award: bool = True,
+<<<<<<< HEAD
         persist: bool = True,
     ) -> QuestionEvaluationResponse:
         bundle = bundle or await self.get_question_bundle(challenge_id, question_id)
@@ -390,6 +407,26 @@ class SubmissionsService:
         passed_all = tests_passed == tests_total and tests_total > 0
         score_ratio = (tests_passed / tests_total) if tests_total else 0.0
 
+=======
+        record_result: bool = True,
+    ) -> QuestionEvaluationResponse:
+        bundle = bundle or await self.get_question_bundle(challenge_id, question_id)
+        lang = int(language_id or bundle.language_id or 71)
+        resolved_expected = expected_output if expected_output is not None else bundle.expected_output
+        if resolved_expected is None:
+            raise ValueError("question_missing_expected_output")
+
+        expected_norm = _normalise_output(resolved_expected)
+        actual_norm = _normalise_output(submitted_output)
+        passed_all = expected_norm == actual_norm
+
+        tests_total = 1
+        tests_passed = 1 if passed_all else 0
+
+        gpa_weight = bundle.points or _GRADING_WEIGHTS.gpa_weight(bundle.tier)
+        time_multiplier = 1.0
+        memory_multiplier = 1.0
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
         attempt_multiplier = math.pow(0.9, max(0, attempt_number - 1))
         base_component = _base_elo(bundle.tier)
 
@@ -411,8 +448,11 @@ class SubmissionsService:
 
         badge_tier = bundle.tier if passed_all else None
 
-        judge0_token = next((r.token for r in executions if r.token), None)
+        detail_message = None
+        if not passed_all:
+            detail_message = "Submitted output does not match expected output."
 
+<<<<<<< HEAD
         def _as_float(value):
             try:
                 if value is None:
@@ -450,10 +490,28 @@ class SubmissionsService:
 
         stdout_lines = [run.stdout for run in executions if run.stdout]
         stderr_lines = [run.stderr for run in executions if run.stderr]
+=======
+        execution_record = TestRunResultSchema(
+            test_id="expected_output",
+            visibility="public",
+            passed=passed_all,
+            stdout=submitted_output,
+            expected_output=resolved_expected,
+            status_id=3 if passed_all else 1,
+            status_description="accepted" if passed_all else "mismatch",
+            detail=detail_message,
+            score_awarded=int(gpa_awarded if passed_all else 0),
+            gpa_contribution=int(gpa_awarded if passed_all else 0),
+        )
+        executions = [execution_record]
+        avg_time_ms = None
+        avg_memory_kb = None
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
 
         test_records = [run.model_dump() for run in executions]
 
         summary = {
+<<<<<<< HEAD
             'status_id': overall_status_id,
             'status_description': overall_status_desc,
             'stdout': stdout_lines if stdout_lines else None,
@@ -475,10 +533,33 @@ class SubmissionsService:
                 'late_multiplier': late_multiplier,
                 'include_private': include_private,
                 'gpa_awarded': gpa_awarded,
+=======
+            "status_id": 3 if passed_all else 1,
+            "stdout": submitted_output,
+            "stderr": None,
+            "time": None,
+            "wall_time": None,
+            "memory": None,
+            "number_of_runs": 1,
+            "finished_at": datetime.now(timezone.utc),
+            "message": "outputs_matched" if passed_all else "outputs_mismatched",
+            "additional_files": {
+                "challenge_id": challenge_id,
+                "question_id": question_id,
+                "attempt_id": attempt_id,
+                "attempt_number": attempt_number,
+                "tests_total": tests_total,
+                "tests_passed": tests_passed,
+                "tier": bundle.tier,
+                "late_multiplier": late_multiplier,
+                "include_private": include_private,
+                "gpa_awarded": gpa_awarded,
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
             },
         }
 
         submission_id = None
+<<<<<<< HEAD
         if persist:
             try:
                 submission_id = await code_results_repository.log_test_batch(
@@ -519,9 +600,31 @@ class SubmissionsService:
                     except Exception:
                         # avoid failing the entire evaluation if RPC fails; log in future
                         continue
+=======
+        test_records = [execution_record.model_dump()]
+        if record_result:
+            try:
+                submission_id = await code_results_repository.log_test_batch(
+                    user_id=user_id,
+                    language_id=lang,
+                    source_code=submitted_output,
+                    token=None,
+                    test_records=test_records,
+                    summary=summary,
+                    stdin=None,
+                    expected_output=resolved_expected,
+                    challenge_id=challenge_id,
+                    question_id=question_id,
+                )
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
             except Exception:
-                # ignore supabase client errors to keep grading robust
-                pass
+                submission_id = None
+
+        # perform_award retained for compatibility; external awarders rely on challenge finalisation
+        if perform_award and passed_all:
+            # Achievements are processed when the challenge attempt is finalised.
+            # Keep the branch for API compatibility even though no immediate action is required.
+            pass
 
         return QuestionEvaluationResponse(
             challenge_id=bundle.challenge_id,
@@ -533,6 +636,7 @@ class SubmissionsService:
             elo_awarded=elo_delta,
             elo_base=elo_base,
             elo_efficiency_bonus=efficiency_bonus,
+<<<<<<< HEAD
             public_passed=bool(executions and executions[0].passed),
             tests_passed=tests_passed,
             tests_total=tests_total,
@@ -691,6 +795,9 @@ class SubmissionsService:
             elo_base=elo_base,
             elo_efficiency_bonus=efficiency_bonus,
             public_passed=bool(executions and executions[0].passed),
+=======
+            public_passed=passed_all,
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
             tests_passed=tests_passed,
             tests_total=tests_total,
             average_execution_time_ms=None,
@@ -719,9 +826,10 @@ class SubmissionsService:
         self,
         challenge_id: str,
         attempt_id: str,
-        submissions: Dict[str, str],
+        submissions: Dict[str, BatchSubmissionEntry],
         language_overrides: Dict[str, int],
         question_weights: Dict[str, int],
+        expected_outputs: Dict[str, Optional[str]],
         *,
         user_id: int,
         tier: str,
@@ -736,6 +844,7 @@ class SubmissionsService:
             submissions=submissions,
             language_overrides=language_overrides,
             question_weights=question_weights,
+            expected_outputs=expected_outputs,
             user_id=user_id,
             tier=tier,
             attempt_counts=attempt_counts,
@@ -748,9 +857,10 @@ class SubmissionsService:
         self,
         challenge_id: str,
         attempt_id: str,
-        submissions: Dict[str, str],
+        submissions: Dict[str, BatchSubmissionEntry],
         language_overrides: Dict[str, int],
         question_weights: Dict[str, int],
+        expected_outputs: Dict[str, Optional[str]],
         *,
         user_id: int,
         tier: str,
@@ -759,6 +869,7 @@ class SubmissionsService:
         late_multiplier: float,
         perform_award: bool = True,
     ) -> ChallengeSubmissionBreakdown:
+        _ = perform_award  # Awarding handled by achievements service after finalisation.
         results: List[ChallengeQuestionResultSchema] = []
         passed_questions: List[str] = []
         failed_questions: List[str] = []
@@ -782,28 +893,23 @@ class SubmissionsService:
 
         for question_id in language_overrides.keys():
             bundle = bundle_cache.get(question_id)
-            source_code = submissions.get(question_id)
+            entry = submissions.get(question_id)
             current_attempts = attempt_counts.get(question_id, 0)
-            if source_code is None:
+            if entry is None:
                 missing_questions.append(question_id)
                 continue
+            submitted_output = entry.output
             if current_attempts >= max_attempts:
                 fail_penalty = _fail_penalty(bundle.tier if bundle else tier)
                 placeholder = TestRunResultSchema(
-                    test_id=None,
+                    test_id="attempt_limit",
                     visibility="public",
                     passed=False,
                     stdout=None,
-                    stderr=None,
-                    compile_output=None,
-                    status_id=0,
-                    status_description="attempt_limit_reached",
-                    token=None,
-                    execution_time=None,
-                    execution_time_seconds=None,
-                    execution_time_ms=None,
-                    memory_used=None,
-                    memory_used_kb=None,
+                    expected_output=None,
+                    status_id=1,
+                    status_description="mismatch",
+                    detail="attempt_limit_reached",
                     score_awarded=0,
                     gpa_contribution=0,
                 )
@@ -832,10 +938,16 @@ class SubmissionsService:
                 eval_result = await self.evaluate_question(
                     challenge_id,
                     question_id,
+<<<<<<< HEAD
                     source_code,
                     language_overrides.get(question_id) or DEFAULT_LANGUAGE_ID,
+=======
+                    submitted_output,
+                    language_overrides.get(question_id),
+>>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
                     include_private=True,
                     bundle=bundle,
+                    expected_output=expected_outputs.get(question_id),
                     user_id=user_id,
                     attempt_number=current_attempts + 1,
                     late_multiplier=late_multiplier,

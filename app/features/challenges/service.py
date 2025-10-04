@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Optional
 
 from .repository import challenge_repository
 from .schemas import ChallengeSubmitRequest, ChallengeSubmitResponse
 from app.features.submissions.service import submissions_service, MAX_SCORING_ATTEMPTS
 from app.features.achievements.service import achievements_service
 from app.features.achievements.schemas import CheckAchievementsRequest
+from app.features.submissions.schemas import BatchSubmissionEntry
 
 
 class ChallengeService:
@@ -67,11 +68,13 @@ class ChallengeService:
         }
         attempt_counts: Dict[str, int] = {qid: int(data.get("attempts_used") or 0) for qid, data in snapshot_map.items()}
 
-        submissions_map: Dict[str, str] = {}
+        submissions_map: Dict[str, BatchSubmissionEntry] = {}
         for item in req.items or []:
             qid = str(item.question_id)
             if qid in snapshot_map:
-                submissions_map[qid] = item.source_code
+                submissions_map[qid] = BatchSubmissionEntry(output=item.output)
+
+        expected_outputs = {qid: data.get("expected_output") for qid, data in snapshot_map.items()}
 
         started_dt = self._parse_ts(attempt.get("started_at"))
         finished_dt = datetime.now(timezone.utc)
@@ -85,6 +88,7 @@ class ChallengeService:
             submissions=submissions_map,
             language_overrides=language_overrides,
             question_weights=weight_overrides,
+            expected_outputs=expected_outputs,
             user_id=student_number,
             tier=tier,
             attempt_counts=attempt_counts,
@@ -135,14 +139,21 @@ class ChallengeService:
         }
         performance_payload = {k: v for k, v in performance_payload.items() if v is not None}
 
-        await achievements_service.check_achievements(
+        achievements_result = await achievements_service.check_achievements(
             user_id,
             CheckAchievementsRequest(
                 submission_id=submission_id,
-                elo_delta_override=int(grading.elo_delta),
                 badge_tiers=grading.badge_tiers_awarded,
                 performance=performance_payload,
             ),
+        )
+
+        elo_delta_from_achievements: Optional[int] = None
+        if achievements_result.summary and achievements_result.summary.elo:
+            elo_delta_from_achievements = int(achievements_result.summary.elo.delta)
+
+        effective_elo_delta = (
+            elo_delta_from_achievements if elo_delta_from_achievements is not None else int(grading.elo_delta)
         )
 
         return ChallengeSubmitResponse(
@@ -151,7 +162,7 @@ class ChallengeService:
             status=str(updated_attempt.get("status", "submitted")),
             gpa_score=int(grading.gpa_score),
             gpa_max_score=int(grading.gpa_max_score),
-            elo_delta=int(grading.elo_delta),
+            elo_delta=int(effective_elo_delta),
             base_elo_total=int(grading.base_elo_total),
             efficiency_bonus_total=int(grading.efficiency_bonus_total),
             tests_total=int(grading.tests_total),
@@ -165,6 +176,7 @@ class ChallengeService:
             failed_question_ids=[qid for qid in grading.failed_questions],
             missing_question_ids=[qid for qid in grading.missing_questions],
             question_results=grading.question_results,
+            achievements=achievements_result,
         )
 
 
