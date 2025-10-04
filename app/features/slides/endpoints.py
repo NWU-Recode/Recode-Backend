@@ -279,6 +279,9 @@ async def upload_slide(
     given_at_iso: str | None = Query(None, description="Optional ISO datetime; inferred from filename week or uses now if omitted"),
     include_signed_url: bool = Query(False, description="Include a short-lived signed URL in the response (not stored)"),
     signed_ttl_sec: int = Query(900, ge=60, le=86400, description="TTL (seconds) for the signed URL if requested"),
+    generate_challenge: bool = Query(False, description="Generate and persist a base challenge immediately after upload"),
+    force_regenerate: bool = Query(False, description="Force regeneration of challenge/questions even if one exists for the week"),
+    challenge_tier: str = Query("base", description="Tier to generate when generate_challenge=true (base/ruby/emerald/diamond)"),
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(require_role('admin','lecturer')),
 ):
@@ -308,6 +311,10 @@ async def upload_slide(
             module_code=module_code,
             signed_url_ttl_sec=signed_ttl_sec,
             semester_end_date=semester_end,
+            generate_challenge=generate_challenge,
+            lecturer_id=int(getattr(current_user, 'id', 0) or 0),
+            force_regenerate=force_regenerate,
+            challenge_tier=challenge_tier,
         )
         if isinstance(out, dict):
             out.setdefault("semester_context", {
@@ -334,29 +341,31 @@ async def upload_slide(
         except Exception:
             logging.getLogger("slides").exception("Error while persisting topic for upload")
         # After successful extraction/topic creation, trigger challenge generation according to week rules.
-        try:
-            week_num = None
-            extraction = out.get("extraction") if isinstance(out, dict) else None
-            if extraction and isinstance(extraction, dict):
-                week_num = int(extraction.get("week_number") or out.get("week") or 0)
-                slide_stack_id = extraction.get("id")
-            else:
-                week_num = int(out.get("week") or 0)
-                slide_stack_id = None
-            lecturer_id = int(getattr(current_user, "id", 0) or 0)
-            if week_num and 0 < week_num <= 12:
-                try:
-                    await _enqueue_generation_job(
-                        week_num=week_num,
-                        slide_stack_id=slide_stack_id,
-                        module_code=module_code,
-                        lecturer_id=lecturer_id,
-                        semester_id=semester_id,
-                    )
-                except Exception:
-                    logging.getLogger("slides").exception("Failed to queue challenge generation for week %s", week_num)
-        except Exception:
-            logging.getLogger("slides").exception("Automatic challenge generation failed for uploaded slide")
+        # Only enqueue background generation if not doing immediate generation via flag
+        if not generate_challenge:
+            try:
+                week_num = None
+                extraction = out.get("extraction") if isinstance(out, dict) else None
+                if extraction and isinstance(extraction, dict):
+                    week_num = int(extraction.get("week_number") or out.get("week") or 0)
+                    slide_stack_id = extraction.get("id")
+                else:
+                    week_num = int(out.get("week") or 0)
+                    slide_stack_id = None
+                lecturer_id = int(getattr(current_user, "id", 0) or 0)
+                if week_num and 0 < week_num <= 12:
+                    try:
+                        await _enqueue_generation_job(
+                            week_num=week_num,
+                            slide_stack_id=slide_stack_id,
+                            module_code=module_code,
+                            lecturer_id=lecturer_id,
+                            semester_id=semester_id,
+                        )
+                    except Exception:
+                        logging.getLogger("slides").exception("Failed to queue challenge generation for week %s", week_num)
+            except Exception:
+                logging.getLogger("slides").exception("Automatic challenge generation failed for uploaded slide")
         # Do not expose signed URL unless explicitly requested
         if not include_signed_url:
             out.pop("signed_url", None)

@@ -5,7 +5,12 @@ from pydantic import BaseModel, model_validator
 from typing import Dict
 
 from app.common.deps import CurrentUser, get_current_user, require_role
-from app.features.submissions.schemas import QuestionEvaluationRequest, QuestionEvaluationResponse, QuestionSubmissionRequest
+from app.features.submissions.schemas import (
+    QuestionEvaluationRequest,
+    QuestionEvaluationResponse,
+    QuestionSubmissionRequest,
+    QuestionBundleSchema,
+)
 from app.features.submissions.service import submissions_service
 from app.features.submissions.repository import submissions_repository
 from app.features.challenges.repository import challenge_repository
@@ -61,19 +66,41 @@ async def quick_test_question_by_qid(
         raise HTTPException(status_code=400, detail="question_missing_challenge")
 
     try:
-        lang = int(payload.language_id or 71)
         return await submissions_service.evaluate_question(
             challenge_id=challenge_id,
             question_id=question_id,
             source_code=payload.source_code,
-            language_id=lang,
-            include_private=False,
+            language_id=None,
+            include_private=True,
             user_id=student_number,
             attempt_number=1,
             late_multiplier=1.0,
+            perform_award=False,
+            persist=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get(
+    "/challenges/{challenge_id}/questions/{question_id}/bundle",
+    response_model=QuestionBundleSchema,
+    summary="(debug) Return the question bundle including tests",
+)
+async def get_question_bundle_debug(
+    challenge_id: str,
+    question_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    try:
+        # student check ensures caller is authenticated
+        _ = int(current_user.id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_student_number")
+    try:
+        return await submissions_service.get_question_bundle(challenge_id, question_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.post(
@@ -91,14 +118,17 @@ async def submit_question(
         student_number = int(current_user.id)
     except Exception:
         raise HTTPException(status_code=400, detail="invalid_student_number")
+
     try:
+        # Force full-test evaluation for single-question submit so GPA/ELO are computed
+        # consistently (we no longer rely on visibility labels).
         return await submissions_service.submit_question(
             challenge_id=challenge_id,
             question_id=question_id,
             source_code=payload.source_code,
             user_id=student_number,
-            language_id=payload.language_id,
-            include_private=payload.include_private,
+            language_id=None,
+            include_private=True,
         )
     except ValueError as exc:
         message = str(exc)
@@ -168,7 +198,7 @@ async def submit_challenge(
                 q_awards: list = []
                 try:
                     for test_run in getattr(qres, "tests", []) or []:
-                        if getattr(test_run, "passed", False) and getattr(test_run, "visibility", "public") == "public":
+                        if getattr(test_run, "passed", False):
                             resp = await client.rpc(
                                 "record_test_result_and_award",
                                 {
@@ -180,7 +210,6 @@ async def submit_challenge(
                                     "p_public_badge_id": getattr(qres, "badge_tier_awarded", None),
                                 },
                             ).execute()
-                            # Supabase client execute returns a result with `.data` field (list of rows)
                             try:
                                 data = getattr(resp, "data", None)
                             except Exception:
@@ -190,7 +219,6 @@ async def submit_challenge(
                     import logging
 
                     logging.getLogger("submissions").exception("Award RPC failed for question %s", getattr(qres, "question_id", None))
-                    # keep whatever we have
                 if q_awards:
                     awards[str(getattr(qres, "question_id", ""))] = q_awards
         except Exception:

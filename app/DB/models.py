@@ -6,8 +6,8 @@ from app.features.profiles.models import Profile
 from app.features.judge0.models import CodeSubmission, CodeResult
 from app.features.topic_detections.slide_extraction.models import SlideExtraction
 from app.features.challenges.models import Challenge
-from app.features.badges.models import BadgeAward
-from app.features.elo.models import EloHistory
+from app.features.achievements.badges.models import BadgeAward
+from app.features.achievements.elo.models import EloHistory
 from app.features.topic_detections.topics.models import Topic
 
 # This ensures all models are registered with SQLAlchemy

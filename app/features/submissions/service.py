@@ -9,7 +9,6 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from app.features.judge0.schemas import CodeSubmissionCreate, CodeExecutionResult
 from app.features.judge0.service import judge0_service
-from app.features.judge0.wrappers import compare_output_against_tests
 from app.features.challenges.repository import challenge_repository
 from app.features.submissions.code_results_repository import code_results_repository
 from app.features.submissions.repository import submissions_repository
@@ -22,6 +21,10 @@ from app.features.submissions.schemas import (
     QuestionTestSchema,
     TestRunResultSchema,
 )
+from app.features.submissions.comparison import compare, CompareConfig, resolve_mode
+
+DEFAULT_LANGUAGE_ID = 71
+MAX_QUESTION_SCORE = 100
 
 MAX_SCORING_ATTEMPTS = 1
 DEFAULT_TIME_BUDGET_MS = 5000
@@ -142,9 +145,7 @@ class SubmissionsService:
         tests_raw = await submissions_repository.list_tests(question_id)
         tests = [QuestionTestSchema(**test) for test in tests_raw]
         tier = (question.get("tier") or "").lower() or None
-        weight = _GRADING_WEIGHTS.gpa_weight(tier)
-        if not weight:
-            weight = int(question.get("points") or _GRADING_WEIGHTS.default)
+        weight = MAX_QUESTION_SCORE
         max_time = question.get("max_time_ms")
         max_memory = question.get("max_memory_kb")
         max_time_ms = int(max_time) if max_time not in (None, "") else None
@@ -157,7 +158,7 @@ class SubmissionsService:
             starter_code=str(question.get("starter_code") or ""),
             reference_solution=question.get("reference_solution"),
             tier=tier,
-            language_id=int(question.get("language_id") or 71),
+            language_id=int(question.get("language_id") or DEFAULT_LANGUAGE_ID),
             points=weight,
             max_time_ms=max_time_ms,
             max_memory_kb=max_memory_kb,
@@ -183,7 +184,7 @@ class SubmissionsService:
         )
         passed = bool(result.success)
         status_id = int(result.status_id)
-        status_description = str(result.status_description)
+        status_description = self._status_description(status_id, str(result.status_description))
         exec_value = result.execution_time
         exec_seconds: Optional[float]
         try:
@@ -216,12 +217,17 @@ class SubmissionsService:
     def _normalise_tests(self, tests: List[QuestionTestSchema]) -> List[QuestionTestSchema]:
         if not tests:
             return []
-        public_tests = [t for t in tests if t.visibility == "public"]
-        if not public_tests:
-            raise ValueError("question_missing_public_test")
-        primary_public = min(public_tests, key=lambda t: t.order_index)
-        private_tests = [t for t in tests if t.visibility != "public"]
-        return [primary_public] + sorted(private_tests, key=lambda t: t.order_index)
+        indexed = list(enumerate(tests))
+
+        def _order_key(item: tuple[int, QuestionTestSchema]) -> tuple[int, int]:
+            idx, test = item
+            try:
+                return (int(test.order_index), idx)
+            except Exception:
+                return (0, idx)
+
+        sorted_items = sorted(indexed, key=_order_key)
+        return [test for _, test in sorted_items]
 
     async def submit_question(
         self,
@@ -231,8 +237,9 @@ class SubmissionsService:
         *,
         user_id: int,
         language_id: Optional[int] = None,
-        include_private: bool = True,
-        perform_award: bool = True,
+    include_private: bool = True,
+    perform_award: bool = False,
+    persist: bool = False,
     ) -> QuestionEvaluationResponse:
         challenge = await challenge_repository.get_challenge(challenge_id)
         if not challenge:
@@ -261,27 +268,22 @@ class SubmissionsService:
         time_limit_seconds = _time_limit_for_tier(tier)
         late_multiplier = _late_multiplier(duration_seconds, time_limit_seconds)
         attempt_number = attempts_used + 1
+        include_private_flag = True
+
         result = await self.evaluate_question(
             challenge_id,
             question_id,
             source_code,
             lang,
-            include_private=include_private,
+            include_private=include_private_flag,
             bundle=bundle,
             user_id=user_id,
             attempt_number=attempt_number,
             late_multiplier=late_multiplier,
             attempt_id=attempt_id,
             perform_award=perform_award,
+            persist=persist,
         )
-        try:
-            await challenge_repository.record_question_attempts(
-                attempt_id,
-                {target_qid: 1},
-                max_attempts=MAX_SCORING_ATTEMPTS,
-            )
-        except Exception:
-            pass
         return result
 
     async def evaluate_question(
@@ -298,20 +300,70 @@ class SubmissionsService:
         late_multiplier: float,
         attempt_id: Optional[str] = None,
         perform_award: bool = True,
+        persist: bool = True,
     ) -> QuestionEvaluationResponse:
         bundle = bundle or await self.get_question_bundle(challenge_id, question_id)
-        lang = int(language_id or bundle.language_id or 71)
+        lang = int(language_id or bundle.language_id or DEFAULT_LANGUAGE_ID)
         tests = self._normalise_tests(bundle.tests)
         if not include_private:
             tests = tests[:1]
         if not tests:
             raise ValueError("question_missing_tests")
 
-        executions: List[TestRunResultSchema] = await asyncio.gather(
+        executions_raw: List[TestRunResultSchema] = await asyncio.gather(
             *[self._execute_test(source_code, lang, test) for test in tests]
         )
 
-        gpa_weight = bundle.points or _GRADING_WEIGHTS.gpa_weight(bundle.tier)
+        score_splits: List[int] = []
+        run_count = len(executions_raw)
+        if run_count > 0:
+            base_value = MAX_QUESTION_SCORE // run_count
+            remainder = MAX_QUESTION_SCORE - (base_value * run_count)
+            score_splits = [base_value] * run_count
+            for idx in range(remainder):
+                score_splits[idx] += 1
+        else:
+            score_splits = []
+
+        executions: List[TestRunResultSchema] = []
+        gpa_awarded = 0
+        for idx, run in enumerate(executions_raw):
+            run_dict = run.model_dump()
+            test_meta = tests[idx]
+            compare_cfg = CompareConfig()
+            stdout_val = run.stdout or ""
+            expected_val = test_meta.expected or ""
+            mode_override = resolve_mode(getattr(test_meta, "compare_mode", None))
+            config_overrides = getattr(test_meta, "compare_config", None) or {}
+            comparison = await compare(
+                expected_val,
+                stdout_val,
+                compare_cfg,
+                mode=mode_override,
+                compare_config=config_overrides,
+            )
+            override_pass = comparison.passed if run.status_id == 3 else run.passed
+            run_dict["passed"] = override_pass
+            run_dict["compare_mode_applied"] = comparison.mode_applied
+            run_dict["normalisations_applied"] = comparison.normalisations_applied
+            run_dict["comparison_attempts"] = [
+                {
+                    "mode": att.mode,
+                    "passed": att.passed,
+                    "reason": att.reason,
+                    "normalisations": att.normalisations,
+                    "duration_ms": att.duration_ms,
+                }
+                for att in (comparison.attempts or [])
+            ] or None
+            run_dict["why_failed"] = None if override_pass else comparison.reason
+            per_test_score = score_splits[idx] if idx < len(score_splits) and override_pass else 0
+            run_dict["score_awarded"] = per_test_score
+            run_dict["gpa_contribution"] = per_test_score
+            gpa_awarded += per_test_score
+            executions.append(TestRunResultSchema(**run_dict))
+
+        gpa_weight = MAX_QUESTION_SCORE
         times = [r.execution_time_ms for r in executions if r.execution_time_ms is not None]
         memories = [r.memory_used_kb for r in executions if r.memory_used_kb is not None]
         avg_time_ms = mean(times) if times else None
@@ -336,6 +388,7 @@ class SubmissionsService:
         tests_passed = sum(1 for r in executions if r.passed)
         tests_total = len(executions)
         passed_all = tests_passed == tests_total and tests_total > 0
+        score_ratio = (tests_passed / tests_total) if tests_total else 0.0
 
         attempt_multiplier = math.pow(0.9, max(0, attempt_number - 1))
         base_component = _base_elo(bundle.tier)
@@ -344,14 +397,14 @@ class SubmissionsService:
             elo_delta = _fail_penalty(bundle.tier)
             elo_base = 0
             efficiency_bonus = elo_delta
-            gpa_awarded = 0
         else:
             raw_delta = base_component * time_multiplier * memory_multiplier * late_multiplier * attempt_multiplier
             elo_delta = int(round(raw_delta))
             elo_base = base_component
             efficiency_bonus = elo_delta - elo_base
-            perf = (tests_passed / tests_total) * time_multiplier * memory_multiplier * late_multiplier
-            gpa_awarded = int(round(perf * gpa_weight))
+            perf = score_ratio * time_multiplier * memory_multiplier * late_multiplier
+            scaled_score = int(round(perf * gpa_weight))
+            gpa_awarded = max(gpa_awarded, scaled_score)
 
         if bundle.tier in _ADVANCED_TIERS and include_private and not passed_all:
             gpa_awarded = 0
@@ -381,6 +434,8 @@ class SubmissionsService:
         else:
             overall_status_id = 0
 
+        overall_status_desc = self._status_description(overall_status_id, "unknown")
+
         time_candidates = []
         for run in executions:
             if run.execution_time_seconds is not None:
@@ -396,8 +451,11 @@ class SubmissionsService:
         stdout_lines = [run.stdout for run in executions if run.stdout]
         stderr_lines = [run.stderr for run in executions if run.stderr]
 
+        test_records = [run.model_dump() for run in executions]
+
         summary = {
             'status_id': overall_status_id,
+            'status_description': overall_status_desc,
             'stdout': stdout_lines if stdout_lines else None,
             'stderr': stderr_lines if stderr_lines else None,
             'time': max_time_seconds,
@@ -421,21 +479,22 @@ class SubmissionsService:
         }
 
         submission_id = None
-        try:
-            submission_id = await code_results_repository.log_test_batch(
-                user_id=user_id,
-                language_id=lang,
-                source_code=source_code,
-                token=judge0_token,
-                test_records=test_records,
-                summary=summary,
-                stdin=None,
-                expected_output=None,
-                challenge_id=challenge_id,
-                question_id=question_id,
-            )
-        except Exception:
-            submission_id = None
+        if persist:
+            try:
+                submission_id = await code_results_repository.log_test_batch(
+                    user_id=user_id,
+                    language_id=lang,
+                    source_code=source_code,
+                    token=judge0_token,
+                    test_records=test_records,
+                    summary=summary,
+                    stdin=None,
+                    expected_output=None,
+                    challenge_id=challenge_id,
+                    question_id=question_id,
+                )
+            except Exception:
+                submission_id = None
 
         # For each passed test, optionally call the stored procedure to record progress and award ELO/badges.
         # When perform_award is False the caller intends to handle awarding in a consolidated post-step.
@@ -445,19 +504,14 @@ class SubmissionsService:
                 for tr in executions:
                     try:
                         if tr.passed:
-                            # call RPC: record_test_result_and_award(profile_id, question_id, test_id, is_public, passed, badge_id)
-                            is_public_flag = True if (getattr(tr, "visibility", "public") == "public") else False
-                            badge_id_to_pass = None
-                            if is_public_flag:
-                                # attempt to pass the badge id from the bundle (if present)
-                                badge_id_to_pass = bundle.badge_id if getattr(bundle, "badge_id", None) else None
+                            badge_id_to_pass = bundle.badge_id if getattr(bundle, "badge_id", None) else None
                             await client.rpc(
                                 "record_test_result_and_award",
                                 {
                                     "p_profile_id": int(user_id),
                                     "p_question_id": str(question_id),
                                     "p_test_id": str(tr.test_id),
-                                    "p_is_public": is_public_flag,
+                                    "p_is_public": True,
                                     "p_passed": True,
                                     "p_public_badge_id": badge_id_to_pass,
                                 },
@@ -507,50 +561,82 @@ class SubmissionsService:
         This is intended for frontends that precompute output and want immediate grading.
         """
         bundle = await self.get_question_bundle(challenge_id, question_id)
-        tests_raw = [t.model_dump() for t in bundle.tests]
         tests = self._normalise_tests(bundle.tests)
         if not include_private:
             tests = tests[:1]
-        # Compare output to tests
-        raw_results = compare_output_against_tests(output, [t.model_dump() for t in tests])
-        executions = []
-        for rr in raw_results:
-            executions.append(
+        executions_raw: List[TestRunResultSchema] = []
+        for test in tests:
+            expected_val = test.expected or ""
+            actual_val = output or ""
+            mode_override = resolve_mode(getattr(test, "compare_mode", None))
+            config_overrides = getattr(test, "compare_config", None) or {}
+            comparison = await compare(
+                expected_val,
+                actual_val,
+                CompareConfig(),
+                mode=mode_override,
+                compare_config=config_overrides,
+            )
+            executions_raw.append(
                 TestRunResultSchema(
-                    test_id=rr.get("test_id"),
-                    visibility=rr.get("visibility"),
-                    passed=bool(rr.get("passed")),
+                    test_id=test.id,
+                    visibility=test.visibility,
+                    passed=bool(comparison.passed),
                     stdout=output,
                     stderr=None,
                     compile_output=None,
-                    status_id=3 if rr.get("passed") else 1,
-                    status_description="accepted" if rr.get("passed") else "failed",
+                    status_id=3 if comparison.passed else 1,
+                    status_description="accepted" if comparison.passed else "failed",
                     token=None,
                     execution_time=None,
                     execution_time_seconds=None,
                     execution_time_ms=None,
                     memory_used=None,
                     memory_used_kb=None,
+                    compare_mode_applied=comparison.mode_applied,
+                    normalisations_applied=comparison.normalisations_applied,
+                    why_failed=None if comparison.passed else comparison.reason,
+                    comparison_attempts=[
+                        {
+                            "mode": att.mode,
+                            "passed": att.passed,
+                            "reason": att.reason,
+                            "normalisations": att.normalisations,
+                            "duration_ms": att.duration_ms,
+                        }
+                        for att in (comparison.attempts or [])
+                    ]
+                    or None,
                 )
             )
 
-        # Map rest of evaluate_question logic with the fake executions
-        gpa_weight = bundle.points or _GRADING_WEIGHTS.gpa_weight(bundle.tier)
-        times = []
-        memories = []
-        avg_time_ms = None
-        avg_memory_kb = None
+        run_count = len(executions_raw)
+        score_splits: List[int] = []
+        if run_count > 0:
+            base_value = MAX_QUESTION_SCORE // run_count
+            remainder = MAX_QUESTION_SCORE - (base_value * run_count)
+            score_splits = [base_value] * run_count
+            for idx in range(remainder):
+                score_splits[idx] += 1
 
-        time_budget_ms = bundle.max_time_ms or DEFAULT_TIME_BUDGET_MS
-        memory_budget_kb = bundle.max_memory_kb or DEFAULT_MEMORY_BUDGET_KB
+        executions: List[TestRunResultSchema] = []
+        gpa_awarded = 0
+        for idx, run in enumerate(executions_raw):
+            run_dict = run.model_dump()
+            per_score = score_splits[idx] if idx < len(score_splits) and run.passed else 0
+            run_dict["score_awarded"] = per_score
+            run_dict["gpa_contribution"] = per_score
+            gpa_awarded += per_score
+            executions.append(TestRunResultSchema(**run_dict))
 
-        time_multiplier = 1.0
-        memory_multiplier = 1.0
-
+        gpa_weight = MAX_QUESTION_SCORE
         tests_passed = sum(1 for r in executions if r.passed)
         tests_total = len(executions)
         passed_all = tests_passed == tests_total and tests_total > 0
+        score_ratio = (tests_passed / tests_total) if tests_total else 0.0
 
+        time_multiplier = 1.0
+        memory_multiplier = 1.0
         attempt_multiplier = 1.0
         base_component = _base_elo(bundle.tier)
 
@@ -558,38 +644,33 @@ class SubmissionsService:
             elo_delta = _fail_penalty(bundle.tier)
             elo_base = 0
             efficiency_bonus = elo_delta
-            gpa_awarded = 0
         else:
             raw_delta = base_component * time_multiplier * memory_multiplier * 1.0 * attempt_multiplier
             elo_delta = int(round(raw_delta))
             elo_base = base_component
             efficiency_bonus = elo_delta - elo_base
-            perf = (tests_passed / tests_total) * time_multiplier * memory_multiplier
-            gpa_awarded = int(round(perf * gpa_weight))
+            scaled_score = int(round(score_ratio * gpa_weight))
+            gpa_awarded = max(gpa_awarded, scaled_score)
 
         if bundle.tier in _ADVANCED_TIERS and include_private and not passed_all:
             gpa_awarded = 0
 
         badge_tier = bundle.tier if passed_all else None
 
-        # If a user_id was provided, optionally record passes via RPC in DB (idempotent)
         if user_id is not None and perform_award:
             try:
                 client = await get_supabase()
                 for tr in executions:
                     try:
                         if tr.passed:
-                            is_public_flag = True if (getattr(tr, "visibility", "public") == "public") else False
-                            badge_id_to_pass = None
-                            if is_public_flag:
-                                badge_id_to_pass = bundle.badge_id if getattr(bundle, "badge_id", None) else None
+                            badge_id_to_pass = bundle.badge_id if getattr(bundle, "badge_id", None) else None
                             await client.rpc(
                                 "record_test_result_and_award",
                                 {
                                     "p_profile_id": int(user_id),
                                     "p_question_id": str(question_id),
                                     "p_test_id": str(tr.test_id),
-                                    "p_is_public": is_public_flag,
+                                    "p_is_public": True,
                                     "p_passed": True,
                                     "p_public_badge_id": badge_id_to_pass,
                                 },
@@ -603,7 +684,7 @@ class SubmissionsService:
             challenge_id=bundle.challenge_id,
             question_id=bundle.question_id,
             tier=bundle.tier,
-            language_id=bundle.language_id,
+            language_id=bundle.language_id or DEFAULT_LANGUAGE_ID,
             gpa_weight=gpa_weight,
             gpa_awarded=gpa_awarded,
             elo_awarded=elo_delta,
@@ -612,14 +693,27 @@ class SubmissionsService:
             public_passed=bool(executions and executions[0].passed),
             tests_passed=tests_passed,
             tests_total=tests_total,
-            average_execution_time_ms=avg_time_ms,
-            average_memory_used_kb=avg_memory_kb,
+            average_execution_time_ms=None,
+            average_memory_used_kb=None,
             badge_tier_awarded=badge_tier,
-            submission_id=submission_id,
-            attempt_id=attempt_id,
-            attempt_number=attempt_number,
+            submission_id=None,
+            attempt_id=None,
+            attempt_number=None,
             tests=executions,
         )
+
+    @staticmethod
+    def _status_description(status_id: int, fallback: str) -> str:
+        mapping = {
+            1: "In Queue",
+            2: "Processing",
+            3: "Accepted",
+            4: "Wrong Answer",
+            5: "Time Limit Exceeded",
+            6: "Compilation Error",
+            7: "Runtime Error",
+        }
+        return mapping.get(status_id, fallback or "unknown")
 
     async def submit_challenge(
         self,
@@ -663,6 +757,7 @@ class SubmissionsService:
         attempt_counts: Dict[str, int],
         max_attempts: int,
         late_multiplier: float,
+        perform_award: bool = True,
     ) -> ChallengeSubmissionBreakdown:
         results: List[ChallengeQuestionResultSchema] = []
         passed_questions: List[str] = []
@@ -675,13 +770,7 @@ class SubmissionsService:
                 bundle_cache[qid] = await self.get_question_bundle(challenge_id, qid)
             except ValueError:
                 continue
-        gpa_max = 0
-        for qid in language_overrides.keys():
-            bundle = bundle_cache.get(qid)
-            if bundle:
-                gpa_max += bundle.points or _GRADING_WEIGHTS.gpa_weight(bundle.tier)
-            else:
-                gpa_max += question_weights.get(qid, 0)
+        gpa_max = len(language_overrides) * MAX_QUESTION_SCORE
         gpa_total = 0
         base_elo_total = 0
         efficiency_total = 0
@@ -689,6 +778,7 @@ class SubmissionsService:
         tests_passed_total = 0
         avg_time_inputs: List[float] = []
         avg_memory_inputs: List[float] = []
+        attempt_updates: Dict[str, int] = {}
 
         for question_id in language_overrides.keys():
             bundle = bundle_cache.get(question_id)
@@ -721,8 +811,8 @@ class SubmissionsService:
                     challenge_id=challenge_id,
                     question_id=question_id,
                     tier=bundle.tier if bundle else tier,
-                    language_id=language_overrides.get(question_id, 71),
-                    gpa_weight=bundle.points if bundle else question_weights.get(question_id, 0),
+                    language_id=language_overrides.get(question_id) or DEFAULT_LANGUAGE_ID,
+                    gpa_weight=MAX_QUESTION_SCORE,
                     gpa_awarded=0,
                     elo_awarded=fail_penalty,
                     elo_base=0,
@@ -743,14 +833,17 @@ class SubmissionsService:
                     challenge_id,
                     question_id,
                     source_code,
-                    language_overrides.get(question_id),
+                    language_overrides.get(question_id) or DEFAULT_LANGUAGE_ID,
                     include_private=True,
                     bundle=bundle,
                     user_id=user_id,
                     attempt_number=current_attempts + 1,
                     late_multiplier=late_multiplier,
                     attempt_id=attempt_id,
+                    perform_award=perform_award,
+                    persist=True,
                 )
+                attempt_updates[question_id] = attempt_updates.get(question_id, 0) + 1
 
             gpa_total += int(eval_result.gpa_awarded)
             base_elo_total += int(eval_result.elo_base)
@@ -767,6 +860,16 @@ class SubmissionsService:
             else:
                 failed_questions.append(question_id)
             results.append(ChallengeQuestionResultSchema(**eval_result.model_dump()))
+
+        if attempt_updates:
+            try:
+                await challenge_repository.record_question_attempts(
+                    attempt_id,
+                    attempt_updates,
+                    max_attempts=max_attempts,
+                )
+            except Exception:
+                pass
 
         average_execution_time_ms = mean(avg_time_inputs) if avg_time_inputs else None
         average_memory_used_kb = mean(avg_memory_inputs) if avg_memory_inputs else None

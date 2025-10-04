@@ -140,17 +140,51 @@ class Judge0Service:
         def _norm(s: str) -> str | None:
             if s is None:
                 return None
-            # Normalise newlines, trim, split, take last non-empty
+            # Primary normalisation: collapse CRLF -> LF, strip outer whitespace
             s2 = s.replace('\r\n', '\n').strip()
-            lines = [ln.rstrip() for ln in s2.split('\n') if ln.strip()]
-            if not lines:
+            if not s2:
                 return None
-            return lines[-1].strip()
-        expected = _norm(expected_output)
-        actual = _norm(stdout)
-        if expected is None or actual is None:
+            return s2
+
+        # 1) Raw normalized strings
+        norm_expected = _norm(expected_output)
+        norm_actual = _norm(stdout)
+        if norm_expected is None or norm_actual is None:
             return False
-        return actual == expected
+
+        # Fast path exact match (after simple strip)
+        if norm_expected == norm_actual:
+            return True
+
+        # 2) Whitespace-insensitive comparison (remove all spaces & newlines)
+        compact_expected = ''.join(ch for ch in norm_expected if ch not in (' ', '\n', '\t', '\r'))
+        compact_actual = ''.join(ch for ch in norm_actual if ch not in (' ', '\n', '\t', '\r'))
+        if compact_expected == compact_actual:
+            return True
+
+        # 3) Python literal structural equality (e.g., tuples, lists, dicts, numbers)
+        import ast
+        def _literal_eval_safe(txt: str):
+            try:
+                return ast.literal_eval(txt)
+            except Exception:
+                return None
+        lit_exp = _literal_eval_safe(norm_expected)
+        lit_act = _literal_eval_safe(norm_actual)
+        if lit_exp is not None and lit_act is not None and lit_exp == lit_act:
+            return True
+
+        # 4) Final fallback: last non-empty line equality after aggressive compaction
+        def _last_line_compact(txt: str) -> str:
+            lines = [ln.strip() for ln in txt.split('\n') if ln.strip()]
+            if not lines:
+                return ''
+            last = lines[-1]
+            return ''.join(ch for ch in last if not ch.isspace())
+        if _last_line_compact(norm_expected) == _last_line_compact(norm_actual):
+            return True
+
+        return False
     
     async def get_languages(self) -> List[LanguageInfo]:
         key = "judge0:languages"

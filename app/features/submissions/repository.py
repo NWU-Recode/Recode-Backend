@@ -20,6 +20,9 @@ class SubmissionsRepository:
     async def list_tests(self, question_id: str) -> List[Dict[str, Any]]:
         client = await get_supabase()
         tests: List[Dict[str, Any]] = []
+        # Gather tests from all known tables (legacy compatibility). Do not stop at the
+        # first non-empty table — some questions may have rows in both `question_tests`
+        # and `tests` and we want to include them all.
         for table in self._TEST_TABLES:
             try:
                 resp = await (
@@ -31,22 +34,32 @@ class SubmissionsRepository:
             except Exception:  # pragma: no cover - fallback for legacy table name
                 continue
             if resp.data:
-                tests = resp.data
-                break
+                # extend rather than replace so we collect rows from both tables
+                tests.extend(resp.data)
         normalised: List[Dict[str, Any]] = []
         for index, test in enumerate(tests or []):
+            raw_order = test.get("order_index")
+            try:
+                order_index = int(raw_order)
+            except (TypeError, ValueError):
+                order_index = index
             normalised.append(
                 {
                     "id": test.get("id"),
                     "question_id": question_id,
                     "input": test.get("input", ""),
                     "expected": test.get("expected", ""),
-                    "visibility": (test.get("visibility") or "public").lower(),
-                    "order_index": index,
+                    "visibility": test.get("visibility"),
+                    "order_index": order_index,
+                    "expected_hash": test.get("expected_hash"),
+                    "compare_mode": test.get("compare_mode"),
+                    "compare_config": test.get("compare_config") or {},
+                    "_position": index,
                 }
             )
-        # Ensure deterministic ordering: public first, then by original order
-        normalised.sort(key=lambda t: (t.get("visibility") != "public", t.get("order_index", 0)))
+        normalised.sort(key=lambda t: (t.get("order_index", 0), t.get("_position", 0)))
+        for entry in normalised:
+            entry.pop("_position", None)
         return normalised
 
 

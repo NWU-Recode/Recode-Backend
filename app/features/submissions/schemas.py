@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field
+
+from app.features.submissions.comparison import ComparisonMode
 
 
 class QuestionTestSchema(BaseModel):
@@ -10,8 +12,11 @@ class QuestionTestSchema(BaseModel):
     question_id: str
     input: str
     expected: str
-    visibility: Literal["public", "private"]
+    visibility: Optional[str] = None
     order_index: int
+    expected_hash: Optional[str] = None
+    compare_mode: str = ComparisonMode.AUTO
+    compare_config: Dict[str, Any] = Field(default_factory=dict)
 
 
 class QuestionBundleSchema(BaseModel):
@@ -32,7 +37,7 @@ class QuestionBundleSchema(BaseModel):
 
 class TestRunResultSchema(BaseModel):
     test_id: Optional[str] = None
-    visibility: Literal["public", "private"]
+    visibility: Optional[str] = None
     passed: bool
     stdout: Optional[str] = None
     stderr: Optional[str] = None
@@ -47,11 +52,14 @@ class TestRunResultSchema(BaseModel):
     memory_used_kb: Optional[int] = None
     score_awarded: int = 0
     gpa_contribution: int = 0
+    compare_mode_applied: Optional[str] = None
+    normalisations_applied: Optional[List[str]] = None
+    why_failed: Optional[str] = None
+    comparison_attempts: Optional[List[Dict[str, Any]]] = None
 
 
 class QuestionEvaluationRequest(BaseModel):
     source_code: str
-    language_id: Optional[int] = None
 
 
 class QuestionSubmissionRequest(QuestionEvaluationRequest):
