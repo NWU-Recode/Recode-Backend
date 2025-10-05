@@ -13,6 +13,7 @@ class Semester(Base):
     year = Column(Integer, nullable=False)
     term_name = Column(String, nullable=False)
     start_date = Column(DateTime, nullable=False)
+    original_start_date = Column(DateTime, nullable=False) 
     end_date = Column(DateTime, nullable=False)
     is_current = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
