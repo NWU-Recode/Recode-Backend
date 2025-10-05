@@ -143,3 +143,21 @@ class LecturerProfileResponse(BaseModel):
     avatar_url: Optional[str]
     phone: Optional[str]
     bio: Optional[str]
+
+
+#ADMIN CHANGE WEEK OFFSET SCHEMAS
+class DemoSkipRequest(BaseModel):
+    delta: int = Field(
+        ..., 
+        description="Number of weeks to skip (positive = forward, negative = backward)",
+        example=2
+    )
+
+
+class DemoResponse(BaseModel):
+    semester_id: str
+    semester_name: str
+    original_start_date: str
+    current_start_date: str
+    weeks_offset: int
+    message: str | None = None
