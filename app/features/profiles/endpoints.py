@@ -43,13 +43,11 @@ async def update_current_profile(
     data: ProfileUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ProfileSchema:
-    """Authenticated user: Update their own profile (bearer token)."""
-
     updated = await update_profile(current_user.id, data)
-
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return ProfileSchema(**updated)
+
 
 @router.get("/{profile_id}", response_model=PublicProfile)
 async def read_profile(
