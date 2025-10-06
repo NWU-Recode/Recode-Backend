@@ -72,7 +72,7 @@ class Judge0ExecutionResult(BaseModel):
     message: Optional[str] = None
     time: Optional[str] = None
     memory: Optional[int] = None
-    status: dict
+    status: Optional[dict] = None
     language: Optional[dict] = None
 
 
@@ -104,3 +104,4 @@ class LanguageInfo(BaseModel):
 class Judge0Status(BaseModel):
     id: int
     description: str
+

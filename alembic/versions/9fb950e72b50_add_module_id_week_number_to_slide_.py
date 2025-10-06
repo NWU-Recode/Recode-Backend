@@ -21,12 +21,24 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # Add module_id and week_number columns to slide_extractions table
-    op.add_column('slide_extractions', sa.Column('module_id', sa.Integer(), nullable=True))
-    op.add_column('slide_extractions', sa.Column('week_number', sa.Integer(), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_columns = {col['name'] for col in inspector.get_columns('slide_extractions')}
+
+    if 'module_id' not in existing_columns:
+        op.add_column('slide_extractions', sa.Column('module_id', sa.Integer(), nullable=True))
+    if 'week_number' not in existing_columns:
+        op.add_column('slide_extractions', sa.Column('week_number', sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     # Remove module_id and week_number columns from slide_extractions table
-    op.drop_column('slide_extractions', 'week_number')
-    op.drop_column('slide_extractions', 'module_id')
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_columns = {col['name'] for col in inspector.get_columns('slide_extractions')}
+
+    if 'week_number' in existing_columns:
+        op.drop_column('slide_extractions', 'week_number')
+    if 'module_id' in existing_columns:
+        op.drop_column('slide_extractions', 'module_id')

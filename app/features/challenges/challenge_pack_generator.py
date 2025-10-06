@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+
+from app.features.challenges.tier_utils import BASE_TIER, normalise_challenge_tier
 import asyncio
 import hashlib
 import json
@@ -172,7 +174,7 @@ class TopicContext:
         return "Week"
 
 TOPIC_LIMIT_BY_TIER = {
-    "base": 1,
+    BASE_TIER: 1,
     "ruby": 2,
     "emerald": 4,
     "diamond": 12,
@@ -182,22 +184,15 @@ TOPIC_LIMIT_BY_TIER = {
 def _tier_from_kind(kind: Optional[str]) -> str:
     """Normalize a requested tier/kind to the internal tier key.
 
-    Accepts values like 'base', 'common', 'ruby', 'emerald', 'diamond',
-    and returns the canonical lowercase key used across this module.
+    Accepts values like 'base', 'ruby', 'emerald', 'diamond' and
+    returns the canonical lowercase key used across this module.
     """
-    if not kind:
-        return "base"
-    k = str(kind).strip().lower()
-    mapping = {
-        "common": "base",
-        "base": "base",
-        "plain": "base",
-        "weekly": "base",
-        "ruby": "ruby",
-        "emerald": "emerald",
-        "diamond": "diamond",
-    }
-    return mapping.get(k, k)
+    normalised = normalise_challenge_tier(kind)
+    if normalised:
+        return normalised
+    if kind is None:
+        return BASE_TIER
+    return str(kind).strip().lower()
 
 
 def _normalise_topic_string(value: Any) -> Optional[str]:
@@ -244,7 +239,7 @@ def _ensure_list(value: Any) -> List[str]:
 
 
 TOPIC_WINDOW_BY_TIER = {
-    "base": 1,
+    BASE_TIER: 1,
     "ruby": 2,
     "emerald": 4,
     "diamond": None,
@@ -503,13 +498,13 @@ async def _fetch_topic_context(
 
 def _load_template(kind: str) -> str:
     templates = {
-        "common": "base.txt",
-        "base": "base.txt",
+        BASE_TIER: "base.txt",
         "ruby": "ruby.txt",
         "emerald": "emerald.txt",
         "diamond": "diamond.txt",
     }
-    name = templates.get(kind, "base.txt")
+    canonical_kind = normalise_challenge_tier(kind) or str(kind).strip().lower()
+    name = templates.get(canonical_kind, "base.txt")
     candidate_dirs = [
         Path(__file__).parent / "prompts",
         Path(__file__).parent.parent / "prompts",
@@ -576,9 +571,9 @@ def _normalise_questions(kind: str, payload: Dict[str, Any]) -> List[Dict[str, A
         logger.warning("Generator payload is not a dict for tier %s: %r", kind, payload)
         raise ValueError("Model response invalid: expected object payload")
     questions = payload.get("questions", []) or []
-    if kind in {"common", "base"}:
+    if normalise_challenge_tier(kind) == BASE_TIER:
         if len(questions) < 5:
-            raise ValueError("Model response did not include 5 questions for base/common payload")
+            raise ValueError("Model response did not include 5 questions for base payload")
         selected = questions[:5]
         return [
             _normalise_question(kind, selected[i], BASE_DISTRIBUTION[i])
@@ -701,11 +696,11 @@ async def _insert_challenge(
     effective_week = max(1, min(12, effective_week))
 
     slug_week = 12 if tier == "diamond" else effective_week
-    tier_slug = "plain" if tier == "base" else _slugify(tier)
+    tier_slug = "base" if normalise_challenge_tier(tier) == BASE_TIER else _slugify(tier)
     slug = f"{module_part}-w{int(slug_week):02d}-{tier_slug}"
     is_weekly = tier == "base"
     challenge_type_value = "weekly" if is_weekly else "special"
-    tier_value = None if is_weekly else ("plain" if tier == "base" else tier)
+    tier_value = None if is_weekly else (BASE_TIER if normalise_challenge_tier(tier) == BASE_TIER else tier)
 
     key_source = "|".join([
         str(context.topic_id or ""),
@@ -789,7 +784,7 @@ async def _insert_challenge(
     if is_weekly:
         payload["week_number"] = effective_week
         # Do not explicitly set the `tier` enum for weekly challenges. Different
-        # deployments may use different enum members (plain/base/weekly). Leave
+        # deployments may use different legacy enum members; leave relaxed matching in place
         # the column unset so DB defaults or downstream logic can normalise it.
         pass
     else:
@@ -1030,67 +1025,133 @@ async def generate_and_save_tier(
                         persisted_count = 0
                         persisted_rows: List[Dict[str, Any]] = []
                         if tests and qid is not None:
+                            # Detect once which expected column variant the table supports.
+                            has_expected_output: Optional[bool] = None
+
+                            async def _supports_expected_output() -> bool:
+                                nonlocal has_expected_output
+                                if has_expected_output is not None:
+                                    return has_expected_output
+                                try:
+                                    await client.table("question_tests").select("id,expected_output").limit(1).execute()
+                                    has_expected_output = True
+                                except Exception:
+                                    has_expected_output = False
+                                return has_expected_output
+
                             for t in tests:
                                 expected_val = str(t.get("expected") or t.get("expected_output") or "")
                                 visibility_val = t.get("visibility") or None
                                 if isinstance(visibility_val, str) and visibility_val.strip().lower() == "private":
                                     visibility_val = "hidden"
-                                t_payload = {
-                                    "question_id": qid,
-                                    "input": str(t.get("input") or ""),
-                                    "expected": expected_val,
-                                    "visibility": visibility_val,
-                                }
-                                t_attempt = 0
-                                while t_attempt < 2:
+                                base_input = str(t.get("input") or "")
+
+                                async def _insert_testcase() -> bool:
+                                    """Try inserting a testcase handling schema variants (expected vs expected_output).
+                                    Returns True if persisted, False otherwise."""
+                                    use_expected_output = await _supports_expected_output()
+                                    payload_primary = {
+                                        "question_id": qid,
+                                        "input": base_input,
+                                        ("expected_output" if use_expected_output else "expected"): expected_val,
+                                        "visibility": visibility_val,
+                                    }
                                     try:
-                                        resp_t = await client.table("question_tests").insert(t_payload).execute()
+                                        resp_t = await client.table("question_tests").insert(payload_primary).execute()
                                         if getattr(resp_t, "data", None):
                                             try:
                                                 persisted_rows.append(resp_t.data[0])
                                             except Exception:
                                                 persisted_rows.append({"question_id": qid})
-                                            persisted_count += 1
-                                            break
-                                        else:
-                                            t_attempt += 1
-                                    except Exception as _t_exc:
-                                        t_attempt += 1
+                                            return True
+                                    except Exception as _pri_exc:
                                         if _debug:
                                             try:
-                                                logger.exception("Failed to insert question_test (attempt %s) for qid=%s: %s", t_attempt, qid, _t_exc)
+                                                logger.debug("Primary insert failed (column %s) for qid=%s: %s", 'expected_output' if use_expected_output else 'expected', qid, _pri_exc)
                                             except Exception:
                                                 pass
-                                        if t_attempt >= 2:
-                                            # Final failure inserting into question_tests; try legacy `tests` table as a fallback
+                                        # If we assumed wrong, flip and retry once
+                                        if use_expected_output is True:
                                             try:
-                                                legacy_payload = {
+                                                resp_t2 = await client.table("question_tests").insert({
                                                     "question_id": qid,
-                                                    "input": t_payload.get("input"),
-                                                    "expected": t_payload.get("expected"),
-                                                    "visibility": t_payload.get("visibility"),
-                                                }
+                                                    "input": base_input,
+                                                    "expected": expected_val,
+                                                    "visibility": visibility_val,
+                                                }).execute()
+                                                if getattr(resp_t2, "data", None):
+                                                    has_expected_output = False  # cache for subsequent iterations
+                                                    try:
+                                                        persisted_rows.append(resp_t2.data[0])
+                                                    except Exception:
+                                                        persisted_rows.append({"question_id": qid})
+                                                    return True
+                                            except Exception as _sec_exc:
+                                                if _debug:
+                                                    try:
+                                                        logger.debug("Secondary insert failed (expected) for qid=%s: %s", qid, _sec_exc)
+                                                    except Exception:
+                                                        pass
+                                        else:
+                                            # we tried 'expected' first; attempt 'expected_output'
+                                            try:
+                                                resp_t3 = await client.table("question_tests").insert({
+                                                    "question_id": qid,
+                                                    "input": base_input,
+                                                    "expected_output": expected_val,
+                                                    "visibility": visibility_val,
+                                                }).execute()
+                                                if getattr(resp_t3, "data", None):
+                                                    has_expected_output = True
+                                                    try:
+                                                        persisted_rows.append(resp_t3.data[0])
+                                                    except Exception:
+                                                        persisted_rows.append({"question_id": qid})
+                                                    return True
+                                            except Exception as _ter_exc:
+                                                if _debug:
+                                                    try:
+                                                        logger.debug("Tertiary insert failed (expected_output) for qid=%s: %s", qid, _ter_exc)
+                                                    except Exception:
+                                                        pass
+                                    return False
+
+                                success = False
+                                for t_attempt in range(2):
+                                    if await _insert_testcase():
+                                        persisted_count += 1
+                                        success = True
+                                        break
+                                if not success:
+                                    # Final failure inserting into question_tests; try legacy `tests` table as a fallback
+                                    try:
+                                        legacy_payload = {
+                                            "question_id": qid,
+                                            "input": base_input,
+                                            "expected": expected_val,
+                                            "visibility": visibility_val,
+                                        }
+                                        try:
+                                            resp_leg = await client.table("tests").insert(legacy_payload).execute()
+                                            if getattr(resp_leg, "data", None):
                                                 try:
-                                                    resp_leg = await client.table("tests").insert(legacy_payload).execute()
-                                                    if getattr(resp_leg, "data", None):
-                                                        try:
-                                                            persisted_rows.append(resp_leg.data[0])
-                                                        except Exception:
-                                                            persisted_rows.append({"question_id": qid})
-                                                        persisted_count += 1
-                                                        try:
-                                                            logger.debug("Inserted testcase into legacy tests table for qid=%s", qid)
-                                                        except Exception:
-                                                            pass
-                                                except Exception as _leg_exc:
-                                                    if _debug:
-                                                        try:
-                                                            logger.exception("Failed to insert testcase into legacy tests table for qid=%s: %s", qid, _leg_exc)
-                                                        except Exception:
-                                                            pass
-                                            except Exception:
-                                                pass
-                                            break
+                                                    persisted_rows.append(resp_leg.data[0])
+                                                except Exception:
+                                                    persisted_rows.append({"question_id": qid})
+                                                persisted_count += 1
+                                                if _debug:
+                                                    try:
+                                                        logger.debug("Inserted testcase into legacy tests table for qid=%s", qid)
+                                                    except Exception:
+                                                        pass
+                                        except Exception as _leg_exc:
+                                            if _debug:
+                                                try:
+                                                    logger.debug("Failed legacy tests insert for qid=%s: %s", qid, _leg_exc)
+                                                except Exception:
+                                                    pass
+                                    except Exception:
+                                        pass
                         # attach diag info for caller: actual persisted count and rows
                         try:
                             qrow.setdefault("_persisted_tests", persisted_count)
