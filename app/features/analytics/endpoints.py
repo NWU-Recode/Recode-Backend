@@ -89,14 +89,11 @@ def global_leaderboard(db: Session = Depends(get_db)):
         "- Challenge name\n"
         "- Highest badge earned (bronze → diamond, or none)\n"
         "- Total time spent (sum of execution times)\n"
-        "- Total number of submissions\n\n"
         "Required: module_code\n"
-        "Optional: challenge_id (filter to specific challenge)"
     )
 )
 def challenge_progress(
     module_code: str = Query(..., description="Module code (e.g., CMPG323)"),
-    challenge_id: Optional[str] = Query(None, description="Optional: Filter by specific challenge UUID"),
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -106,5 +103,4 @@ def challenge_progress(
         current_user.id,
         current_user.role,
         module_code,
-        challenge_id
     )

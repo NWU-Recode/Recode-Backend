@@ -109,7 +109,7 @@ class ChallengeProgressResponse(BaseModel):
     challenge_name: str
     highest_badge: str  # bronze, silver, gold, ruby, emerald, diamond, or none
     total_time_ms: int  # Sum of (finished_at - created_at) for all submissions
-    total_submissions: int  # Number of code submissions
+
     
     @computed_field
     @property
