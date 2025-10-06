@@ -152,7 +152,7 @@ async def submit_then_poll(submission: CodeSubmissionCreate):
     try:
         response = await judge0_service.submit_code(submission)
         try:
-            result_row = await _poll_supabase_for_token(response.token)
+            result_row = await _poll_supabase_for_token(response.token, max_retries=5, interval_s=0.5)
             return {"token": response.token, "result": result_row}
         except Exception as poll_exc:
             # If Supabase/Postgres polling fails, fall back to synchronously fetching Judge0 result
@@ -160,7 +160,7 @@ async def submit_then_poll(submission: CodeSubmissionCreate):
             logger.warning("Supabase polling failed (%s). Falling back to direct Judge0 polling.", poll_exc)
             token = response.token
             start = time.time()
-            timeout_seconds = 60
+            timeout_seconds = 30
             poll_interval = 1.0
             while time.time() - start < timeout_seconds:
                 try:
@@ -234,6 +234,8 @@ async def execute_stdout_only(submission: QuickCodeSubmission):
     try:
         result = await judge0_service.execute_quick_code(submission)  # type: ignore
         return {"stdout": result.stdout}
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Execution timeout")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to execute: {exc}") from exc
 

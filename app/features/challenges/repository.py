@@ -1,14 +1,216 @@
 from __future__ import annotations
-from typing import Optional, Dict, Any, List
-from datetime import datetime, timedelta, timezone
+
+import logging
 import re
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
+
 from app.DB.supabase import get_supabase
 from app.common import cache
+from app.features.challenges.tier_utils import BASE_TIER, normalise_challenge_tier
+
+try:  # pragma: no cover - optional dependency guard
+    from postgrest.exceptions import APIError  # type: ignore
+except Exception:  # pragma: no cover - supabase client not available
+    APIError = Exception  # type: ignore
+
+logger = logging.getLogger("challenges.repository")
+
+_LOCAL_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
+_LOCAL_ATTEMPT_IDS: Dict[str, str] = {}
+_LOCAL_FALLBACK_NOTICE_EMITTED = False
+
+
+def _normalise_student_id(value: Any) -> str:
+    try:
+        return str(int(value))
+    except Exception:
+        return str(value)
+
+
+def _attempt_key(challenge_id: str, student_number: Any) -> str:
+    return f"{challenge_id}:{_normalise_student_id(student_number)}"
+
+
+def _store_local_attempt(attempt: Dict[str, Any]) -> Dict[str, Any]:
+    challenge_id = str(attempt.get("challenge_id"))
+    student_number = _normalise_student_id(attempt.get("user_id"))
+    key = _attempt_key(challenge_id, student_number)
+    _LOCAL_ATTEMPTS[key] = attempt
+    if attempt.get("id") is not None:
+        _LOCAL_ATTEMPT_IDS[str(attempt["id"])] = key
+    return attempt
+
+
+def _get_local_attempt(challenge_id: str, student_number: Any) -> Optional[Dict[str, Any]]:
+    return _LOCAL_ATTEMPTS.get(_attempt_key(challenge_id, student_number))
+
+
+def _get_local_attempt_by_id(attempt_id: str) -> Optional[Dict[str, Any]]:
+    key = _LOCAL_ATTEMPT_IDS.get(str(attempt_id))
+    if key is None:
+        return None
+    return _LOCAL_ATTEMPTS.get(key)
+
+
+def _emit_local_notice() -> None:
+    global _LOCAL_FALLBACK_NOTICE_EMITTED
+    if not _LOCAL_FALLBACK_NOTICE_EMITTED:
+        logger.warning(
+            "challenge_attempts table unavailable; using in-memory attempts fallback. Progress will not persist across restarts."
+        )
+        _LOCAL_FALLBACK_NOTICE_EMITTED = True
+
+
 
 class ChallengeRepository:
     """Repository helpers for challenges.
 
     Note: Supabase stores student numbers in the user_id column for challenge attempts."""
+    def _is_attempts_table_missing(self, exc: Exception) -> bool:
+        message = getattr(exc, "message", None) or (exc.args[0] if getattr(exc, "args", None) else None)
+        if not message:
+            message = str(exc)
+        text = str(message).lower()
+        if "challenge_attempts" not in text:
+            return False
+        return any(token in text for token in ("schema cache", "does not exist", "not found", "relation"))
+
+    def _normalise_error_message(self, exc: Exception) -> str:
+        parts: List[str] = []
+        for attr in ("message", "detail", "details", "hint", "code"):
+            value = getattr(exc, attr, None)
+            if value:
+                parts.append(str(value))
+        if isinstance(exc, APIError):
+            response = getattr(exc, "response", None)
+            try:
+                if response is not None:
+                    payload = response.json()
+                    if isinstance(payload, dict):
+                        parts.extend(str(item) for item in payload.values() if item)
+            except Exception:
+                pass
+        if getattr(exc, "args", None):
+            parts.extend(str(arg) for arg in exc.args if arg)
+        text = " ".join(parts).strip()
+        if not text:
+            text = str(exc)
+        return text.lower()
+
+    def _is_unique_attempt_violation(self, exc: Exception) -> bool:
+        text = self._normalise_error_message(exc)
+        if not text:
+            return False
+        conflict_tokens = (
+            "uq_challenge_attempts_challenge_user",
+            "duplicate key",
+            "unique constraint",
+            "23505",
+        )
+        return any(token in text for token in conflict_tokens)
+
+    async def _fetch_existing_attempt(
+        self,
+        challenge_id: str,
+        student_number: int,
+        *,
+        client: Any | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        local_attempt = _get_local_attempt(challenge_id, student_number)
+        if local_attempt:
+            return local_attempt
+
+        try:
+            if client is None:
+                client = await get_supabase()
+            resp = await (
+                client.table("challenge_attempts")
+                .select("*")
+                .eq("challenge_id", challenge_id)
+                .eq("user_id", student_number)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                return local_attempt
+            raise
+
+        data = getattr(resp, "data", None) or []
+        if data:
+            return data[0]
+        return None
+
+    async def _ensure_local_attempt_defaults(
+        self,
+        attempt: Dict[str, Any],
+        challenge_id: str,
+        student_number: int,
+        *,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        now = now or datetime.now(timezone.utc)
+        attempt["challenge_id"] = challenge_id
+        attempt["user_id"] = attempt.get("user_id") if attempt.get("user_id") is not None else student_number
+        status = str(attempt.get("status") or "").lower()
+        if status not in {"open", "submitted", "expired"}:
+            attempt["status"] = "open"
+        deadline = attempt.get("deadline_at")
+        if not attempt.get("started_at"):
+            attempt["started_at"] = now.isoformat()
+        if not deadline:
+            attempt["deadline_at"] = (now + timedelta(days=7)).isoformat()
+        deadline = attempt.get("deadline_at")
+        if deadline:
+            try:
+                deadline_dt = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
+            except Exception:
+                deadline_dt = None
+            if deadline_dt and now > deadline_dt:
+                attempt["status"] = "expired"
+        if not attempt.get("snapshot_questions"):
+            attempt["snapshot_questions"] = await self._build_snapshot(challenge_id)
+        attempt.setdefault("created_at", attempt.get("started_at", now.isoformat()))
+        attempt["updated_at"] = now.isoformat()
+        attempt["_local"] = True
+        _emit_local_notice()
+        return _store_local_attempt(attempt)
+
+    async def _create_local_attempt(
+        self, challenge_id: str, student_number: int, *, started_at: Optional[str] = None, deadline_at: Optional[str] = None
+    ) -> Dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        attempt = {
+            "id": f"local-{uuid4()}",
+            "challenge_id": challenge_id,
+            "user_id": student_number,
+            "status": "open",
+            "started_at": started_at or now.isoformat(),
+            "deadline_at": deadline_at or (now + timedelta(days=7)).isoformat(),
+            "snapshot_questions": [],
+        }
+        return await self._ensure_local_attempt_defaults(attempt, challenge_id, student_number, now=now)
+
+    def _update_local_attempt_attempts(
+        self, attempt: Dict[str, Any], increments: Dict[str, int], *, max_attempts: int | None = None
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        snapshot = attempt.get("snapshot_questions") or []
+        for item in snapshot:
+            qid = str(item.get("question_id")) if item.get("question_id") is not None else None
+            if qid is None or qid not in increments:
+                continue
+            attempts_used = int(item.get("attempts_used") or 0) + int(increments[qid])
+            if max_attempts is not None:
+                attempts_used = min(max_attempts, attempts_used)
+            item["attempts_used"] = attempts_used
+            item["last_attempted_at"] = now_iso
+        attempt["snapshot_questions"] = snapshot
+        attempt["updated_at"] = now_iso
+        _store_local_attempt(attempt)
+
     async def get_challenge(self, challenge_id: str) -> Optional[Dict[str, Any]]:
         key = f"challenge:id:{challenge_id}"
         cached = cache.get(key)
@@ -18,11 +220,10 @@ class ChallengeRepository:
         resp = await client.table("challenges").select("*").eq("id", challenge_id).single().execute()
         data = resp.data or None
         if data is not None:
-            # Normalize tier for API responses: treat 'plain'/'common' as 'base'
             try:
-                t = (data.get("tier") or "").strip().lower()
-                if t in {"plain", "common"}:
-                    data["tier"] = "base"
+                tier_value = normalise_challenge_tier(data.get("tier"))
+                if tier_value:
+                    data["tier"] = tier_value
             except Exception:
                 pass
             cache.set(key, data)
@@ -40,27 +241,62 @@ class ChallengeRepository:
         return data
 
     async def get_open_attempt(self, challenge_id: str, student_number: int) -> Optional[Dict[str, Any]]:
-        client = await get_supabase()
-        resp = await (
-            client.table("challenge_attempts")
-            .select("*")
-            .eq("challenge_id", challenge_id)
-            .eq("user_id", student_number)  # Supabase stores student_number in user_id column (integer)
-            .eq("status", "open")
-            .limit(1)
-            .execute()
-        )
+        try:
+            client = await get_supabase()
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                attempt = _get_local_attempt(challenge_id, student_number)
+                if attempt:
+                    return attempt
+                _emit_local_notice()
+                return None
+            raise
+        try:
+            resp = await (
+                client.table("challenge_attempts")
+                .select("*")
+                .eq("challenge_id", challenge_id)
+                .eq("user_id", student_number)  # Supabase stores student_number in user_id column (integer)
+                .eq("status", "open")
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                attempt = _get_local_attempt(challenge_id, student_number)
+                if attempt:
+                    return attempt
+                _emit_local_notice()
+                return None
+            raise
         if resp.data:
             return resp.data[0]
+        fallback = _get_local_attempt(challenge_id, student_number)
+        if fallback:
+            return fallback
         return None
 
     async def start_attempt(self, challenge_id: str, student_number: int) -> Dict[str, Any]:
-        client = await get_supabase()
-        resp = await client.table("challenge_attempts").insert({
-            "challenge_id": challenge_id,
-            "user_id": student_number,  # Supabase stores student_number in user_id column (integer)
-            "status": "open",
-        }).execute()
+        try:
+            client = await get_supabase()
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                return await self._create_local_attempt(challenge_id, student_number)
+            raise
+        try:
+            resp = await client.table("challenge_attempts").insert({
+                "challenge_id": challenge_id,
+                "user_id": student_number,  # Supabase stores student_number in user_id column (integer)
+                "status": "open",
+            }).execute()
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                return await self._create_local_attempt(challenge_id, student_number)
+            if self._is_unique_attempt_violation(exc):
+                existing = await self._fetch_existing_attempt(challenge_id, student_number, client=client)
+                if existing:
+                    return existing
+            raise
         if not resp.data:
             raise RuntimeError("Failed to start challenge attempt")
         return resp.data[0]
@@ -72,47 +308,103 @@ class ChallengeRepository:
         """
         existing = await self.get_open_attempt(challenge_id, student_number)
         now = datetime.now(timezone.utc)
-        client = await get_supabase()
+
+        if existing and existing.get("_local"):
+            return await self._ensure_local_attempt_defaults(existing, challenge_id, student_number, now=now)
+
+        client = None
+
         if existing:
-            started_at = existing.get("started_at")
             deadline_at = existing.get("deadline_at")
-            # Expire if deadline passed
             try:
                 if deadline_at:
-                    ddt = datetime.fromisoformat(str(deadline_at).replace("Z", "+00:00"))
-                    if now > ddt:
-                        await client.table("challenge_attempts").update({"status": "expired"}).eq("id", existing["id"]).execute()
-                        existing["status"] = "expired"
-                        return existing
+                    deadline_dt = datetime.fromisoformat(str(deadline_at).replace("Z", "+00:00"))
+                else:
+                    deadline_dt = None
             except Exception:
-                pass
+                deadline_dt = None
+            if deadline_dt and now > deadline_dt:
+                try:
+                    if client is None:
+                        client = await get_supabase()
+                    await client.table("challenge_attempts").update({"status": "expired"}).eq("id", existing["id"]).execute()
+                except Exception as exc:
+                    if self._is_attempts_table_missing(exc):
+                        existing["status"] = "expired"
+                        return await self._ensure_local_attempt_defaults(existing, challenge_id, student_number, now=now)
+                    raise
+                existing["status"] = "expired"
+                return existing
+
+        reopened_existing = False
+
         if not existing:
-            # Create base attempt with started/deadline
             started_at = now.isoformat()
             deadline_at = (now + timedelta(days=7)).isoformat()
-            resp = await client.table("challenge_attempts").insert({
-                "challenge_id": challenge_id,
-                "user_id": student_number,  # Supabase stores student_number in user_id column (integer)
-                "status": "open",
-                "started_at": started_at,
-                "deadline_at": deadline_at,
-            }).execute()
-            if not resp.data:
-                raise RuntimeError("Failed to start challenge attempt")
-            existing = resp.data[0]
-        # Ensure snapshot exists & set started/deadline if missing legacy rows
+            try:
+                if client is None:
+                    client = await get_supabase()
+                resp = await client.table("challenge_attempts").insert({
+                    "challenge_id": challenge_id,
+                    "user_id": student_number,  # Supabase stores student_number in user_id column (integer)
+                    "status": "open",
+                    "started_at": started_at,
+                    "deadline_at": deadline_at,
+                }).execute()
+            except Exception as exc:
+                if self._is_attempts_table_missing(exc):
+                    return await self._create_local_attempt(
+                        challenge_id, student_number, started_at=started_at, deadline_at=deadline_at
+                    )
+                if self._is_unique_attempt_violation(exc):
+                    existing = await self._fetch_existing_attempt(
+                        challenge_id,
+                        student_number,
+                        client=client,
+                    )
+                    if existing is None:
+                        raise
+                    reopened_existing = True
+                else:
+                    raise
+            else:
+                if not resp.data:
+                    raise RuntimeError("Failed to start challenge attempt")
+                existing = resp.data[0]
+
+        if existing is None:
+            raise RuntimeError("Failed to create or fetch challenge attempt")
+
+        if client is None:
+            client = await get_supabase()
+
         patch: Dict[str, Any] = {}
-        if not existing.get("snapshot_questions"):
-            snapshot = await self._build_snapshot(challenge_id)
-            patch["snapshot_questions"] = snapshot
-        if not existing.get("started_at"):
+        if reopened_existing:
             patch["started_at"] = now.isoformat()
-        if not existing.get("deadline_at"):
             patch["deadline_at"] = (now + timedelta(days=7)).isoformat()
+            patch["submitted_at"] = None
+            patch["snapshot_questions"] = await self._build_snapshot(challenge_id)
+        else:
+            if not existing.get("snapshot_questions"):
+                patch["snapshot_questions"] = await self._build_snapshot(challenge_id)
+            if not existing.get("started_at"):
+                patch["started_at"] = now.isoformat()
+            if not existing.get("deadline_at"):
+                patch["deadline_at"] = (now + timedelta(days=7)).isoformat()
+        if reopened_existing and existing.get("status") != "open":
+            patch["status"] = "open"
         if patch:
-            upd = await client.table("challenge_attempts").update(patch).eq("id", existing["id"]).execute()
+            try:
+                upd = await client.table("challenge_attempts").update(patch).eq("id", existing["id"]).execute()
+            except Exception as exc:
+                if self._is_attempts_table_missing(exc):
+                    existing.update(patch)
+                    return await self._ensure_local_attempt_defaults(existing, challenge_id, student_number, now=now)
+                raise
             if upd.data:
                 existing = upd.data[0]
+            else:
+                existing.update(patch)
         return existing
 
     async def list_challenges(self) -> List[Dict[str, Any]]:
@@ -135,7 +427,7 @@ class ChallengeRepository:
                 if not isinstance(item, dict):
                     continue
                 t = (item.get("tier") or "").strip().lower()
-                if t in {"plain", "common"}:
+                if normalise_challenge_tier(t) == BASE_TIER:
                     item["tier"] = "base"
         except Exception:
             pass
@@ -493,7 +785,7 @@ class ChallengeRepository:
         """Fetch questions and return a frozen snapshot list.
 
         MVP policy: require at least 5 questions, snapshot the first 5
-        ordered by id to align with weekly Common challenge design.
+        ordered by id to align with weekly base challenge design.
         """
         questions = await self.get_challenge_questions(challenge_id)
         challenge = await self.get_challenge(challenge_id)
@@ -527,8 +819,32 @@ class ChallengeRepository:
     ) -> None:
         if not increments:
             return
-        client = await get_supabase()
-        resp = await client.table("challenge_attempts").select("id, snapshot_questions").eq("id", attempt_id).single().execute()
+
+        local_attempt = _get_local_attempt_by_id(attempt_id)
+        if local_attempt:
+            self._update_local_attempt_attempts(local_attempt, increments, max_attempts=max_attempts)
+            return
+
+        try:
+            client = await get_supabase()
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                return
+            raise
+
+        try:
+            resp = await (
+                client.table("challenge_attempts")
+                .select("id, snapshot_questions")
+                .eq("id", attempt_id)
+                .single()
+                .execute()
+            )
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                return
+            raise
+
         data = getattr(resp, "data", None) or {}
         snapshot = data.get("snapshot_questions") or []
         updated = False
@@ -544,7 +860,13 @@ class ChallengeRepository:
             item["last_attempted_at"] = now_iso
             updated = True
         if updated:
-            await client.table("challenge_attempts").update({"snapshot_questions": snapshot}).eq("id", attempt_id).execute()
+            try:
+                await client.table("challenge_attempts").update({"snapshot_questions": snapshot}).eq("id", attempt_id).execute()
+            except Exception as exc:
+                if self._is_attempts_table_missing(exc):
+                    return
+                raise
+
 
     async def get_snapshot(self, attempt: Dict[str, Any]) -> List[Dict[str, Any]]:
         snap = attempt.get("snapshot_questions") or []
@@ -562,7 +884,35 @@ class ChallengeRepository:
         elo_delta: Optional[int] = None,
         efficiency_bonus: Optional[int] = None,
     ) -> Dict[str, Any]:
-        client = await get_supabase()
+        local_attempt = _get_local_attempt_by_id(attempt_id)
+        if local_attempt:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            local_attempt.update({
+                "score": score,
+                "correct_count": correct_count,
+                "status": "submitted",
+                "submitted_at": now_iso,
+            })
+            if duration_seconds is not None:
+                local_attempt["duration_seconds"] = duration_seconds
+            if tests_total is not None:
+                local_attempt["tests_total"] = tests_total
+            if tests_passed is not None:
+                local_attempt["tests_passed"] = tests_passed
+            if elo_delta is not None:
+                local_attempt["elo_delta"] = elo_delta
+            if efficiency_bonus is not None:
+                local_attempt["efficiency_bonus"] = efficiency_bonus
+            _store_local_attempt(local_attempt)
+            return local_attempt
+
+        try:
+            client = await get_supabase()
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                raise RuntimeError("challenge_attempts_unavailable") from exc
+            raise
+
         payload: Dict[str, Any] = {
             "score": score,
             "correct_count": correct_count,
@@ -586,7 +936,9 @@ class ChallengeRepository:
                 .eq("id", attempt_id)
                 .execute()
             )
-        except Exception:
+        except Exception as exc:
+            if self._is_attempts_table_missing(exc):
+                raise RuntimeError("challenge_attempts_unavailable") from exc
             minimal_payload = {
                 "score": score,
                 "correct_count": correct_count,
@@ -602,9 +954,10 @@ class ChallengeRepository:
         if not getattr(resp, "data", None):
             raise RuntimeError("Failed to finalize challenge attempt")
         return resp.data[0]
-    # --- Milestone helpers (plain challenge progress) ---
-    async def count_plain_completed(self, student_number: int) -> int:
-        """Return number of submitted plain (weekly) challenges for user."""
+
+    # --- Milestone helpers (base challenge progress) ---
+    async def count_base_completed(self, student_number: int) -> int:
+        """Return number of submitted base (weekly) challenges for user."""
         client = await get_supabase()
         # tier stored as enum -> cast to text compare
         resp = await (
@@ -617,22 +970,22 @@ class ChallengeRepository:
         data = resp.data or []
         count = 0
         for row in data:
-            ch = row.get("challenge")
-            # PostgREST join returns object or list
+            challenge_meta = row.get("challenge")
             tier = None
-            if isinstance(ch, dict):
-                tier = ch.get("tier")
-            elif isinstance(ch, list) and ch:
-                tier = ch[0].get("tier")
-            if tier == "plain":
+            if isinstance(challenge_meta, dict):
+                tier = challenge_meta.get("tier")
+            elif isinstance(challenge_meta, list) and challenge_meta:
+                tier = challenge_meta[0].get("tier")
+            if normalise_challenge_tier(tier) == BASE_TIER:
                 count += 1
         return count
 
-    async def total_plain_planned(self) -> int:
-        """Total number of planned plain challenges (configured)."""
+    async def total_base_planned(self) -> int:
+        """Total number of planned base challenges (configured)."""
         client = await get_supabase()
-        resp = await client.table("challenges").select("id").eq("tier", "plain").execute()
-        return len(resp.data or [])
+        resp = await client.table("challenges").select("id, tier").execute()
+        rows = resp.data or []
+        return sum(1 for row in rows if normalise_challenge_tier(row.get("tier")) == BASE_TIER)
 
     async def publish_for_week(self, week_number: int, *, module_code: Optional[str] = None, semester_id: Optional[str] = None) -> Dict[str, int]:
         """Publish challenges for the given week.
@@ -640,7 +993,7 @@ class ChallengeRepository:
         New behaviour:
         - Mark published challenges as 'active' in the status column when published.
         - Set `release_date` to publication timestamp and `due_date` to one week after publication.
-        - Enforce only one base (plain/common) challenge may be active for a week; special tiers
+        - Enforce only one base challenge may be active for a week; special tiers
           (ruby/emerald/diamond) may coexist with a single base challenge.
         """
         client = await get_supabase()
@@ -677,7 +1030,7 @@ class ChallengeRepository:
                 rows = []
 
         # Partition into base vs special tiers
-        base_rows = [r for r in rows if (r.get("tier") or r.get("kind") or "").strip().lower() in {"plain", "common", "base"}]
+        base_rows = [r for r in rows if normalise_challenge_tier(r.get("tier") or r.get("kind")) == BASE_TIER]
         special_rows = [r for r in rows if r not in base_rows]
 
         # Enforce at most one active base per week: pick the earliest created id if multiple
@@ -795,7 +1148,7 @@ class ChallengeRepository:
                 if not isinstance(r, dict):
                     continue
                 t = (r.get("tier") or r.get("kind") or "").strip().lower()
-                if t in {"plain", "common"}:
+                if normalise_challenge_tier(t) == BASE_TIER:
                     r["tier"] = "base"
         except Exception:
             pass
@@ -804,7 +1157,7 @@ class ChallengeRepository:
     async def fetch_published_bundles_for_week(self, week_number: int) -> List[Dict[str, Any]]:
         """Return list of published challenge bundles for the given week.
 
-        Each bundle contains the challenge row and its questions. For tier 'plain' (base)
+        Each bundle contains the challenge row and its questions. For the base tier
         return up to 5 questions (snapshot design). For other tiers return the single
         canonical question(s) (generator produces 1 question for ruby/emerald in current design).
         """
@@ -824,18 +1177,18 @@ class ChallengeRepository:
             cid = ch.get("id")
             if not cid:
                 continue
-            # fetch questions: for plain return up to 5 (snapshot); for others return questions associated
+            # fetch questions: for the base tier return up to 5 (snapshot); for others return questions associated
             try:
                 q_resp = await client.table("questions").select("*").eq("challenge_id", cid).execute()
                 questions = q_resp.data or []
             except Exception:
                 questions = []
-            tier = ch.get("tier") or ch.get("kind") or "plain"
-            if tier == "plain":
+            tier = normalise_challenge_tier(ch.get("tier") or ch.get("kind")) or BASE_TIER
+            if tier == BASE_TIER:
                 # ensure deterministic ordering and limit to 5
                 questions = sorted(questions, key=lambda q: str(q.get("id")))[:5]
             else:
-                # for non-plain, prefer the first question if multiple
+                # for non-base tiers, prefer the first question if multiple
                 questions = questions[:1]
             bundles.append({"challenge": ch, "questions": questions})
         # Normalize tiers in the returned challenge bundles
@@ -843,9 +1196,9 @@ class ChallengeRepository:
             for b in bundles:
                 ch = b.get("challenge") or {}
                 if isinstance(ch, dict):
-                    t = (ch.get("tier") or ch.get("kind") or "").strip().lower()
-                    if t in {"plain", "common"}:
-                        ch["tier"] = "base"
+                    tier_value = normalise_challenge_tier(ch.get("tier") or ch.get("kind"))
+                    if tier_value:
+                        ch["tier"] = tier_value
         except Exception:
             pass
         return bundles
@@ -903,8 +1256,8 @@ class ChallengeRepository:
             except Exception:
                 questions = []
 
-            tier_value = (ch.get("tier") or ch.get("kind") or "").strip().lower()
-            if tier_value in {"plain", "common", "base", "weekly", ""}:
+            tier_value = normalise_challenge_tier(ch.get("tier") or ch.get("kind")) or (ch.get("tier") or ch.get("kind") or "").strip().lower()
+            if tier_value == BASE_TIER:
                 questions = sorted(questions, key=lambda q: str(q.get("id")))[:5]
             else:
                 questions = questions[:1]
@@ -925,8 +1278,10 @@ class ChallengeRepository:
                 q["tests"] = q_tests
 
             try:
-                if isinstance(ch, dict) and tier_value in {"plain", "common", "weekly", ""}:
-                    ch["tier"] = "base"
+                if isinstance(ch, dict):
+                    canonical_tier = normalise_challenge_tier(ch.get("tier") or ch.get("kind"))
+                    if canonical_tier:
+                        ch["tier"] = canonical_tier
             except Exception:
                 pass
 

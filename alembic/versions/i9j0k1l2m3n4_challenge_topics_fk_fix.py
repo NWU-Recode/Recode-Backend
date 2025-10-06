@@ -35,7 +35,9 @@ def upgrade() -> None:
         """
         DO $$
         BEGIN
-          IF NOT EXISTS (
+          IF to_regclass('public.topics') IS NULL THEN
+            RAISE NOTICE 'Skipping FK creation: public.topics table missing';
+          ELSIF NOT EXISTS (
             SELECT 1 FROM pg_constraint WHERE conname = 'challenge_topics_topic_id_fkey'
           ) THEN
             ALTER TABLE public.challenge_topics

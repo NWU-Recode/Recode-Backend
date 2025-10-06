@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from textwrap import dedent
+
+from app.features.challenges.tier_utils import normalise_challenge_tier
 from typing import Any, Dict, List
 
 
@@ -560,7 +562,8 @@ def _format_pack(raw: Dict[str, Any], week: int, topic: str) -> Dict[str, Any]:
 
 
 def get_fallback_payload(kind: str, week: int, topic_title: str) -> Dict[str, Any]:
-    key = "base" if kind in {"base", "common"} else kind
+    canonical = normalise_challenge_tier(kind)
+    key = canonical if canonical else kind
     if key == "base":
         source = BASE_PACKS
     elif key == "ruby":

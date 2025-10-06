@@ -11,7 +11,7 @@ from app.features.topic_detections.slide_extraction.pptx_extraction import extra
 from io import BytesIO
 from app.features.topic_detections.topics.topic_service import TopicService, topic_service
 from app.features.topic_detections.topics.repository import TopicRepository
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from app.adapters.nlp_spacy import extract_primary_topic
 from app.features.topic_detections.slide_extraction.repository_supabase import slide_extraction_supabase_repository
 
@@ -94,6 +94,11 @@ async def upload_slide_bytes(
     signed_url_ttl_sec: int = 900,
     create_topic: bool = True,
     semester_end_date: Optional[date] = None,
+    *,
+    generate_challenge: bool = False,
+    lecturer_id: Optional[int] = None,
+    force_regenerate: bool = False,
+    challenge_tier: str = "base",
 ) -> Dict[str, Any]:
     key = build_slide_object_key(original_filename, topic_name, given_at_dt, semester_start_date, semester_end_date)
     content_type = mimetypes.guess_type(original_filename)[0] or "application/octet-stream"
@@ -353,7 +358,7 @@ async def upload_slide_bytes(
             "created_at": now_iso if 'now_iso' in locals() else None,
         }
 
-    return {
+    result: Dict[str, Any] = {
         "season": key.season,
         "week": key.week,
         "topic_slug": key.topic_slug,
@@ -363,3 +368,68 @@ async def upload_slide_bytes(
         "extraction": extraction_data,
         "topic": topic_row,
     }
+
+    # Optional immediate challenge generation pipeline
+    if generate_challenge:
+        try:
+            from app.features.challenges.challenge_pack_generator import generate_and_save_tier
+            # Safely derive week number
+            week_number = key.week
+            # If not forcing regeneration, check if a base challenge already exists for this week/module
+            client = await get_supabase()
+            existing_challenge = None
+            if not force_regenerate:
+                try:
+                    existing_resp = await (
+                        client.table("challenges")
+                        .select("id, week_number, module_code")
+                        .eq("week_number", week_number)
+                        .eq("module_code", module_code)
+                        .limit(1)
+                        .execute()
+                    )
+                    if getattr(existing_resp, "data", None):
+                        existing_challenge = existing_resp.data[0]
+                except Exception:
+                    existing_challenge = None
+            generated_payload = None
+            if existing_challenge and not force_regenerate:
+                result["challenge_generation"] = {
+                    "skipped": True,
+                    "reason": "challenge_exists",
+                    "challenge_id": existing_challenge.get("id"),
+                }
+            else:
+                if lecturer_id is None:
+                    result["challenge_generation"] = {"error": "lecturer_id_required_for_generation"}
+                else:
+                    generated_payload = await generate_and_save_tier(
+                        challenge_tier,
+                        week_number,
+                        slide_stack_id=extraction_id,
+                        module_code=module_code,
+                        lecturer_id=lecturer_id,
+                    )
+                    # Summarise for response (avoid large test data echo)
+                    try:
+                        challenge_id = (generated_payload.get("challenge") or {}).get("id")
+                        q_summaries = []
+                        for q in generated_payload.get("questions") or []:
+                            q_summaries.append({
+                                "id": q.get("id"),
+                                "tests": q.get("_persisted_tests"),
+                                "error": q.get("_error"),
+                            })
+                        result["challenge_generation"] = {
+                            "skipped": False,
+                            "challenge_id": challenge_id,
+                            "tier": generated_payload.get("tier"),
+                            "questions": q_summaries,
+                        }
+                    except Exception:
+                        result["challenge_generation"] = {"error": "summarise_failed"}
+        except Exception as gen_exc:
+            logging.getLogger("slides").exception("Challenge generation failed during upload: %s", gen_exc)
+            result.setdefault("challenge_generation", {"error": str(gen_exc)})
+
+    return result

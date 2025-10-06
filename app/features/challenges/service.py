@@ -1,27 +1,27 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Optional
 
 from .repository import challenge_repository
 from .schemas import ChallengeSubmitRequest, ChallengeSubmitResponse
+from app.features.challenges.tier_utils import BASE_TIER, normalise_challenge_tier
 from app.features.submissions.service import submissions_service, MAX_SCORING_ATTEMPTS
 from app.features.achievements.service import achievements_service
 from app.features.achievements.schemas import CheckAchievementsRequest
+from app.features.submissions.schemas import BatchSubmissionEntry
 
 
 class ChallengeService:
     def _time_limit_for_tier(self, tier: str | None) -> int | None:
         limits = {
-            "base": 3600,
-            "plain": 3600,
-            "common": 3600,
+            BASE_TIER: 3600,
             "ruby": 5400,
             "emerald": 7200,
             "diamond": 10800,
         }
-        key = (tier or "base").lower()
-        return limits.get(key, limits.get("base"))
+        key = normalise_challenge_tier(tier) or (tier or BASE_TIER).lower()
+        return limits.get(key, limits.get(BASE_TIER))
 
     def _parse_ts(self, value) -> datetime | None:
         if not value:
@@ -43,7 +43,7 @@ class ChallengeService:
         challenge = await challenge_repository.get_challenge(str(req.challenge_id))
         if not challenge:
             raise ValueError("challenge_not_found")
-        tier = str(challenge.get("tier") or "base").lower()
+        tier = normalise_challenge_tier(challenge.get("tier")) or BASE_TIER
 
         try:
             student_number = int(user_id)
@@ -67,11 +67,11 @@ class ChallengeService:
         }
         attempt_counts: Dict[str, int] = {qid: int(data.get("attempts_used") or 0) for qid, data in snapshot_map.items()}
 
-        submissions_map: Dict[str, str] = {}
+        submissions_map: Dict[str, BatchSubmissionEntry] = {}
         for item in req.items or []:
             qid = str(item.question_id)
             if qid in snapshot_map:
-                submissions_map[qid] = item.source_code
+                submissions_map[qid] = BatchSubmissionEntry(source_code=item.source_code, language_id=item.language_id)
 
         started_dt = self._parse_ts(attempt.get("started_at"))
         finished_dt = datetime.now(timezone.utc)
@@ -90,6 +90,9 @@ class ChallengeService:
             attempt_counts=attempt_counts,
             max_attempts=MAX_SCORING_ATTEMPTS,
             late_multiplier=late_multiplier,
+            started_at=started_dt,
+            time_limit_seconds=time_limit_seconds,
+            duration_seconds=duration_seconds,
         )
 
         grading = grading.model_copy(
@@ -135,14 +138,21 @@ class ChallengeService:
         }
         performance_payload = {k: v for k, v in performance_payload.items() if v is not None}
 
-        await achievements_service.check_achievements(
+        achievements_result = await achievements_service.check_achievements(
             user_id,
             CheckAchievementsRequest(
                 submission_id=submission_id,
-                elo_delta_override=int(grading.elo_delta),
                 badge_tiers=grading.badge_tiers_awarded,
                 performance=performance_payload,
             ),
+        )
+
+        elo_delta_from_achievements: Optional[int] = None
+        if achievements_result.summary and achievements_result.summary.elo:
+            elo_delta_from_achievements = int(achievements_result.summary.elo.delta)
+
+        effective_elo_delta = (
+            elo_delta_from_achievements if elo_delta_from_achievements is not None else int(grading.elo_delta)
         )
 
         return ChallengeSubmitResponse(
@@ -151,7 +161,7 @@ class ChallengeService:
             status=str(updated_attempt.get("status", "submitted")),
             gpa_score=int(grading.gpa_score),
             gpa_max_score=int(grading.gpa_max_score),
-            elo_delta=int(grading.elo_delta),
+            elo_delta=int(effective_elo_delta),
             base_elo_total=int(grading.base_elo_total),
             efficiency_bonus_total=int(grading.efficiency_bonus_total),
             tests_total=int(grading.tests_total),
@@ -165,6 +175,7 @@ class ChallengeService:
             failed_question_ids=[qid for qid in grading.failed_questions],
             missing_question_ids=[qid for qid in grading.missing_questions],
             question_results=grading.question_results,
+            achievements=achievements_result,
         )
 
 

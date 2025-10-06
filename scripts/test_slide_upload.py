@@ -1,7 +1,11 @@
 import asyncio
 import os
+import sys
 from datetime import datetime, date
-import os
+
+# Add the app directory to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from app.features.slides.upload import upload_slide_bytes
 
 async def test_slide_upload():
