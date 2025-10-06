@@ -22,13 +22,6 @@ class ProfileUpdate(BaseModel):
     avatar_url: Optional[str] = None
     phone: Optional[str] = None
     bio: Optional[str] = None
-    student_number: Optional[int] = None  # Make student_number optional
-
-    @validator('student_number')
-    def validate_student_number(cls, v):
-        if v is not None and not (10000000 <= v <= 99999999):
-            raise ValueError('Student number must be exactly 8 digits (e.g., 34250115)')
-        return v
 
     class Config:
         from_attributes = True

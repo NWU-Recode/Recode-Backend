@@ -3,8 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from uuid import UUID
 from fastapi import UploadFile, File
-from app.features.semester.schemas import SemesterCreate, SemesterResponse
+from app.features.semester.schemas import *
 from app.features.semester.service import SemesterService
+from app.demo.timekeeper import *
 from app.common.deps import get_current_user, CurrentUser
 from app.DB.session import get_db
 from sqlalchemy.orm import Session
@@ -13,12 +14,14 @@ from app.features.analytics.schema import AdminModuleOverviewOut,ModuleOverviewO
 from app.features.analytics.repository import get_module_overview
 from app.features.analytics.service import module_overview_service
 
+from app.features.semester.models import Semester
+
 from .schemas import (
     ModuleCreate, ModuleResponse,
     ChallengeCreate, ChallengeResponse,
     StudentResponse,
     EnrolRequest, BatchEnrolRequest, AssignLecturerRequest,
-    ModuleAdminCreate,LecturerProfileResponse , AssignLecturerRequestByBody
+    ModuleAdminCreate,LecturerProfileResponse , AssignLecturerRequestByBody, DemoResponse, DemoSkipRequest
 )
 from .schemas import RemoveLecturerRequest
 from .service import ModuleService,LecturerService 
@@ -388,43 +391,100 @@ def admin_create_semester(
 @router.post(
     "/demo/skip",
     summary="Skip demo weeks (Admin)",
-    description="Add a positive or negative number of weeks to the demo offset (e.g. {\"delta\": 1} advances one week).",
+    description="""
+    Adjust the current semester's start date by adding/subtracting weeks.
+    
+    Examples:
+    - `{"delta": 2}` - Skip forward 2 weeks
+    - `{"delta": -1}` - Go back 1 week
+    """,
+    response_model=DemoResponse
 )
-async def demo_skip_weeks(delta: int = 1, module_code: str | None = None, user: CurrentUser = Depends(require_admin())):
-    """Adjust the demo week offset by delta weeks. If module_code is provided, adjust only that module."""
-    if module_code:
-        new = add_demo_week_offset_for_module(module_code, delta)
-    else:
-        new = add_demo_week_offset(delta)
-    return {"offset_weeks": new}
+async def demo_skip_weeks(
+    request: DemoSkipRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_admin())
+):
+    #gets current semester
+    current_semester = db.query(Semester).filter(
+        Semester.is_current == True
+    ).first()
+    
+    if not current_semester:
+        raise HTTPException(
+            status_code=404,
+            detail="No current semester found"
+        )
+    
+    # Step 1: Update timekeeper (in-memory offset)
+    new_offset = add_demo_week_offset(request.delta)
+    
+    #add total offset to the database
+    #new start_date = original + total offset
+    new_start_date = current_semester.original_start_date + timedelta(weeks=new_offset)
+    
+    #validate doesn't exceed end date
+    if new_start_date > current_semester.end_date:
+        add_demo_week_offset(-request.delta)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot skip {request.delta} weeks: would exceed semester end date"
+        )
+    
+    #update start_date in database 
+    current_semester.start_date = new_start_date
+    db.commit()
+    db.refresh(current_semester)
+    
+    return {
+        "semester_id": str(current_semester.id),
+        "semester_name": f"{current_semester.term_name} {current_semester.year}",
+        "original_start_date": current_semester.original_start_date.isoformat(),
+        "current_start_date": current_semester.start_date.isoformat(),
+        "weeks_offset": new_offset,
+        "message": f"Successfully skipped {request.delta} weeks (total offset: {new_offset} weeks)"
+    }
 
-
-@router.post(
-    "/demo/set",
-    summary="Set demo week offset (Admin)",
-    description="Set the demo offset to an explicit number of weeks (0 = no skip).",
-)
-async def demo_set_weeks(offset: int = 0, module_code: str | None = None, user: CurrentUser = Depends(require_admin())):
-    if module_code:
-        new = set_demo_week_offset_for_module(module_code, offset)
-        return {"module_code": module_code, "offset_weeks": new}
-    new = set_demo_week_offset(offset)
-    return {"offset_weeks": new}
-
-
+#remove offset and return to original start date
 @router.delete(
     "/demo/clear",
     summary="Clear demo week offset (Admin)",
-    description="Reset demo offset to zero.",
+    description="Reset the current semester's start_date to its original value.",
+    response_model=DemoResponse
 )
-async def demo_clear_weeks(module_code: str | None = None, user: CurrentUser = Depends(require_admin())):
-    if module_code:
-        clear_demo_week_offset_for_module(module_code)
-        return {"module_code": module_code, "offset_weeks": get_demo_week_offset_for_module(module_code)}
+async def demo_clear_weeks(
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_admin())
+):
+    """
+    Reset semester to original start date.
+    Clears both timekeeper (in-memory) and database.
+    """
+    
+    #get current semester
+    current_semester = db.query(Semester).filter(
+        Semester.is_current == True
+    ).first()
+    
+    if not current_semester:
+        raise HTTPException(
+            status_code=404,
+            detail="No current semester found"
+        )
+    
+    #clear timekeeper (in-memory offset)
     clear_demo_week_offset()
-    return {"offset_weeks": get_demo_week_offset()}
-
-
-
-
-
+    
+    #reset database start_date to original
+    current_semester.start_date = current_semester.original_start_date
+    db.commit()
+    db.refresh(current_semester)
+    
+    return {
+        "semester_id": str(current_semester.id),
+        "semester_name": f"{current_semester.term_name} {current_semester.year}",
+        "original_start_date": current_semester.original_start_date.isoformat(),
+        "current_start_date": current_semester.start_date.isoformat(),
+        "weeks_offset": 0,
+        "message": "Demo offset cleared successfully"
+    }
