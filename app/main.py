@@ -30,6 +30,7 @@ from app.common.middleware import SessionManagementMiddleware
 from app.features.admin.endpoints import router as admin_router
 from app.features.students.endpoints import router as student_router
 from app.features.semester.endpoints import router as semester_router
+from routes.debug import router as debug_router
 
 
 app = FastAPI(title="Recode Backend")
@@ -138,6 +139,7 @@ app.include_router(analytics_router)
 app.include_router(admin_router)
 app.include_router(semester_router)
 app.include_router(student_router)
+app.include_router(debug_router, prefix="/debug", tags=["debug"])
 
 # Static files
 static_dir = os.path.join(os.path.dirname(__file__), "static")

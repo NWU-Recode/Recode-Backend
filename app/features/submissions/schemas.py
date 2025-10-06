@@ -58,7 +58,7 @@ class TestRunResultSchema(BaseModel):
 	compare_mode_applied: Optional[str] = None
 	normalisations_applied: Optional[List[str]] = None
 	why_failed: Optional[str] = None
-	comparison_attempts: Optional[List[Dict[str, Any]]] = None
+	# comparison_attempts removed - internal debugging info not needed in API response
 
 
 class QuestionEvaluationRequest(BaseModel):
