@@ -47,7 +47,7 @@ def get_student_badges(
             SELECT 
                 b.badge_type::text as badge_type,
                 COUNT(ub.id) as badge_count,
-                MAX(ub.awarded_at)::text as latest_award
+                MAX(ub.date_earned)::text as latest_award
             FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
             JOIN questions q ON ub.question_id = q.id
@@ -66,7 +66,7 @@ def get_student_badges(
             SELECT 
                 b.badge_type::text as badge_type,
                 COUNT(ub.id) as badge_count,
-                MAX(ub.awarded_at)::text as latest_award
+                MAX(ub.date_earned)::text as latest_award
             FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
             JOIN questions q ON ub.question_id = q.id
@@ -117,7 +117,7 @@ def get_badge_summary(
             SELECT 
                 b.badge_type::text as badge_type,
                 COUNT(ub.id) as badge_count,
-                MAX(ub.awarded_at)::text as latest_award
+                MAX(ub.date_earned)::text as latest_award
             FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
             JOIN questions q ON ub.question_id = q.id
@@ -134,7 +134,7 @@ def get_badge_summary(
             SELECT 
                 b.badge_type::text as badge_type,
                 COUNT(ub.id) as badge_count,
-                MAX(ub.awarded_at)::text as latest_award
+                MAX(ub.date_earned)::text as latest_award
             FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
             JOIN questions q ON ub.question_id = q.id
