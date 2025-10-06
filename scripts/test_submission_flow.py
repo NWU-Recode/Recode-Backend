@@ -115,7 +115,7 @@ async def main():
     if challenge_id in {"", "None", None}:
         raise RuntimeError("Question is missing challenge_id (required for submission flow).")
 
-    source_code = question.get("reference_solution") or question.get("starter_code")
+    source_code = question.get("reference_solution") or question.get("starter_code") or ""
     language_id = int(question.get("language_id") or 71)
 
     print(f"Using student_id={student_id}, challenge_id={challenge_id}, question_id={question_id}")
@@ -123,11 +123,11 @@ async def main():
     result = await submissions_service.submit_question(
         challenge_id=challenge_id,
         question_id=question_id,
+        submitted_output=None,
         source_code=source_code,
         user_id=student_id,
         language_id=language_id,
         include_private=True,
-        perform_award=True,
     )
 
     print("Submission result:")

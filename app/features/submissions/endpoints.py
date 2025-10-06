@@ -1,19 +1,18 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, model_validator
-from typing import Dict
+from typing import Dict, Optional
 
 from app.common.deps import CurrentUser, get_current_user, require_role
 from app.features.submissions.schemas import (
     QuestionEvaluationRequest,
     QuestionEvaluationResponse,
     QuestionSubmissionRequest,
-<<<<<<< HEAD
     QuestionBundleSchema,
-=======
     BatchSubmissionEntry,
->>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
 )
 from app.features.submissions.service import submissions_service
 from app.features.submissions.repository import submissions_repository
@@ -27,16 +26,25 @@ router = APIRouter(prefix="/submissions", tags=["submissions"], dependencies=[De
 
 class BatchSubmissionsPayload(BaseModel):
     submissions: Dict[str, BatchSubmissionEntry]
+    duration_seconds: Optional[int] = None
 
     @model_validator(mode="after")
-    def validate_payload(cls, values: dict):
-        subs = values.get("submissions") or {}
+    def validate_payload(cls, model: "BatchSubmissionsPayload") -> "BatchSubmissionsPayload":
+        subs = model.submissions or {}
         if not isinstance(subs, dict):
-            raise ValueError("submissions must be an object mapping question_id -> {output}")
+            raise ValueError("submissions must be an object mapping question_id -> {source_code}")
         if len(subs) == 0:
             raise ValueError("submissions must contain at least one question entry")
         if len(subs) > 5:
             raise ValueError("submissions may contain at most 5 questions in a snapshot")
+        if model.duration_seconds is not None:
+            try:
+                duration_val = int(model.duration_seconds)
+            except Exception as exc:  # pragma: no cover - defensive typing
+                raise ValueError("duration_seconds must be an integer") from exc
+            if duration_val < 0:
+                raise ValueError("duration_seconds must be non-negative")
+            model.duration_seconds = duration_val
         cleaned: Dict[str, BatchSubmissionEntry] = {}
         for k, v in subs.items():
             if not isinstance(k, str) or not k:
@@ -48,8 +56,8 @@ class BatchSubmissionsPayload(BaseModel):
                 cleaned[k] = BatchSubmissionEntry.validate_entry(v)  # type: ignore[arg-type]
             except ValueError as exc:
                 raise ValueError(str(exc))
-        values["submissions"] = cleaned
-        return values
+        model.submissions = cleaned
+        return model
 
 
 @router.post(
@@ -83,24 +91,15 @@ async def quick_test_question_by_qid(
         return await submissions_service.evaluate_question(
             challenge_id=challenge_id,
             question_id=question_id,
-<<<<<<< HEAD
+            submitted_output=None,
             source_code=payload.source_code,
-            language_id=None,
-            include_private=True,
-=======
-            submitted_output=payload.output,
-            language_id=lang,
+            language_id=payload.language_id,
             include_private=False,
->>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
             user_id=student_number,
             attempt_number=1,
             late_multiplier=1.0,
             perform_award=False,
-<<<<<<< HEAD
-            persist=False,
-=======
             record_result=False,
->>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -130,9 +129,9 @@ async def get_question_bundle_debug(
 @router.post(
     "/challenges/{challenge_id}/questions/{question_id}/submit",
     response_model=QuestionEvaluationResponse,
-    summary="Submit output for a single challenge question (tracked attempt)",
+    summary="Submit source code for a single challenge question (tracked attempt)",
     description=(
-        "Grades the learner's output against the expected answer for the question and records "
+        "Runs the learner's source code against the expected answer for the question and records "
         "progress within the active challenge attempt. Passing results count toward ELO/GPA "
         "updates once the full challenge snapshot is finalised."
     ),
@@ -154,10 +153,11 @@ async def submit_question(
         return await submissions_service.submit_question(
             challenge_id=challenge_id,
             question_id=question_id,
-            submitted_output=payload.output,
+            submitted_output=None,
+            source_code=payload.source_code,
             user_id=student_number,
-            language_id=None,
-            include_private=True,
+            language_id=payload.language_id,
+            include_private=payload.include_private,
         )
     except ValueError as exc:
         message = str(exc)
@@ -175,10 +175,10 @@ async def submit_question(
 @router.post(
     "/challenges/{challenge_id}/submit-challenge",
     response_model=dict,
-    summary="Submit outputs for an active challenge snapshot",
+    summary="Submit source code for an active challenge snapshot",
     description=(
-        "Grades all snapshot questions (up to five for base challenges) using expected output matching, "
-        "persists the attempt, and triggers ELO/GPA/badge updates for the student."
+        "Runs each snapshot submission through Judge0 (up to five base questions), persists the attempt, "
+        "and triggers ELO/GPA/badge updates for the student."
     ),
 )
 async def submit_challenge(
@@ -198,12 +198,18 @@ async def submit_challenge(
         attempt_id = attempt.get("id")
         snapshot = attempt.get("snapshot_questions") or []
 
+        started_at_raw = attempt.get("started_at")
+        started_at_dt: Optional[datetime] = None
+        if started_at_raw:
+            try:
+                started_at_dt = datetime.fromisoformat(str(started_at_raw).replace("Z", "+00:00"))
+            except Exception:
+                started_at_dt = None
+
         # Build language_overrides map and question_weights from snapshot
         language_overrides = {str(q.get("question_id")): q.get("language_id") for q in snapshot}
         question_weights = {str(q.get("question_id")): q.get("points", 1) for q in snapshot}
         attempt_counts = {str(q.get("question_id")): int(q.get("attempts_used", 0)) for q in snapshot}
-        expected_outputs = {str(q.get("question_id")): q.get("expected_output") for q in snapshot}
-
         subs_map = payload.submissions
 
         breakdown = await submissions_service.submit_challenge(
@@ -212,59 +218,24 @@ async def submit_challenge(
             submissions=subs_map,
             language_overrides=language_overrides,
             question_weights=question_weights,
-            expected_outputs=expected_outputs,
             user_id=student_number,
             tier=attempt.get("tier") or "base",
             attempt_counts=attempt_counts,
             max_attempts=3,
-            late_multiplier=1.0,
+            started_at=started_at_dt,
+            duration_seconds=payload.duration_seconds,
             perform_award=False,
         )
 
         # Post-process awarding: batch the passed public tests and call RPCs in a tight loop
         awards: Dict[str, list] = {}
-<<<<<<< HEAD
-        try:
-            client = await get_supabase()
-            for qres in getattr(breakdown, "question_results", []) or []:
-                q_awards: list = []
-                try:
-                    for test_run in getattr(qres, "tests", []) or []:
-                        if getattr(test_run, "passed", False):
-                            resp = await client.rpc(
-                                "record_test_result_and_award",
-                                {
-                                    "p_profile_id": student_number,
-                                    "p_question_id": str(getattr(qres, "question_id", "")),
-                                    "p_test_id": str(getattr(test_run, "test_id", "")),
-                                    "p_is_public": True,
-                                    "p_passed": True,
-                                    "p_public_badge_id": getattr(qres, "badge_tier_awarded", None),
-                                },
-                            ).execute()
-                            try:
-                                data = getattr(resp, "data", None)
-                            except Exception:
-                                data = None
-                            q_awards.append({"test_id": getattr(test_run, "test_id", None), "rpc_result": data})
-                except Exception:
-                    import logging
-
-                    logging.getLogger("submissions").exception("Award RPC failed for question %s", getattr(qres, "question_id", None))
-                if q_awards:
-                    awards[str(getattr(qres, "question_id", ""))] = q_awards
-        except Exception:
-            # If supabase client acquisition fails, swallow and continue
-            awards = {}
-=======
->>>>>>> acf079eb3553ddd1e34eea9f50ab734671512fe4
 
         # Finalize attempt using service results
         await challenge_repository.finalize_attempt(
             attempt_id=attempt_id,
             score=int(breakdown.gpa_score),
             correct_count=len(breakdown.passed_questions),
-            duration_seconds=None,
+            duration_seconds=breakdown.time_used_seconds,
             tests_total=breakdown.tests_total,
             tests_passed=breakdown.tests_passed_total,
             elo_delta=breakdown.elo_delta,
@@ -281,6 +252,8 @@ async def submit_challenge(
             "efficiency_bonus_total": breakdown.efficiency_bonus_total,
             "challenge_id": challenge_id,
             "tier": attempt.get("tier") or "base",
+            "time_used_seconds": breakdown.time_used_seconds,
+            "time_limit_seconds": breakdown.time_limit_seconds,
         }
         performance_payload = {k: v for k, v in performance_payload.items() if v is not None}
 

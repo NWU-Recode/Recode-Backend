@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .repository import achievements_repository, _parse_datetime
 from app.features.admin.repository import ModuleRepository
+from app.features.challenges.tier_utils import BASE_TIER, normalise_challenge_tier
 from .schemas import (
     AchievementsResponse,
     BadgeBatchAddRequest,
@@ -43,9 +44,7 @@ _TIER_COMPLETION_THRESHOLDS = {
 }
 
 _ELO_TIER_CONFIG = {
-    "plain": {"rating": 1600, "k_factor": 360},
-    "base": {"rating": 1600, "k_factor": 360},
-    "common": {"rating": 1600, "k_factor": 360},
+    BASE_TIER: {"rating": 1600, "k_factor": 360},
     "bronze": {"rating": 1600, "k_factor": 420},
     "silver": {"rating": 3000, "k_factor": 480},
     "gold": {"rating": 4200, "k_factor": 540},
@@ -488,7 +487,7 @@ class AchievementsService:
             raise ValueError("attempt_user_mismatch")
         challenge_id = attempt.get("challenge_id")
         challenge = await self.repo.fetch_challenge(str(challenge_id)) if challenge_id else None
-        tier = (challenge or {}).get("tier") or attempt.get("tier") or "plain"
+        tier = normalise_challenge_tier((challenge or {}).get("tier") or attempt.get("tier")) or BASE_TIER
         total = _extract_snapshot_count(attempt.get("snapshot_questions"))
         if total <= 0:
             total = _safe_int(attempt.get("total_public_tests"), default=0)
@@ -605,8 +604,9 @@ class AchievementsService:
         return score, reasons
 
     def _compute_elo_delta_with_reasons(self, summary: AttemptSummary, current_elo: int) -> tuple[int, List[str]]:
-        tier_slug = _normalise_slug(summary.tier) or "plain"
-        config = _ELO_TIER_CONFIG.get(tier_slug, _ELO_TIER_CONFIG["plain"])
+        tier_slug = _normalise_slug(summary.tier)
+        tier_slug = normalise_challenge_tier(tier_slug) or tier_slug or BASE_TIER
+        config = _ELO_TIER_CONFIG.get(tier_slug, _ELO_TIER_CONFIG[BASE_TIER])
         rating = config["rating"]
         k_factor = config["k_factor"]
         expected = 1.0 / (1.0 + math.pow(10.0, (rating - max(BASE_ELO, current_elo)) / 400.0))
@@ -687,7 +687,8 @@ class AchievementsService:
         attempts = await self.repo.list_submitted_attempts(user_id)
         counts: Dict[str, int] = {}
         for attempt in attempts:
-            tier = _normalise_slug(attempt.get("tier") or (attempt.get("challenge") or {}).get("tier")) or "plain"
+            tier = _normalise_slug(attempt.get("tier") or (attempt.get("challenge") or {}).get("tier"))
+            tier = normalise_challenge_tier(tier) or tier or BASE_TIER
             total = _extract_snapshot_count(attempt.get("snapshot_questions"))
             if total <= 0:
                 total = _safe_int(attempt.get("total_questions"), default=0)
@@ -878,7 +879,7 @@ class AchievementsService:
                         attempt_id=summary.attempt_id,
                         source_submission_id=summary.attempt_id,
                     )
-                except Exception:  # pragma: no cover - constraint violation etc
+                except Exception: 
                     row = None
                 if row:
                     inserted_rows.append(row)
@@ -891,7 +892,8 @@ class AchievementsService:
 
     def _resolve_badges_to_award(self, summary: AttemptSummary, definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ratio = summary.ratio
-        tier = _normalise_slug(summary.tier) or "plain"
+        tier = _normalise_slug(summary.tier)
+        tier = normalise_challenge_tier(tier) or tier or BASE_TIER
         eligible: List[Dict[str, Any]] = []
         for badge in definitions:
             slug = _normalise_slug(badge.get("slug") or badge.get("code") or badge.get("name"))
@@ -899,7 +901,7 @@ class AchievementsService:
             if isinstance(metadata, str):
                 try:
                     metadata = json.loads(metadata)
-                except Exception:  # pragma: no cover - ignore malformed json
+                except Exception: 
                     metadata = {}
             badge_tier = _normalise_slug(metadata.get("tier") or badge.get("tier") or slug)
             min_ratio = metadata.get("min_ratio") or metadata.get("min_correct_ratio")
@@ -917,7 +919,7 @@ class AchievementsService:
                     min_ratio = 0.5
                 elif slug in {"ruby", "emerald", "diamond"}:
                     min_ratio = 1.0
-            if badge_tier and badge_tier not in {tier, "plain"}:
+            if badge_tier and badge_tier not in {tier, BASE_TIER}:
                 continue
             if min_ratio is not None and ratio + 1e-9 < min_ratio:
                 continue

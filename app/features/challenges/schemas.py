@@ -28,15 +28,15 @@ class ChallengeAttempt(BaseModel):
     status: str
 
 
-class ChallengeSubmissionOutput(BaseModel):
+class ChallengeSubmissionCode(BaseModel):
     question_id: UUID
-    output: str
-    stdin: Optional[str] = None
+    source_code: str
+    language_id: Optional[int] = None
 
 
 class ChallengeSubmitRequest(BaseModel):
     challenge_id: UUID
-    items: Optional[List[ChallengeSubmissionOutput]] = None
+    items: Optional[List[ChallengeSubmissionCode]] = None
 
 
 class ChallengeSubmitResponse(BaseModel):

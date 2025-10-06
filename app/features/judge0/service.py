@@ -4,14 +4,13 @@ import time
 import hashlib
 import random
 import logging
-from typing import Optional, Dict, Any, List
-from datetime import datetime
+from typing import Optional, Dict, Any, List, Iterable, Awaitable, Tuple
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.Core.config import get_settings
 from .schemas import (
     CodeSubmissionCreate,
-    CodeSubmissionResponse,
     Judge0SubmissionRequest,
     Judge0SubmissionResponse,
     Judge0ExecutionResult,
@@ -56,6 +55,15 @@ class Judge0Service:
         self._python3_cache: Optional[int] = None
         # Logger for diagnostics
         self._logger = logging.getLogger(__name__)
+        # Concurrency tuning knobs sourced from settings (with safe fallbacks)
+        try:
+            self._small_batch_concurrency = max(1, int(getattr(self.settings, "judge0_small_batch_concurrency", 4)))
+        except Exception:
+            self._small_batch_concurrency = 4
+        try:
+            self._batch_poll_concurrency = max(1, int(getattr(self.settings, "judge0_batch_poll_concurrency", 8)))
+        except Exception:
+            self._batch_poll_concurrency = 8
 
     async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         """Internal helper to perform an HTTP request against the configured Judge0 base URL.
@@ -127,6 +135,30 @@ class Judge0Service:
         if lid in self._archived_ids or lid <= 0:
             return await self._resolve_python3_id()
         return lid
+
+    @staticmethod
+    def _ensure_status(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return payload
+        status_val = payload.get("status")
+        if not status_val:
+            status_id = payload.get("status_id")
+            if status_id is not None:
+                payload = dict(payload)
+                payload["status"] = {
+                    "id": status_id,
+                    "description": payload.get("status_description") or "",
+                }
+                return payload
+        elif isinstance(status_val, dict) and "description" not in status_val:
+            desc = payload.get("status_description")
+            if desc:
+                payload = dict(payload)
+                status_copy = dict(status_val)
+                status_copy["description"] = desc
+                payload["status"] = status_copy
+                return payload
+        return payload
 
     @staticmethod
     def _compute_success(status_id: int | None, stdout: str | None, expected_output: str | None) -> bool:
@@ -225,7 +257,8 @@ class Judge0Service:
         judge0_request = Judge0SubmissionRequest(
             source_code=submission.source_code,
             language_id=norm_lang,
-            stdin=submission.stdin
+            stdin=submission.stdin,
+            expected_output=submission.expected_output if submission.expected_output else None,
         )
         response = await self._request(
             "POST",
@@ -242,7 +275,7 @@ class Judge0Service:
     async def submit_code_wait(
         self,
         submission: CodeSubmissionCreate,
-        fields: str = "token,stdout,stderr,status_id,time,memory,language"
+        fields: str = "*"
     ) -> Judge0ExecutionResult:
         """Submit code with wait=true to get immediate result (single-call execution).
 
@@ -268,44 +301,228 @@ class Judge0Service:
         if "token" not in data:
             # Fallback: issue secondary GET by location header? For simplicity raise.
             raise Exception("Waited submit missing token in response")
-        # Conform to Judge0ExecutionResult shape by injecting minimal status structure if only status_id present
-        if "status" not in data and "status_id" in data:
-            data["status"] = {"id": data["status_id"], "description": data.get("status_description", "")}
+        data = self._ensure_status(data)
         return Judge0ExecutionResult(**data)
 
     async def execute_code_sync(
         self,
         submission: CodeSubmissionCreate,
-        fields: str = "token,stdout,stderr,status_id,time,memory,language"
+        fields: str = "*"
     ) -> tuple[str, CodeExecutionResult]:
-        """Waited single-call execution returning (token, CodeExecutionResult) with no persistence.
+        """Execute code and return (token, CodeExecutionResult) without persisting to storage.
 
-        Mirrors spec 'execute_code_sync(wait=True)'. Internally uses submit_code_wait.
+        Uses the poll-based flow for fast, reliable stdout retrieval; callers may override the
+        Judge0 fields fetched on each poll via the ``fields`` parameter.
         """
-        waited = await self.submit_code_wait(submission, fields=fields)
-        token = waited.token  # type: ignore[attr-defined]
-        exec_result = self._to_code_execution_result(waited, submission.expected_output, submission.language_id)
+        timeout_override = getattr(self.settings, "judge0_timeout_s", None)
+        token, raw = await self._execute_via_polling(
+            submission,
+            timeout_seconds=timeout_override if timeout_override else 25.0,
+            poll_interval=0.35,
+            fields=fields,
+        )
+        exec_result = self._to_code_execution_result(raw, submission.expected_output, submission.language_id)
+        if exec_result.status_description == "unknown" and exec_result.status_id == 4:
+            exec_result.status_description = "wrong_answer"
         return token, exec_result
+
+    async def _execute_via_polling(
+        self,
+        submission: CodeSubmissionCreate,
+        *,
+        timeout_seconds: float | None = 25.0,
+        poll_interval: float = 0.35,
+        fields: Optional[str] = "*"  # Use * to get all fields including stdout reliably
+    ) -> tuple[str, Judge0ExecutionResult]:
+        token_resp = await self.submit_code(submission)
+        token = token_resp.token
+        if not token:
+            raise Exception("Judge0 returned an empty token")
+
+        start = time.monotonic()
+        attempt = 0
+        last_raw: Optional[Judge0ExecutionResult] = None
+
+        while True:
+            path = f"/submissions/{token}?base64_encoded=false"
+            if fields:
+                path = f"{path}&fields={fields}"
+            response = await self._request("GET", path)
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch submission result: {response.status_code} - {response.text[:200]}")
+
+            payload = response.json()
+            payload = self._ensure_status(payload)
+            raw = Judge0ExecutionResult(**payload)
+            if not raw.token:
+                raw = raw.model_copy(update={"token": token})
+            status_dict = raw.status or {}
+            status_id = status_dict.get("id") if isinstance(status_dict, dict) else None
+
+            if status_id not in (1, 2) and status_id is not None:
+                final_raw = raw
+                break
+
+            if status_id is None and raw.stdout not in (None, ""):
+                final_raw = raw
+                break
+
+            last_raw = raw
+            attempt += 1
+
+            if timeout_seconds is not None and (time.monotonic() - start) >= timeout_seconds:
+                raise TimeoutError("Judge0 execution timed out")
+
+            jitter = random.uniform(0.0, 0.05)
+            sleep_for = min(poll_interval + (attempt * 0.05), 1.0) + jitter
+            await asyncio.sleep(sleep_for)
+
+        needs_refresh = False
+        if final_raw.stdout in (None, ""):
+            needs_refresh = True
+        status_dict = final_raw.status or {}
+        status_desc = status_dict.get("description") if isinstance(status_dict, dict) else None
+        if not status_desc:
+            needs_refresh = True
+        if final_raw.compile_output in (None, "") and last_raw and last_raw.compile_output not in (None, ""):
+            final_raw = final_raw.model_copy(update={"compile_output": last_raw.compile_output})
+
+        if needs_refresh:
+            try:
+                refetched = await self.get_submission_result(token)
+                updates: Dict[str, Any] = {}
+                if not refetched.token:
+                    refetched = refetched.model_copy(update={"token": token})
+                if final_raw.stdout in (None, "") and refetched.stdout not in (None, ""):
+                    updates["stdout"] = refetched.stdout
+                if final_raw.stderr in (None, "") and refetched.stderr not in (None, ""):
+                    updates["stderr"] = refetched.stderr
+                if final_raw.compile_output in (None, "") and refetched.compile_output not in (None, ""):
+                    updates["compile_output"] = refetched.compile_output
+                ref_status = refetched.status or {}
+                if isinstance(ref_status, dict):
+                    if not status_dict:
+                        updates["status"] = ref_status
+                    else:
+                        if not status_dict.get("description") and ref_status.get("description"):
+                            status_dict = dict(status_dict)
+                            status_dict["description"] = ref_status.get("description")
+                            updates["status"] = status_dict
+                if updates:
+                    final_raw = final_raw.model_copy(update=updates)
+            except Exception:
+                pass
+
+        return token, final_raw
+
+    async def _bounded_gather(
+        self,
+        coroutines: Iterable[Awaitable[Any]],
+        *,
+        limit: int,
+    ) -> List[Any]:
+        semaphore = asyncio.Semaphore(max(1, limit))
+
+        async def _runner(coro: Awaitable[Any]) -> Any:
+            async with semaphore:
+                return await coro
+
+        return await asyncio.gather(*(_runner(coro) for coro in coroutines))
+
+    async def _execute_small_batch_concurrent(
+        self,
+        submissions: List[CodeSubmissionCreate],
+        *,
+        fields: str = "*",
+    ) -> List[tuple[str, CodeExecutionResult]]:
+        if not submissions:
+            return []
+
+        concurrency = min(len(submissions), getattr(self, "_small_batch_concurrency", 4))
+        semaphore = asyncio.Semaphore(max(1, concurrency))
+        results: List[Optional[tuple[str, CodeExecutionResult]]] = [None] * len(submissions)
+
+        async def _execute_one(idx: int, submission: CodeSubmissionCreate) -> None:
+            async with semaphore:
+                token, result = await self.execute_code_sync(submission, fields=fields)
+                results[idx] = (token, result)
+
+        await asyncio.gather(*(_execute_one(idx, sub) for idx, sub in enumerate(submissions)))
+        return [res for res in results if res is not None]
+
+    async def _hydrate_result(
+        self,
+        token: str,
+        raw: Judge0ExecutionResult,
+    ) -> Judge0ExecutionResult:
+        if not raw.token:
+            raw = raw.model_copy(update={"token": token})
+
+        needs_refresh = False
+        if raw.stdout in (None, ""):
+            needs_refresh = True
+        status_dict = raw.status or {}
+        status_desc = status_dict.get("description") if isinstance(status_dict, dict) else None
+        if not status_desc:
+            needs_refresh = True
+        if raw.compile_output in (None, ""):
+            needs_refresh = True
+
+        if not needs_refresh:
+            return raw
+
+        try:
+            refetched = await self.get_submission_result(token)
+            updates: Dict[str, Any] = {}
+            if not refetched.token:
+                refetched = refetched.model_copy(update={"token": token})
+            if raw.stdout in (None, "") and refetched.stdout not in (None, ""):
+                updates["stdout"] = refetched.stdout
+            if raw.stderr in (None, "") and refetched.stderr not in (None, ""):
+                updates["stderr"] = refetched.stderr
+            if raw.compile_output in (None, "") and refetched.compile_output not in (None, ""):
+                updates["compile_output"] = refetched.compile_output
+            ref_status = refetched.status or {}
+            if isinstance(ref_status, dict):
+                if not status_dict:
+                    updates["status"] = ref_status
+                elif not status_desc and ref_status.get("description"):
+                    status_dict = dict(status_dict)
+                    status_dict["description"] = ref_status.get("description")
+                    updates["status"] = status_dict
+            if updates:
+                raw = raw.model_copy(update=updates)
+        except Exception:
+            pass
+
+        return raw
 
     async def submit_question_run(
         self,
         submission: CodeSubmissionCreate,
         user_id: str,
-        fields: str = "token,stdout,stderr,status_id,time,memory,language"
+        fields: str = "token,stdout,stderr,compile_output,message,status,status_id,time,memory,language"
     ) -> tuple[str, CodeExecutionResult]:
-        """High-level per-question run that waits, normalises, and persists both submission and result.
+        """High-level per-question run that normalises and returns the execution result.
 
-        Returns (judge0_token, CodeExecutionResult)
+        Returns (judge0_token, CodeExecutionResult).
         """
-        waited = await self.submit_code_wait(submission, fields=fields)
-        token = waited.token  # type: ignore[attr-defined]
-        exec_result = self._to_code_execution_result(waited, submission.expected_output, submission.language_id)
+        timeout_override = getattr(self.settings, "judge0_timeout_s", None)
+        token, raw = await self._execute_via_polling(
+            submission,
+            timeout_seconds=timeout_override if timeout_override else 25.0,
+            poll_interval=0.35,
+            fields=fields,
+        )
+        exec_result = self._to_code_execution_result(raw, submission.expected_output, submission.language_id)
+        if exec_result.status_description == "unknown" and exec_result.status_id == 4:
+            exec_result.status_description = "wrong_answer"
         return token, exec_result
     
     async def get_submission_result(self, token: str) -> Judge0ExecutionResult:
         resp = await self._request("GET", f"/submissions/{token}?base64_encoded=false")
         if resp.status_code == 200:
-            result = resp.json()
+            result = self._ensure_status(resp.json())
             return Judge0ExecutionResult(**result)
         raise Exception(f"Failed to get result: {resp.status_code} body={resp.text[:200]}")
     
@@ -338,7 +555,7 @@ class Judge0Service:
         # created_at: if Judge0 didn't return a timestamp, use now
         created_at = getattr(raw, 'created_at', None)
         if created_at is None:
-            created_at = datetime.utcnow()
+            created_at = datetime.now(timezone.utc)
 
         # Status description fallback: prefer explicit description from Judge0 result; if empty, consult cached statuses
         status_description = (raw.status or {}).get("description") if raw.status else None
@@ -401,16 +618,16 @@ class Judge0Service:
 
         Useful for persisting question attempts where we want to keep the token reference.
         """
-        token_resp = await self.submit_code(submission)
-        token = token_resp.token
-        start = time.time()
-        while time.time() - start < timeout_seconds:
-            res = await self.get_submission_result(token)
-            status_id = res.status.get("id") if res.status else None
-            if status_id not in [1, 2]:
-                return token, self._to_code_execution_result(res, submission.expected_output, submission.language_id)
-            await asyncio.sleep(poll_interval)
-        raise TimeoutError("Judge0 execution timed out")
+        timeout_override = timeout_seconds if timeout_seconds is not None else None
+        token, raw = await self._execute_via_polling(
+            submission,
+            timeout_seconds=timeout_override,
+            poll_interval=poll_interval,
+        )
+        exec_result = self._to_code_execution_result(raw, submission.expected_output, submission.language_id)
+        if exec_result.status_description == "unknown" and exec_result.status_id == 4:
+            exec_result.status_description = "wrong_answer"
+        return token, exec_result
 
     # -------- Batch operations --------
     async def submit_batch(self, submissions: List[CodeSubmissionCreate]) -> List[str]:
@@ -449,23 +666,36 @@ class Judge0Service:
             raise Exception("Token count mismatch in batch response")
         return tokens
 
-    async def get_batch_results(self, tokens: List[str]) -> Dict[str, Judge0ExecutionResult]:
+    async def get_batch_results(
+        self,
+        tokens: List[str],
+        *,
+        fields: Optional[str] = "*",
+    ) -> Dict[str, Judge0ExecutionResult]:
         """Fetch multiple submissions by tokens (returns mapping token -> result)."""
         if not tokens:
             return {}
         token_param = ",".join(tokens)
+        query = f"/submissions/batch?tokens={token_param}&base64_encoded=false"
+        if fields:
+            query = f"{query}&fields={fields}"
         resp = await self._request(
             "GET",
-            f"/submissions/batch?tokens={token_param}&base64_encoded=false",
+            query,
         )
         if resp.status_code != 200:
             raise Exception(f"Batch get failed: {resp.status_code} {resp.text[:200]}")
-        arr = resp.json()
+        data = resp.json()
         results: Dict[str, Judge0ExecutionResult] = {}
+        
+        # Judge0 batch GET returns {"submissions": [...]}
+        arr = data.get("submissions", []) if isinstance(data, dict) else data
+        
         if isinstance(arr, list):
             for item in arr:
                 tok = item.get("token") if isinstance(item, dict) else None
                 if tok:
+                    item = self._ensure_status(item)
                     results[tok] = Judge0ExecutionResult(**item)
         return results
 
@@ -477,16 +707,14 @@ class Judge0Service:
     ) -> List[tuple[str, CodeExecutionResult]]:
         """Submit a batch then poll until all finished; returns list aligned to original order."""
         if len(submissions) <= 8:
-            out: List[tuple[str, CodeExecutionResult]] = []
-            for sub in submissions:
-                tok, res = await self.execute_code_sync(sub)
-                out.append((tok, res))
-            return out
+            return await self._execute_small_batch_concurrent(submissions)
 
         tokens = await self.submit_batch(submissions)
         pending = set(tokens)
         start = time.time()
         latest: Dict[str, CodeExecutionResult] = {}
+        token_indices: Dict[str, int] = {tok: idx for idx, tok in enumerate(tokens)}
+
         while pending and (timeout_seconds is None or time.time() - start < timeout_seconds):
             try:
                 batch = await self.get_batch_results(list(pending))
@@ -497,25 +725,43 @@ class Judge0Service:
                 for tok, raw in batch.items():
                     status_id = raw.status.get("id") if raw.status else None
                     if status_id not in [1, 2]:
-                        idx = tokens.index(tok)
+                        idx = token_indices.get(tok)
+                        if idx is None:
+                            continue
                         sub = submissions[idx]
-                        latest[tok] = self._to_code_execution_result(raw, sub.expected_output, sub.language_id)
+                        hydrated = await self._hydrate_result(tok, raw)
+                        latest[tok] = self._to_code_execution_result(hydrated, sub.expected_output, sub.language_id)
                         if tok in pending:
                             pending.discard(tok)
                             progressed = True
             if pending:
-                for tok in list(pending):
+                async def _fetch_token(token: str) -> Tuple[str, Optional[Judge0ExecutionResult]]:
                     try:
-                        raw = await self.get_submission_result(tok)
-                        status_id = raw.status.get("id") if raw.status else None
-                        if status_id not in [1, 2]:
-                            idx = tokens.index(tok)
-                            sub = submissions[idx]
-                            latest[tok] = self._to_code_execution_result(raw, sub.expected_output, sub.language_id)
-                            pending.discard(tok)
-                            progressed = True
+                        raw_result = await self.get_submission_result(token)
+                        return token, raw_result
                     except Exception:
-                        pass
+                        return token, None
+
+                coroutines = [_fetch_token(tok) for tok in list(pending)]
+                fetch_results = await self._bounded_gather(
+                    coroutines,
+                    limit=getattr(self, "_batch_poll_concurrency", 8),
+                )
+                for tok, raw in fetch_results:
+                    if raw is None:
+                        continue
+                    status_id = raw.status.get("id") if raw.status else None
+                    if status_id in [1, 2]:
+                        continue
+                    idx = token_indices.get(tok)
+                    if idx is None:
+                        continue
+                    sub = submissions[idx]
+                    hydrated = await self._hydrate_result(tok, raw)
+                    latest[tok] = self._to_code_execution_result(hydrated, sub.expected_output, sub.language_id)
+                    if tok in pending:
+                        pending.discard(tok)
+                        progressed = True
             if not pending:
                 break
             if not progressed:
@@ -524,30 +770,27 @@ class Judge0Service:
             raise TimeoutError("Batch execution timed out")
         return [(tok, latest[tok]) for tok in tokens]
 
-    async def execute_quick_code(self, submission: QuickCodeSubmission) -> CodeExecutionResult:
-        judge0_response = await self.submit_code(submission)
-        token = judge0_response.token
-
-        while True:
-            response = await self._request("GET", f"/submissions/{token}?base64_encoded=false")
-            if response.status_code == 200:
-                result = response.json()
-                if result["status"]["id"] in [1, 2]:  # In Queue or Processing
-                    await asyncio.sleep(1)
-                    continue
-                return CodeExecutionResult(
-                    stdout=result.get("stdout"),
-                    stderr=result.get("stderr"),
-                    compile_output=result.get("compile_output"),
-                    execution_time=result.get("time"),
-                    memory_used=result.get("memory"),
-                    status_id=result["status"]["id"],
-                    status_description=result["status"]["description"],
-                    language_id=submission.language_id,
-                    success=result["status"]["id"] == 3,
-                    created_at=datetime.utcnow()
-                )
-            else:
-                raise Exception(f"Failed to fetch submission result: {response.status_code} - {response.text}")
+    async def execute_quick_code(
+        self,
+        submission: QuickCodeSubmission,
+        *,
+        timeout_seconds: float | None = 45.0,
+        poll_interval: float = 1.0,
+    ) -> CodeExecutionResult:
+        code_submission = CodeSubmissionCreate(
+            source_code=submission.source_code,
+            language_id=submission.language_id,
+            stdin=submission.stdin,
+            expected_output=None,
+        )
+        token, raw = await self._execute_via_polling(
+            code_submission,
+            timeout_seconds=timeout_seconds,
+            poll_interval=poll_interval,
+        )
+        result = self._to_code_execution_result(raw, None, submission.language_id)
+        if result.status_description == "unknown" and result.status_id == 4:
+            result.status_description = "wrong_answer"
+        return result
 
 judge0_service = Judge0Service()

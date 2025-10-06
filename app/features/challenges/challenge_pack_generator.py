@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+
+from app.features.challenges.tier_utils import BASE_TIER, normalise_challenge_tier
 import asyncio
 import hashlib
 import json
@@ -172,7 +174,7 @@ class TopicContext:
         return "Week"
 
 TOPIC_LIMIT_BY_TIER = {
-    "base": 1,
+    BASE_TIER: 1,
     "ruby": 2,
     "emerald": 4,
     "diamond": 12,
@@ -182,22 +184,15 @@ TOPIC_LIMIT_BY_TIER = {
 def _tier_from_kind(kind: Optional[str]) -> str:
     """Normalize a requested tier/kind to the internal tier key.
 
-    Accepts values like 'base', 'common', 'ruby', 'emerald', 'diamond',
-    and returns the canonical lowercase key used across this module.
+    Accepts values like 'base', 'ruby', 'emerald', 'diamond' and
+    returns the canonical lowercase key used across this module.
     """
-    if not kind:
-        return "base"
-    k = str(kind).strip().lower()
-    mapping = {
-        "common": "base",
-        "base": "base",
-        "plain": "base",
-        "weekly": "base",
-        "ruby": "ruby",
-        "emerald": "emerald",
-        "diamond": "diamond",
-    }
-    return mapping.get(k, k)
+    normalised = normalise_challenge_tier(kind)
+    if normalised:
+        return normalised
+    if kind is None:
+        return BASE_TIER
+    return str(kind).strip().lower()
 
 
 def _normalise_topic_string(value: Any) -> Optional[str]:
@@ -244,7 +239,7 @@ def _ensure_list(value: Any) -> List[str]:
 
 
 TOPIC_WINDOW_BY_TIER = {
-    "base": 1,
+    BASE_TIER: 1,
     "ruby": 2,
     "emerald": 4,
     "diamond": None,
@@ -503,13 +498,13 @@ async def _fetch_topic_context(
 
 def _load_template(kind: str) -> str:
     templates = {
-        "common": "base.txt",
-        "base": "base.txt",
+        BASE_TIER: "base.txt",
         "ruby": "ruby.txt",
         "emerald": "emerald.txt",
         "diamond": "diamond.txt",
     }
-    name = templates.get(kind, "base.txt")
+    canonical_kind = normalise_challenge_tier(kind) or str(kind).strip().lower()
+    name = templates.get(canonical_kind, "base.txt")
     candidate_dirs = [
         Path(__file__).parent / "prompts",
         Path(__file__).parent.parent / "prompts",
@@ -576,9 +571,9 @@ def _normalise_questions(kind: str, payload: Dict[str, Any]) -> List[Dict[str, A
         logger.warning("Generator payload is not a dict for tier %s: %r", kind, payload)
         raise ValueError("Model response invalid: expected object payload")
     questions = payload.get("questions", []) or []
-    if kind in {"common", "base"}:
+    if normalise_challenge_tier(kind) == BASE_TIER:
         if len(questions) < 5:
-            raise ValueError("Model response did not include 5 questions for base/common payload")
+            raise ValueError("Model response did not include 5 questions for base payload")
         selected = questions[:5]
         return [
             _normalise_question(kind, selected[i], BASE_DISTRIBUTION[i])
@@ -701,11 +696,11 @@ async def _insert_challenge(
     effective_week = max(1, min(12, effective_week))
 
     slug_week = 12 if tier == "diamond" else effective_week
-    tier_slug = "plain" if tier == "base" else _slugify(tier)
+    tier_slug = "base" if normalise_challenge_tier(tier) == BASE_TIER else _slugify(tier)
     slug = f"{module_part}-w{int(slug_week):02d}-{tier_slug}"
     is_weekly = tier == "base"
     challenge_type_value = "weekly" if is_weekly else "special"
-    tier_value = None if is_weekly else ("plain" if tier == "base" else tier)
+    tier_value = None if is_weekly else (BASE_TIER if normalise_challenge_tier(tier) == BASE_TIER else tier)
 
     key_source = "|".join([
         str(context.topic_id or ""),
@@ -789,7 +784,7 @@ async def _insert_challenge(
     if is_weekly:
         payload["week_number"] = effective_week
         # Do not explicitly set the `tier` enum for weekly challenges. Different
-        # deployments may use different enum members (plain/base/weekly). Leave
+        # deployments may use different legacy enum members; leave relaxed matching in place
         # the column unset so DB defaults or downstream logic can normalise it.
         pass
     else:

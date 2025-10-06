@@ -5,6 +5,7 @@ from typing import Dict, Optional
 
 from .repository import challenge_repository
 from .schemas import ChallengeSubmitRequest, ChallengeSubmitResponse
+from app.features.challenges.tier_utils import BASE_TIER, normalise_challenge_tier
 from app.features.submissions.service import submissions_service, MAX_SCORING_ATTEMPTS
 from app.features.achievements.service import achievements_service
 from app.features.achievements.schemas import CheckAchievementsRequest
@@ -14,15 +15,13 @@ from app.features.submissions.schemas import BatchSubmissionEntry
 class ChallengeService:
     def _time_limit_for_tier(self, tier: str | None) -> int | None:
         limits = {
-            "base": 3600,
-            "plain": 3600,
-            "common": 3600,
+            BASE_TIER: 3600,
             "ruby": 5400,
             "emerald": 7200,
             "diamond": 10800,
         }
-        key = (tier or "base").lower()
-        return limits.get(key, limits.get("base"))
+        key = normalise_challenge_tier(tier) or (tier or BASE_TIER).lower()
+        return limits.get(key, limits.get(BASE_TIER))
 
     def _parse_ts(self, value) -> datetime | None:
         if not value:
@@ -44,7 +43,7 @@ class ChallengeService:
         challenge = await challenge_repository.get_challenge(str(req.challenge_id))
         if not challenge:
             raise ValueError("challenge_not_found")
-        tier = str(challenge.get("tier") or "base").lower()
+        tier = normalise_challenge_tier(challenge.get("tier")) or BASE_TIER
 
         try:
             student_number = int(user_id)
@@ -72,9 +71,7 @@ class ChallengeService:
         for item in req.items or []:
             qid = str(item.question_id)
             if qid in snapshot_map:
-                submissions_map[qid] = BatchSubmissionEntry(output=item.output)
-
-        expected_outputs = {qid: data.get("expected_output") for qid, data in snapshot_map.items()}
+                submissions_map[qid] = BatchSubmissionEntry(source_code=item.source_code, language_id=item.language_id)
 
         started_dt = self._parse_ts(attempt.get("started_at"))
         finished_dt = datetime.now(timezone.utc)
@@ -88,12 +85,14 @@ class ChallengeService:
             submissions=submissions_map,
             language_overrides=language_overrides,
             question_weights=weight_overrides,
-            expected_outputs=expected_outputs,
             user_id=student_number,
             tier=tier,
             attempt_counts=attempt_counts,
             max_attempts=MAX_SCORING_ATTEMPTS,
             late_multiplier=late_multiplier,
+            started_at=started_dt,
+            time_limit_seconds=time_limit_seconds,
+            duration_seconds=duration_seconds,
         )
 
         grading = grading.model_copy(

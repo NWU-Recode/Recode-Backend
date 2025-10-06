@@ -6,13 +6,24 @@ import asyncio
 import ast
 import hashlib
 import math
+import os
 import time
 import unicodedata
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 DEFAULT_FLOAT_EPS = 1e-6
 LARGE_OUTPUT_THRESHOLD = 2 * 1024 * 1024  # 2MB
+MAX_COMPARATOR_THREADS = max(1, min(16, int(os.getenv("COMPARE_MAX_WORKERS", "4"))))
+
+
+_COMPARATOR_EXECUTOR = ThreadPoolExecutor(
+    max_workers=MAX_COMPARATOR_THREADS,
+    thread_name_prefix="compare-strat",
+)
 
 
 class ComparisonMode:
@@ -20,9 +31,11 @@ class ComparisonMode:
     STRICT = "STRICT"
     TRIM_EOL = "TRIM_EOL"
     NORMALISE_WHITESPACE = "NORMALISE_WHITESPACE"
+    CASE_INSENSITIVE = "CASE_INSENSITIVE"
     CANONICAL_PY_LITERAL = "CANONICAL_PY_LITERAL"
     FLOAT_EPS = "FLOAT_EPS"
     TOKEN_SET = "TOKEN_SET"
+    LINE_SET = "LINE_SET"
     HASH_SHA256 = "HASH_SHA256"
 
 
@@ -32,6 +45,8 @@ class CompareConfig:
     unicode_nf: str = "NFC"
     large_output_threshold: int = LARGE_OUTPUT_THRESHOLD
     token_set_size_limit: int = 512
+    case_insensitive: bool = False
+    line_set_size_limit: int = 256
 
     def clone(self) -> CompareConfig:
         return CompareConfig(
@@ -39,6 +54,8 @@ class CompareConfig:
             unicode_nf=self.unicode_nf,
             large_output_threshold=self.large_output_threshold,
             token_set_size_limit=self.token_set_size_limit,
+            case_insensitive=self.case_insensitive,
+            line_set_size_limit=self.line_set_size_limit,
         )
 
 
@@ -157,8 +174,10 @@ class ComparatorStrategy:
         overrides: Dict[str, Any],
     ) -> CompareAttempt:
         start = time.perf_counter()
-        outcome, normalisations, reason = await asyncio.to_thread(
-            self._handler, expected, actual, cfg, overrides
+        loop = asyncio.get_running_loop()
+        outcome, normalisations, reason = await loop.run_in_executor(
+            _COMPARATOR_EXECUTOR,
+            partial(self._handler, expected, actual, cfg, overrides),
         )
         duration_ms = (time.perf_counter() - start) * 1000.0
         return CompareAttempt(
@@ -222,6 +241,26 @@ def _handle_whitespace(exp: str, act: str, cfg: CompareConfig, overrides: Dict[s
     return None, ["ws_checked"], None
 
 
+def _should_casefold(cfg: CompareConfig, overrides: Dict[str, Any]) -> bool:
+    if "case_insensitive" in overrides:
+        return bool(overrides["case_insensitive"])
+    if isinstance(overrides.get("case"), dict) and "insensitive" in overrides["case"]:
+        try:
+            return bool(overrides["case"]["insensitive"])
+        except Exception:
+            return cfg.case_insensitive
+    return cfg.case_insensitive
+
+
+def _handle_casefold(exp: str, act: str, cfg: CompareConfig, overrides: Dict[str, Any]):
+    if not _should_casefold(cfg, overrides):
+        return None, [], None
+    exp_cf, act_cf = exp.casefold(), act.casefold()
+    if exp_cf == act_cf:
+        return True, ["casefold"], None
+    return False, ["casefold"], "Case-insensitive comparison failed"
+
+
 def _handle_literal(exp: str, act: str, cfg: CompareConfig, overrides: Dict[str, Any]):
     pe, pa = _literal_parse(exp), _literal_parse(act)
     if pe is None or pa is None:
@@ -280,12 +319,47 @@ def _handle_token_set(exp: str, act: str, cfg: CompareConfig, overrides: Dict[st
     return False, ["token_set"], "Token sets differ"
 
 
+def _resolve_line_limit(cfg: CompareConfig, overrides: Dict[str, Any]) -> int:
+    if "line_set_limit" in overrides:
+        try:
+            return int(overrides["line_set_limit"])
+        except Exception:
+            pass
+    if isinstance(overrides.get("lines"), dict) and "limit" in overrides["lines"]:
+        try:
+            return int(overrides["lines"]["limit"])
+        except Exception:
+            pass
+    return cfg.line_set_size_limit
+
+
+def _handle_line_set(exp: str, act: str, cfg: CompareConfig, overrides: Dict[str, Any]):
+    limit = max(0, _resolve_line_limit(cfg, overrides))
+    if limit == 0:
+        return None, [], None
+
+    expected_lines = [ln.strip() for ln in exp.splitlines() if ln.strip()]
+    actual_lines = [ln.strip() for ln in act.splitlines() if ln.strip()]
+
+    if not expected_lines or not actual_lines:
+        return None, [], None
+
+    if len(expected_lines) > limit or len(actual_lines) > limit:
+        return None, [f"line_limit={limit}"], None
+
+    if Counter(expected_lines) == Counter(actual_lines):
+        return True, ["line_set"], None
+    return False, ["line_set"], "Line sets differ"
+
+
 registry.register(ComparatorStrategy(ComparisonMode.STRICT, _handle_strict, priority=0))
 registry.register(ComparatorStrategy(ComparisonMode.TRIM_EOL, _handle_trim_eol, priority=10))
 registry.register(ComparatorStrategy(ComparisonMode.NORMALISE_WHITESPACE, _handle_whitespace, priority=20))
+registry.register(ComparatorStrategy(ComparisonMode.CASE_INSENSITIVE, _handle_casefold, priority=25))
 registry.register(ComparatorStrategy(ComparisonMode.CANONICAL_PY_LITERAL, _handle_literal, priority=30))
 registry.register(ComparatorStrategy(ComparisonMode.FLOAT_EPS, _handle_float_eps, priority=40))
 registry.register(ComparatorStrategy(ComparisonMode.TOKEN_SET, _handle_token_set, priority=50))
+registry.register(ComparatorStrategy(ComparisonMode.LINE_SET, _handle_line_set, priority=45))
 
 
 def _apply_overrides(base_cfg: CompareConfig, overrides: Optional[Dict[str, Any]]) -> CompareConfig:
@@ -310,6 +384,16 @@ def _apply_overrides(base_cfg: CompareConfig, overrides: Optional[Dict[str, Any]
     if "token_set_limit" in overrides:
         try:
             cfg.token_set_size_limit = int(overrides["token_set_limit"])
+        except Exception:
+            pass
+    if "case_insensitive" in overrides:
+        try:
+            cfg.case_insensitive = bool(overrides["case_insensitive"])
+        except Exception:
+            pass
+    if "line_set_limit" in overrides:
+        try:
+            cfg.line_set_size_limit = int(overrides["line_set_limit"])
         except Exception:
             pass
     return cfg

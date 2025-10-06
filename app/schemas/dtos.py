@@ -10,7 +10,7 @@ class TopicDTO(BaseModel):
     created_at: str
 
 class ChallengeKind(str, Enum):
-    common = "common"
+    base = "base"
     ruby = "ruby"
     emerald = "emerald"
     diamond = "diamond"

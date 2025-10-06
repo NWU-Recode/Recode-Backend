@@ -5,12 +5,12 @@ Semester scoring + milestone blending.
 Lightweight implementation sufficient for MVP lecturer dashboards.
 
 Blending rules (per product spec):
-	- Plain only: 100% plain average
-	- Ruby unlocked: 60% plain + 40% ruby
-	- Emerald unlocked: 50% plain + 50% avg(ruby, emerald)
-	- Diamond unlocked: 40% plain + 60% avg(ruby, emerald, diamond)
+	- Base only: 100% base average
+	- Ruby unlocked: 60% base + 40% ruby
+	- Emerald unlocked: 50% base + 50% avg(ruby, emerald)
+	- Diamond unlocked: 40% base + 60% avg(ruby, emerald, diamond)
 
-Plain average = sum(correct)/sum(total) across submitted plain challenges.
+Base average = sum(correct)/sum(total) across submitted base challenges.
 Special tiers (ruby/emerald/diamond) are single-question challenges (score 1 or 0).
 """
 
@@ -26,7 +26,7 @@ class Tier(str, Enum):
     ruby = "ruby"
     emerald = "emerald"
     diamond = "diamond"
-    plain = "plain"
+    base = "base"
 
 
 @dataclass
@@ -43,17 +43,17 @@ class MilestoneUnlocks:
     diamond: bool
 
 
-def determine_milestones(plain_completed: int, total_plain_planned: int) -> MilestoneUnlocks:
+def determine_milestones(base_completed: int, total_base_planned: int) -> MilestoneUnlocks:
     return MilestoneUnlocks(
-        ruby=plain_completed >= 2,
-        emerald=plain_completed >= 4,
-        diamond=plain_completed >= total_plain_planned and total_plain_planned > 0,
+        ruby=base_completed >= 2,
+        emerald=base_completed >= 4,
+        diamond=base_completed >= total_base_planned and total_base_planned > 0,
     )
 
 
 @dataclass
 class AggregateSemester:
-    plain_pct: float
+    base_pct: float
     ruby_correct: bool
     emerald_correct: bool
     diamond_correct: bool
@@ -61,33 +61,33 @@ class AggregateSemester:
 
 
 def recompute_semester_mark(
-    plain_attempts: Iterable[AttemptScore],
+    base_attempts: Iterable[AttemptScore],
     ruby_correct: bool,
     emerald_correct: bool,
     diamond_correct: bool,
 ) -> AggregateSemester:
-    plain_attempts = list(plain_attempts)
-    plain_total_questions = sum(a.total for a in plain_attempts) or 0
-    plain_correct_questions = sum(a.total for a in plain_attempts if a.correct)
-    plain_pct = (plain_correct_questions / plain_total_questions * 100.0) if plain_total_questions else 0.0
+    base_attempts = list(base_attempts)
+    base_total_questions = sum(a.total for a in base_attempts) or 0
+    base_correct_questions = sum(a.total for a in base_attempts if a.correct)
+    base_pct = (base_correct_questions / base_total_questions * 100.0) if base_total_questions else 0.0
 
     # Apply blending according to milestone completion
     if diamond_correct:
         specials = [ruby_correct, emerald_correct, diamond_correct]
         specials_avg = (sum(1 for s in specials if s) / len(specials)) * 100.0
-        blended = 0.40 * plain_pct + 0.60 * specials_avg
+        blended = 0.40 * base_pct + 0.60 * specials_avg
     elif emerald_correct:
         specials = [ruby_correct, emerald_correct]
         specials_avg = (sum(1 for s in specials if s) / len(specials)) * 100.0
-        blended = 0.50 * plain_pct + 0.50 * specials_avg
+        blended = 0.50 * base_pct + 0.50 * specials_avg
     elif ruby_correct:
         specials_avg = (1 if ruby_correct else 0) * 100.0
-        blended = 0.60 * plain_pct + 0.40 * specials_avg
+        blended = 0.60 * base_pct + 0.40 * specials_avg
     else:
-        blended = plain_pct
+        blended = base_pct
 
     return AggregateSemester(
-        plain_pct=round(plain_pct, 2),
+        base_pct=round(base_pct, 2),
         ruby_correct=ruby_correct,
         emerald_correct=emerald_correct,
         diamond_correct=diamond_correct,
@@ -97,7 +97,7 @@ def recompute_semester_mark(
 
 def summarize(agg: AggregateSemester) -> dict:
     return {
-        "plain_pct": agg.plain_pct,
+        "base_pct": agg.base_pct,
         "ruby_correct": agg.ruby_correct,
         "emerald_correct": agg.emerald_correct,
         "diamond_correct": agg.diamond_correct,
