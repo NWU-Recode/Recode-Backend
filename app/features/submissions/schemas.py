@@ -40,7 +40,7 @@ class TestRunResultSchema(BaseModel):
 	test_id: Optional[str] = None
 	visibility: Optional[str] = None
 	passed: bool
-	stdout: Optional[str] = None
+	stdout: str = ""  # Changed from Optional[str] = None to always include in response
 	expected_output: Optional[str] = None
 	stderr: Optional[str] = None
 	compile_output: Optional[str] = None

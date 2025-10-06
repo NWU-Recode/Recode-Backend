@@ -91,7 +91,7 @@ async def quick_test_question_by_qid(
         return await submissions_service.evaluate_question(
             challenge_id=challenge_id,
             question_id=question_id,
-            submitted_output=None,
+            submitted_output=payload.output,  # Use the output from payload, not hardcoded None
             source_code=payload.source_code,
             language_id=payload.language_id,
             include_private=False,
