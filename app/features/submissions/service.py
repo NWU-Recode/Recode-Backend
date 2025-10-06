@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import mean
+import logging
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from app.features.challenges.repository import challenge_repository
@@ -129,23 +130,6 @@ def _late_multiplier(started_at: Optional[datetime], *, limit_seconds: Optional[
     return 0.7
 
 
-def _comparison_attempts_payload(attempts) -> Optional[List[Dict[str, object]]]:
-    if not attempts:
-        return None
-    payload: List[Dict[str, object]] = []
-    for att in attempts:
-        payload.append(
-            {
-                "mode": getattr(att, "mode", None),
-                "passed": getattr(att, "passed", None),
-                "reason": getattr(att, "reason", None),
-                "normalisations": getattr(att, "normalisations", None),
-                "duration_ms": getattr(att, "duration_ms", None),
-            }
-        )
-    return payload
-
-
 class SubmissionsService:
     async def get_question_bundle(self, challenge_id: str, question_id: str) -> QuestionBundleSchema:
         question = await submissions_repository.get_question(question_id)
@@ -224,6 +208,8 @@ class SubmissionsService:
 
         use_judge0 = source_code is not None
         judge0_pairs: List[tuple[str, CodeExecutionResult]] = []
+        judge0_failed = False
+        judge0_error_message: Optional[str] = None
         if use_judge0 and tests:
             submissions_payload = [
                 CodeSubmissionCreate(
@@ -235,9 +221,18 @@ class SubmissionsService:
                 for idx in range(len(tests))
             ]
             if submissions_payload:
-                judge0_pairs = await judge0_service.execute_batch(submissions_payload)
-                if len(judge0_pairs) != len(submissions_payload):
-                    raise ValueError("judge0_batch_result_mismatch")
+                try:
+                    judge0_pairs = await judge0_service.execute_batch(submissions_payload)
+                    if len(judge0_pairs) != len(submissions_payload):
+                        # unexpected mismatch; treat as failure
+                        raise ValueError("judge0_batch_result_mismatch")
+                except Exception as e:
+                    # Log with context and avoid bubbling a raw connection error to API consumers.
+                    logger = logging.getLogger(__name__)
+                    logger.exception("Judge0 execute_batch failed for challenge=%s question=%s: %s", challenge_id, question_id, e)
+                    judge0_pairs = []
+                    judge0_failed = True
+                    judge0_error_message = str(e)
 
         for idx, test in enumerate(tests):
             expected_val = expected_values[idx]
@@ -257,40 +252,52 @@ class SubmissionsService:
             memory_used = None
 
             if use_judge0:
-                if idx >= len(judge0_pairs):
-                    raise ValueError("judge0_batch_result_mismatch")
-                token_val, exec_result = judge0_pairs[idx]
-                
-                # CRITICAL: Use Judge0 stdout directly, don't fall back to submitted_output
-                stdout_val = exec_result.stdout if exec_result.stdout is not None else ""
-                stderr_val = exec_result.stderr
-                compile_output_val = exec_result.compile_output
-                status_id = int(exec_result.status_id or 0)
-                status_description = exec_result.status_description or ""
-                exec_time = exec_result.execution_time
-                try:
-                    exec_seconds = float(exec_time) if exec_time is not None else None
-                except Exception:
+                if judge0_failed:
+                    # Judge0 was unavailable; mark this test as an execution failure rather than raising.
+                    token_val = None
+                    stdout_val = ""
+                    stderr_val = None
+                    compile_output_val = None
+                    status_id = 4
+                    status_description = "judge0_unavailable"
+                    exec_time = None
                     exec_seconds = None
-                memory_used = exec_result.memory_used
+                    memory_used = None
+                else:
+                    if idx >= len(judge0_pairs):
+                        raise ValueError("judge0_batch_result_mismatch")
+                    token_val, exec_result = judge0_pairs[idx]
 
-                if not stdout_val:
+                    # CRITICAL: Use Judge0 stdout directly, don't fall back to submitted_output
+                    stdout_val = exec_result.stdout if exec_result.stdout is not None else ""
+                    stderr_val = exec_result.stderr
+                    compile_output_val = exec_result.compile_output
+                    status_id = int(exec_result.status_id or 0)
+                    status_description = exec_result.status_description or ""
+                    exec_time = exec_result.execution_time
                     try:
-                        raw = await judge0_service.get_submission_result(token_val)
-                        hydrated = judge0_service._to_code_execution_result(raw, expected_val, lang)
-                        stdout_val = hydrated.stdout or stdout_val
-                        stderr_val = hydrated.stderr if hydrated.stderr is not None else stderr_val
-                        compile_output_val = hydrated.compile_output if hydrated.compile_output is not None else compile_output_val
-                        status_id = int(hydrated.status_id or status_id)
-                        status_description = hydrated.status_description or status_description
-                        exec_time = hydrated.execution_time or exec_time
-                        try:
-                            exec_seconds = float(exec_time) if exec_time is not None else exec_seconds
-                        except Exception:
-                            exec_seconds = exec_seconds
-                        memory_used = hydrated.memory_used if hydrated.memory_used is not None else memory_used
+                        exec_seconds = float(exec_time) if exec_time is not None else None
                     except Exception:
-                        pass
+                        exec_seconds = None
+                    memory_used = exec_result.memory_used
+
+                    if not stdout_val:
+                        try:
+                            raw = await judge0_service.get_submission_result(token_val)
+                            hydrated = judge0_service._to_code_execution_result(raw, expected_val, lang)
+                            stdout_val = hydrated.stdout or stdout_val
+                            stderr_val = hydrated.stderr if hydrated.stderr is not None else stderr_val
+                            compile_output_val = hydrated.compile_output if hydrated.compile_output is not None else compile_output_val
+                            status_id = int(hydrated.status_id or status_id)
+                            status_description = hydrated.status_description or status_description
+                            exec_time = hydrated.execution_time or exec_time
+                            try:
+                                exec_seconds = float(exec_time) if exec_time is not None else exec_seconds
+                            except Exception:
+                                exec_seconds = exec_seconds
+                            memory_used = hydrated.memory_used if hydrated.memory_used is not None else memory_used
+                        except Exception:
+                            pass
 
             comparison = await compare(
                 expected_val,
@@ -335,7 +342,7 @@ class SubmissionsService:
                 compare_mode_applied=comparison.mode_applied,
                 normalisations_applied=comparison.normalisations_applied,
                 why_failed=None if passed_local else (detail_reason or comparison.reason),
-                comparison_attempts=_comparison_attempts_payload(getattr(comparison, "attempts", None)),
+                # comparison_attempts removed - not needed in API response
             )
 
             if result.passed:

@@ -135,7 +135,10 @@ async def submit_code(submission: CodeSubmissionCreate):
     try:
         return await judge0_service.submit_code(submission)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to submit code: {exc}") from exc
+        msg = str(exc)
+        if "Failed to connect to Judge0" in msg or "Judge0 base URL is not configured" in msg:
+            raise HTTPException(status_code=503, detail="Judge0 service unavailable") from exc
+        raise HTTPException(status_code=500, detail="Failed to submit code") from exc
 
 
 @public_router.post("/submit/wait", response_model=CodeExecutionResult, summary="Single-call waited execution (no persistence)")
@@ -144,7 +147,10 @@ async def submit_code_wait(submission: CodeSubmissionCreate):
         waited = await judge0_service.submit_code_wait(submission)
         return judge0_service._to_code_execution_result(waited, submission.expected_output, submission.language_id)  # type: ignore
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed waited submit: {exc}") from exc
+        msg = str(exc)
+        if "Failed to connect to Judge0" in msg or "Judge0 base URL is not configured" in msg:
+            raise HTTPException(status_code=503, detail="Judge0 service unavailable") from exc
+        raise HTTPException(status_code=500, detail="Failed waited submit") from exc
 
 
 @public_router.post("/submit/poll", summary="Submit to Judge0 then poll Supabase for result")
@@ -226,7 +232,10 @@ async def execute_code_sync(submission: CodeSubmissionCreate):
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Execution timeout")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to execute code: {exc}") from exc
+        msg = str(exc)
+        if "Failed to connect to Judge0" in msg or "Judge0 base URL is not configured" in msg:
+            raise HTTPException(status_code=503, detail="Judge0 service unavailable") from exc
+        raise HTTPException(status_code=500, detail="Failed to execute code") from exc
 
 
 @public_router.post("/execute/stdout", summary="Quick execute (stdout only)")
@@ -237,7 +246,10 @@ async def execute_stdout_only(submission: QuickCodeSubmission):
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Execution timeout")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to execute: {exc}") from exc
+        msg = str(exc)
+        if "Failed to connect to Judge0" in msg or "Judge0 base URL is not configured" in msg:
+            raise HTTPException(status_code=503, detail="Judge0 service unavailable") from exc
+        raise HTTPException(status_code=500, detail="Failed to execute") from exc
 
 
 @public_router.post("/execute/simple", summary="Execute with expected; returns stdout + success")
@@ -250,7 +262,10 @@ async def execute_simple(submission: CodeSubmissionCreate):
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Execution timeout")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to execute code: {exc}") from exc
+        msg = str(exc)
+        if "Failed to connect to Judge0" in msg or "Judge0 base URL is not configured" in msg:
+            raise HTTPException(status_code=503, detail="Judge0 service unavailable") from exc
+        raise HTTPException(status_code=500, detail="Failed to execute code") from exc
 
 
 @public_router.post("/execute/batch", summary="Execute multiple submissions via batch API")
@@ -261,7 +276,10 @@ async def execute_batch(submissions: List[CodeSubmissionCreate], timeout_s: Opti
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Batch execution timed out")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to execute batch: {exc}") from exc
+        msg = str(exc)
+        if "Failed to connect to Judge0" in msg or "Judge0 base URL is not configured" in msg:
+            raise HTTPException(status_code=503, detail="Judge0 service unavailable") from exc
+        raise HTTPException(status_code=500, detail="Failed to execute batch") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +300,10 @@ async def submit_code_full(submission: CodeSubmissionCreate, current_user: Curre
         created_at = datetime.utcnow()
         return Judge0SubmissionResponseWithMeta(token=token, submission_id=submission_id, created_at=created_at)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to submit code (full): {exc}") from exc
+        msg = str(exc)
+        if "Failed to connect to Judge0" in msg or "Judge0 base URL is not configured" in msg:
+            raise HTTPException(status_code=503, detail="Judge0 service unavailable") from exc
+        raise HTTPException(status_code=500, detail="Failed to submit code (full)") from exc
 
 
 @protected_router.get("/result/{token}", response_model=CodeExecutionResult)
@@ -294,7 +315,10 @@ async def get_execution_result(token: str, current_user: CurrentUser = Depends(g
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail={"error_code": "E_UNKNOWN", "message": f"Failed to get result: {exc}"}) from exc
+        msg = str(exc)
+        if "Failed to connect to Judge0" in msg or "Judge0 base URL is not configured" in msg:
+            raise HTTPException(status_code=503, detail={"error_code": "E_JUDGE0_UNAVAILABLE", "message": "Judge0 service unavailable"}) from exc
+        raise HTTPException(status_code=500, detail={"error_code": "E_UNKNOWN", "message": "Failed to get result"}) from exc
 
 
 # ---------------------------------------------------------------------------
