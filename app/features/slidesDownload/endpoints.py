@@ -28,7 +28,7 @@ async def list_slides_endpoint(
         module_code=s.module_code,
         topic_id=s.topic_id,
         has_file=bool(s.slides_key),
-        detected_topic=s.detected_topic,  # add this if you want it in schema
+        detected_topic=s.detected_topic,  
     )
     for s in slides
 ]
