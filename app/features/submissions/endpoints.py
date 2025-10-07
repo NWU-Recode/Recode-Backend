@@ -268,6 +268,26 @@ async def submit_challenge(
                     performance=performance_payload if performance_payload else None,
                 ),
             )
+            
+            # Update user_question_progress for each question
+            from app.features.achievements.repository import AchievementsRepository
+            achievements_repo = AchievementsRepository()
+            
+            for question_result in breakdown.question_results:
+                try:
+                    await achievements_repo.update_question_progress(
+                        user_id=str(student_number),
+                        question_id=str(question_result.question_id),
+                        challenge_id=str(breakdown.challenge_id),
+                        attempt_id=str(attempt_id),
+                        tests_passed=question_result.tests_passed or 0,
+                        tests_total=question_result.tests_total or 0,
+                        elo_earned=question_result.elo_awarded or 0,
+                        gpa_contribution=question_result.gpa_awarded or 0,
+                    )
+                except Exception:
+                    pass  # Silently ignore if table doesn't exist
+                    
         except Exception:
             achievement_summary = None
 

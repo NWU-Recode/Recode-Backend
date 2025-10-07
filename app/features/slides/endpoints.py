@@ -445,8 +445,9 @@ async def batch_upload_slides(
         # Use file order as provided. Week 1 corresponds to SEMESTER_START.
         tasks = []
         for idx, file in enumerate(files):
-            # compute week offset (0-based index -> week 1..)
-            week_offset = idx
+            # compute week offset (0-based index -> week 1, 2, 3... 12)
+            week_number = idx + 1  # Week 1 for first file, Week 2 for second, etc.
+            week_offset = idx  # 0 weeks from start for first file
             target_date = semester_start + timedelta(weeks=week_offset)
             given_at_dt = datetime.combine(target_date, time(10, 0)).astimezone(SA_TZ)
 
@@ -522,5 +523,80 @@ async def batch_upload_slides(
                     pr["topic_created"] = True
                     pr["topic"] = tr
                 break
+
+    # Phase 3: Generate challenges for each week
+    # For weeks 2, 4, 6, 8, 10, 12 -> generate BOTH base and special challenges
+    # For other weeks -> generate only base challenge
+    logger_slides = logging.getLogger("slides")
+    challenge_tasks = []
+    
+    try:
+        # Import challenge generator
+        from app.features.challenges.challenge_pack_generator import generate_and_save_tier
+        
+        # Get lecturer_id from current_user (admin or lecturer)
+        lecturer_id = getattr(current_user, 'id', None) or getattr(current_user, 'profile_id', None)
+        
+        if lecturer_id:
+            for idx, (filename, extraction) in enumerate(extractions):
+                week_num = extraction.get("week_number")
+                extraction_id = extraction.get("id")
+                
+                if week_num and extraction_id:
+                    # Always generate base challenge
+                    challenge_tasks.append(asyncio.create_task(
+                        generate_and_save_tier(
+                            tier="base",
+                            week_number=week_num,
+                            slide_stack_id=extraction_id,
+                            module_code=module_code,
+                            lecturer_id=lecturer_id,
+                            semester_id=semester_id,
+                        )
+                    ))
+                    
+                    # For even weeks (2, 4, 6, 8, 10, 12), also generate special challenge
+                    if week_num % 2 == 0:
+                        # Determine which special tier based on week
+                        if week_num == 2 or week_num == 4:
+                            special_tier = "ruby"
+                        elif week_num == 6 or week_num == 8:
+                            special_tier = "emerald"
+                        elif week_num == 10 or week_num == 12:
+                            special_tier = "diamond"
+                        else:
+                            special_tier = "ruby"  # fallback
+                        
+                        challenge_tasks.append(asyncio.create_task(
+                            generate_and_save_tier(
+                                tier=special_tier,
+                                week_number=week_num,
+                                slide_stack_id=extraction_id,
+                                module_code=module_code,
+                                lecturer_id=lecturer_id,
+                                semester_id=semester_id,
+                            )
+                        ))
+            
+            # Run all challenge generation tasks
+            if challenge_tasks:
+                challenge_results = await asyncio.gather(*challenge_tasks, return_exceptions=True)
+                
+                # Log challenge generation results
+                challenges_generated = 0
+                challenges_failed = 0
+                for c_result in challenge_results:
+                    if isinstance(c_result, Exception):
+                        challenges_failed += 1
+                        logger_slides.error(f"Challenge generation failed: {c_result}")
+                    elif isinstance(c_result, dict) and c_result.get("challenge"):
+                        challenges_generated += 1
+                
+                logger_slides.info(f"Batch upload: Generated {challenges_generated} challenges, {challenges_failed} failed")
+        else:
+            logger_slides.warning("No lecturer_id available, skipping challenge generation")
+            
+    except Exception as challenge_exc:
+        logger_slides.exception(f"Challenge generation phase failed: {challenge_exc}")
 
     return {"results": processed_results}
