@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from app.DB.base import Base
-from app.DB.models import Challenge
+
 
 class Topic(Base):
     __tablename__ = "topic"
@@ -13,4 +13,6 @@ class Topic(Base):
     subtopics = Column(JSONB, nullable=True)
     module_code_slidesdeck = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+    
     challenges = relationship("Challenge", back_populates="topic")
