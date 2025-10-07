@@ -24,7 +24,7 @@ from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
 from app.features.challenges.endpoints import router as challenges_router, questions_router as challenge_questions_router
 from app.features.dashboard.endpoints import router as dashboard_router
-from app.features.submissions.endpoints import router as submissions_router
+from app.features.submissions.endpoints import router as submissions_router, router_mixed as submissions_router_mixed
 from app.features.analytics.endpoints import router as analytics_router
 from app.common.deps import get_current_user
 from app.common.middleware import SessionManagementMiddleware
@@ -137,6 +137,7 @@ app.include_router(slides_router, dependencies=protected_deps)
 app.include_router(slides_download_router, dependencies=protected_deps) 
 app.include_router(notifications_router, dependencies=protected_deps) 
 app.include_router(submissions_router, dependencies=protected_deps)
+app.include_router(submissions_router_mixed, dependencies=protected_deps)
 app.include_router(analytics_router)
 # vonani
 app.include_router(admin_router)
