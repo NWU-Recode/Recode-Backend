@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -15,14 +16,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.Core.config import get_settings
 
 from app.Auth.routes import router as auth_router
-from app.features.slidesDownload.endpoints import router as slides_download_router  # Your slides endpoint
-from app.features.slides.endpoints import router as slides_router  # Legacy slides
+from app.features.slidesDownload.endpoints import router as slides_download_router 
+from app.features.notifications.endpoints import router as notifications_router 
+from app.features.slides.endpoints import router as slides_router  
 from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
 from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
 from app.features.challenges.endpoints import router as challenges_router, questions_router as challenge_questions_router
 from app.features.dashboard.endpoints import router as dashboard_router
-from app.features.submissions.endpoints import router as submissions_router
+from app.features.submissions.endpoints import router as submissions_router, router_mixed as submissions_router_mixed
 from app.features.analytics.endpoints import router as analytics_router
 from app.common.deps import get_current_user
 from app.common.middleware import SessionManagementMiddleware
@@ -131,9 +133,11 @@ app.include_router(judge0_protected_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(challenge_questions_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
-app.include_router(slides_router, dependencies=protected_deps)           # Legacy slides
-app.include_router(slides_download_router, dependencies=protected_deps)  # Your new slides endpoint
+app.include_router(slides_router, dependencies=protected_deps)          
+app.include_router(slides_download_router, dependencies=protected_deps) 
+app.include_router(notifications_router, dependencies=protected_deps) 
 app.include_router(submissions_router, dependencies=protected_deps)
+app.include_router(submissions_router_mixed, dependencies=protected_deps)
 app.include_router(analytics_router)
 # vonani
 app.include_router(admin_router)

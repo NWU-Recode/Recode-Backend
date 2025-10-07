@@ -22,7 +22,7 @@ from app.features.achievements.schemas import CheckAchievementsRequest
 
 
 router = APIRouter(prefix="/submissions", tags=["submissions"], dependencies=[Depends(require_role("student"))])
-
+router_mixed = APIRouter(prefix="/submissions", tags=["submissions"])
 
 class BatchSubmissionsPayload(BaseModel):
     submissions: Dict[str, BatchSubmissionEntry]
@@ -105,7 +105,7 @@ async def quick_test_question_by_qid(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.get(
+@router_mixed.get(
     "/challenges/{challenge_id}/questions/{question_id}/bundle",
     response_model=QuestionBundleSchema,
     summary="(debug) Return the question bundle including tests",
@@ -113,13 +113,8 @@ async def quick_test_question_by_qid(
 async def get_question_bundle_debug(
     challenge_id: str,
     question_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role("student", "lecturer"))
 ):
-    try:
-        # student check ensures caller is authenticated
-        _ = int(current_user.id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid_student_number")
     try:
         return await submissions_service.get_question_bundle(challenge_id, question_id)
     except ValueError as exc:
