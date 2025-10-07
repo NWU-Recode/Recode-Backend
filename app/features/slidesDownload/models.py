@@ -1,8 +1,10 @@
 # app/features/slidesDownload/models.py
 
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID
 
 Base = declarative_base()  
 
@@ -17,3 +19,7 @@ class Slide(Base):
     topic_id = Column(String, nullable=True)
     detected_topic = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+
+

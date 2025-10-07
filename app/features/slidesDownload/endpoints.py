@@ -1,10 +1,11 @@
 from typing import List, Optional
 from fastapi import APIRouter, Query, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.DB.session import get_db
 from . import service
 from . import schemas
+
+
 
 
 router = APIRouter(prefix="/slides", tags=["SlidesDownload"])
@@ -63,5 +64,26 @@ async def download_slide(slide_id: int, ttl: int = 300, db: AsyncSession = Depen
         signed_url=url,
         expires_in=ttl,
     )
+
+
+@router.get("/by-challenge/{challenge_id}", response_model=List[schemas.SlideMetadata])
+async def get_slides_by_challenge(challenge_id: str, db: AsyncSession = Depends(get_db)):
+    slides = await service.fetch_slides_by_challenge_id(db=db, challenge_id=challenge_id)
+    if not slides:
+        raise HTTPException(status_code=404, detail="No slides found for this challenge_id")
+
+    return [
+        schemas.SlideMetadata(
+            id=s["slide_id"],
+            filename=s["filename"] or "",
+            week_number=s["week_number"],
+            module_code=s["module_code"],
+            topic_id=s["topic_id"],
+            has_file=bool(s["slides_key"]),
+            detected_topic=s["topic_title"],
+        )
+        for s in slides
+    ]
+
 
 
