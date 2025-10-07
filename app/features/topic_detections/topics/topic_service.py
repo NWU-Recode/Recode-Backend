@@ -3,11 +3,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import re
 from app.DB.supabase import get_supabase
-
 from app.features.topic_detections.topics.repository import TopicRepository
-
-from app.adapters.nlp_spacy import extract_primary_topic
-from app.features.topic_detections.topics.extractor import extract_topics_from_text
+from app.features.topic_detections.topics.extractor import extract_topics_from_slides
 
 def _slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
@@ -24,90 +21,111 @@ class TopicService:
         slide_extraction_id: Optional[int] = None,
         module_code: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create or return a topic derived from slides for a given week.
 
-        - Slug format: w{week}-{topic_key}
-
-        - Title from primary topic key (Title Case)
-
-        - Subtopics saved when provided or derivable
-
-        """
-        base = slides_url.strip().split("/")[-1] or "topic"
-        base = re.sub(r"\.[A-Za-z0-9]+$", "", base)
-        primary_key = _slugify(base) or "topic"
-        # Prefer basic NLP extraction if texts are present; combine with the
-        # dynamic multi-model extractor to improve robustness. The dynamic
-        # extractor may provide multiple phrase candidates and a domain label.
-        if slide_texts:
+        primary_key = "programming-concepts"  #Safe default
+        subtopics = []
+        
+        #extract topics using slide structure
+        if slide_texts and len(slide_texts) > 0:
+            print(f"[TopicService] Processing {len(slide_texts)} slides for week {week}")
+            
             try:
-                key, subs = extract_primary_topic(slide_texts)
-            except Exception:
-                key, subs = (None, [])
-
-            try:
-                dyn_phrases, domain = extract_topics_from_text("\n".join(slide_texts), top_n=4)
-            except Exception:
-                dyn_phrases, domain = ([], "unknown")
-
-            # Normalise primary from adapter
-            if key:
-                primary_key = key or primary_key
-
-            # If dynamic extractor signals 'coding', prefer adapter primary when available
-            # but augment subtopics with dynamic phrases (slugified) not already present.
-            subtopics = subs or []
-            try:
-                # slugify dynamic phrases
-                dyn_slugs = [_slugify(p) for p in dyn_phrases if p]
-            except Exception:
-                dyn_slugs = dyn_phrases or []
-
-            if domain == "coding":
-                # Add dyn slugs as complementary subtopics, up to 3 total
-                for s in dyn_slugs:
-                    if s not in subtopics and len(subtopics) < 3:
-                        subtopics.append(s)
-            else:
-                # If not clearly coding, but adapter gave only a generic 'topic', prefer dyn phrases
-                if (not key or key in ("topic", "topic")) and dyn_slugs:
-                    primary_key = dyn_slugs[0] or primary_key
-                    # set subtopics from dyn_slugs
-                    subtopics = dyn_slugs[1:4]
+                # Use structure-aware extraction
+                validated_topics, domain = extract_topics_from_slides(
+                    slide_texts, 
+                    top_n=5
+                )
+                
+                print(f"[TopicService] Extracted: {validated_topics}")
+                print(f"[TopicService] Domain: {domain}")
+                
+                if validated_topics and len(validated_topics) > 0:
+                    #first topic is primary (most relevant)
+                    primary_key = validated_topics[0]
+                    
+                    #rest are subtopics
+                    subtopics = validated_topics[1:4]
+                    
+                    print(f"[TopicService] Primary: {primary_key}")
+                    print(f"[TopicService] Subtopics: {subtopics}")
                 else:
-                    # Still augment with dyn phrases conservatively
-                    for s in dyn_slugs:
-                        if s not in subtopics and len(subtopics) < 3:
-                            subtopics.append(s)
+                    print(f"[TopicService] WARNING: No topics extracted for week {week}")
+                    #fallback: try to get something from first slide title
+                    if slide_texts[0]:
+                        first_slide = slide_texts[0].lower()
+                        #look for common topic indicators
+                        for indicator in ["file", "loop", "function", "class", "array", "list"]:
+                            if indicator in first_slide:
+                                primary_key = indicator
+                                print(f"[TopicService] Using fallback topic from first slide: {primary_key}")
+                                break
+                                
+            except Exception as e:
+                print(f"[TopicService] Extraction error: {e}")
+                primary_key = "programming-concepts"
         else:
-            subtopics = []
-        title = primary_key.replace("-", " ").title()
-        # Make title unique by including week number
+            print("[TopicService] No slide_texts provided")
+            #extract from filename as last resort if possible
+            base = slides_url.strip().split("/")[-1] or "topic"
+            base = re.sub(r"\.[A-Za-z0-9]+$", "", base)
+            filename_hint = _slugify(base)
+            if filename_hint and filename_hint != "topic":
+                primary_key = filename_hint
+                print(f"[TopicService] Using filename hint: {primary_key}")
+        
+        #Use overrides ONLY as fallback else it gives inaccurate topics (very vague)
+        if not primary_key or primary_key == "programming-concepts":
+            if detected_topic:
+                primary_key = detected_topic
+                print(f"[TopicService] Fallback: using detected_topic = {primary_key}")
+
+        if not subtopics:
+            if detected_subtopics:
+                subtopics = detected_subtopics
+        #slugified versions
+        primary_slug = _slugify(primary_key)
+        subtopics_slugs = [_slugify(st) for st in subtopics if st]
+        
+        #building the title
+        title = primary_slug.replace("-", " ").title()
         title = f"Week {week}: {title}"
-        slug = f"w{week:02d}-{primary_key}"
-        # Resolve module_id if module_code provided
+        slug = f"w{week:02d}-{primary_slug}"
+        
+        #resolve module_id
         module_id = None
         if module_code:
             module_id = await TopicService().resolve_module_id_by_code(module_code)
-        # Use detected_* overrides if provided
-        det_topic = detected_topic or primary_key
-        det_subs = detected_subtopics or subtopics
-        return await TopicRepository.create(
+        
+        topic_record = await TopicRepository.create(
             week=week,
             slug=slug,
             title=title,
-            subtopics=subtopics,
+            subtopics=subtopics_slugs,
             slides_key=slides_key,
-            detected_topic=det_topic,
-            detected_subtopics=det_subs,
+            detected_topic=primary_slug,
+            detected_subtopics=subtopics_slugs,
             slide_extraction_id=slide_extraction_id,
             module_code_slidesdeck=module_code,
             module_id=module_id,
         )
+    
+        # Update slide_extraction with accurate topics
+        if slide_extraction_id:
+            try:
+                client = await get_supabase()
+                await client.table("slide_extractions").update({
+                    "detected_topic": primary_slug,
+                    "detected_subtopics": subtopics_slugs
+                }).eq("id", slide_extraction_id).execute()
+                print(f"[TopicService] Updated slide_extraction {slide_extraction_id} with accurate topics")
+            except Exception as e:
+                print(f"[TopicService] Warning: Failed to update slide_extraction: {e}")
+                # Don't fail the whole operation if update fails
+        
+        return topic_record  # Return at the very end
 
     async def resolve_module_id_by_code(self, module_code: str) -> Optional[str]:
         client = await get_supabase()
-        # Directly resolve modules.id from modules.code
         try:
             resp = await client.table("modules").select("id").eq("code", str(module_code)).limit(1).execute()
             rows = resp.data or []
@@ -121,7 +139,6 @@ class TopicService:
 
     async def get_topics_from_slide_extraction(self, slide_stack_id: int) -> List[str]:
         client = await get_supabase()
-        #Fetch topics from slide_extraction table for a given slide_stack_id.
         try:
             response = await client.table("slide_extractions").select(
                 "detected_topic, detected_subtopics"
@@ -132,16 +149,13 @@ class TopicService:
 
             topics = []
             for record in response.data:
-                # Add main detected topic
                 if record.get("detected_topic"):
                     topics.append(record["detected_topic"])
 
-                # Add detected subtopics
                 if record.get("detected_subtopics"):
                     if isinstance(record["detected_subtopics"], list):
                         topics.extend(record["detected_subtopics"])
                     elif isinstance(record["detected_subtopics"], str):
-                        # If stored as JSON string, try to parse
                         try:
                             import json
                             subtopics = json.loads(record["detected_subtopics"])
@@ -150,18 +164,17 @@ class TopicService:
                         except:
                             pass
 
-            return list(set(topics))  # Remove duplicates
+            return list(set(topics))
         except Exception as e:
             print(f"Error fetching topics from slide_extraction: {e}")
             return []
 
-
-
     async def get_slide_extraction_by_week(self, week_number: int, module_code: Optional[str] = None) -> List[Dict[str, Any]]:
         client = await get_supabase()
-        # Get all slide extractions for a specific week and optional module_code (not id)
         try:
-            query = client.table("slide_extractions").select("id, module_id, week_number, detected_topic, detected_subtopics, module_code").eq("week_number", week_number)
+            query = client.table("slide_extractions").select(
+                "id, module_id, week_number, detected_topic, detected_subtopics, module_code"
+            ).eq("week_number", week_number)
             if module_code is not None:
                 query = query.eq("module_code", str(module_code))
             response = await query.execute()
@@ -171,7 +184,6 @@ class TopicService:
             return []
 
     async def get_all_topics_for_week(self, week_number: int, module_code: Optional[str] = None) -> List[str]:
-        # Get all unique topics for a specific week and module_code
         slide_extractions = await self.get_slide_extraction_by_week(week_number, module_code)
         all_topics = []
         for extraction in slide_extractions:
@@ -192,7 +204,6 @@ class TopicService:
 
     async def get_topics_for_module_week(self, module_code: str, week_number: int) -> List[str]:
         client = await get_supabase()
-        # Exact query: select topics for given module_code and week number.
         try:
             rows: List[Dict[str, Any]] = []
             base = client.table("slide_extractions").select("detected_topic, detected_subtopics")
@@ -220,7 +231,6 @@ class TopicService:
             return []
 
     async def update_slide_extraction_id(self, topic_uuid: str, slide_extraction_id: int) -> None:
-        """Update the slide_extraction_id for a topic."""
         client = await get_supabase()
         try:
             await client.table("topic").update({
