@@ -5,6 +5,8 @@ from . import repository
 import os
 from supabase import create_client
 from dotenv import load_dotenv
+from sqlalchemy import text
+from app.features.slidesDownload.repository import get_slides_by_challenge_id
 
 load_dotenv()
 # Initialize Supabase client
@@ -32,5 +34,33 @@ async def generate_signed_url(slides_key: str, ttl: int = 300) -> str:
         raise FileNotFoundError(f"File '{slides_key}' not found in bucket '{bucket_name}'")
 
     return signed_url['signedURL']
+async def fetch_slides_by_challenge_id(db: AsyncSession, challenge_id: str):
+    query = text("""
+        SELECT 
+            c.title AS challenge_title,
+            t.title AS topic_title,
+            se.id AS slide_id,
+            se.filename,
+            se.slides AS slides_key,
+            t.id AS topic_id,
+            t.module_code_slidesdeck AS module_code,
+            c.week_number AS week_number
+        FROM 
+            challenges c
+        JOIN 
+            topic t 
+            ON t.week = c.week_number 
+            AND t.module_code_slidesdeck = c.module_code
+        JOIN 
+            slide_extractions se 
+            ON se.id = t.slide_extraction_id
+        WHERE 
+            c.id = :challenge_id
+    """)
+    result = db.execute(query, {"challenge_id": challenge_id})
+
+    rows = result.mappings().all()  # This is okay
+    return rows
+
 
 
