@@ -96,7 +96,7 @@ class TopicService:
         if module_code:
             module_id = await TopicService().resolve_module_id_by_code(module_code)
         
-        return await TopicRepository.create(
+        topic_record = await TopicRepository.create(
             week=week,
             slug=slug,
             title=title,
@@ -108,6 +108,21 @@ class TopicService:
             module_code_slidesdeck=module_code,
             module_id=module_id,
         )
+    
+        # Update slide_extraction with accurate topics
+        if slide_extraction_id:
+            try:
+                client = await get_supabase()
+                await client.table("slide_extractions").update({
+                    "detected_topic": primary_slug,
+                    "detected_subtopics": subtopics_slugs
+                }).eq("id", slide_extraction_id).execute()
+                print(f"[TopicService] Updated slide_extraction {slide_extraction_id} with accurate topics")
+            except Exception as e:
+                print(f"[TopicService] Warning: Failed to update slide_extraction: {e}")
+                # Don't fail the whole operation if update fails
+        
+        return topic_record  # Return at the very end
 
     async def resolve_module_id_by_code(self, module_code: str) -> Optional[str]:
         client = await get_supabase()
