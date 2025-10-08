@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, Text, Integer, DateTime, Enum, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from app.DB.base import Base
@@ -57,6 +58,9 @@ class Challenge(Base):
     kind = Column(Enum(ChallengeKind), nullable=False)
     slug = Column(String, unique=True, index=True)
     status = Column(Enum(ChallengeStatus), nullable=False)
+
+    # Relationships
+    topic = relationship("Topic", back_populates="challenges")
 
     def __repr__(self):
         return f"<Challenge(id={self.id}, title={self.title}, tier={self.tier})>"

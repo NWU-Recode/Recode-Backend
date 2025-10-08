@@ -1,0 +1,25 @@
+{
+  "duration_seconds": 300,
+  "submissions": {
+    "830d02fc-6d0e-417f-8f96-8f3a67634492": {
+      "language_id": 71,
+      "source_code": "# Read student information and create a tuple\nname = input()\ngrade = int(input())\n\n# Create and print the tuple\nstudent = (name, grade)\nprint(student)"
+    },
+    "1c9b5dbf-32f7-4f6e-aea7-7a64300c2f43": {
+      "language_id": 71,
+      "source_code": "# Read coordinates\nx = int(input())\ny = int(input())\n\n# Create coordinate tuple\ncoordinate = (x, y)\n\n# Access and print parts\nprint(f\"X: {coordinate[0]}\")\nprint(f\"Y: {coordinate[1]}\")"
+    },
+    "fbb81d33-3b67-432d-ae5b-d7a827b25a6d": {
+      "language_id": 71,
+      "source_code": "# Read number of games\nn = int(input())\n\n# Initialize totals\nplayer1_total = 0\nplayer2_total = 0\n\n# Process each game score pair\nfor i in range(n):\n    scores = input().split()\n    score1 = int(scores[0])\n    score2 = int(scores[1])\n    \n    # Add to totals\n    player1_total += score1\n    player2_total += score2\n\n# Print totals\nprint(player1_total)\nprint(player2_total)"
+    },
+    "297db452-f56c-42bb-8c03-b4069f8567c5": {
+      "language_id": 71,
+      "source_code": "# Read number of days\nn = int(input())\n\n# Read first day to initialize\nfirst_data = input().split()\nmax_temp = int(first_data[1])\nmin_temp = int(first_data[1])\nmax_day = first_data[0]\nmin_day = first_data[0]\n\n# Process remaining days\nfor i in range(n - 1):\n    data = input().split()\n    day = data[0]\n    temp = int(data[1])\n    \n    if temp > max_temp:\n        max_temp = temp\n        max_day = day\n    if temp < min_temp:\n        min_temp = temp\n        min_day = day\n\n# Print results\nprint(max_day)\nprint(min_day)"
+    },
+    "83853eb0-2444-47bc-b6a7-63db3f48e9ae": {
+      "language_id": 71,
+      "source_code": "# Read number of books\nn = int(input())\n\n# Read books and store as tuples\nbooks = []\nfor i in range(n):\n    data = input().split()\n    title = data[0]\n    year = int(data[1])\n    books.append((title, year))\n\n# Sort by year (second element of tuple)\nbooks.sort(key=lambda book: book[1])\n\n# Print sorted books\nfor book in books:\n    print(f\"{book[0]} {book[1]}\")"
+    }
+  }
+}

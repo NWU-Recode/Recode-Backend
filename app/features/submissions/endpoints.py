@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Body
@@ -19,6 +20,8 @@ from app.features.submissions.repository import submissions_repository
 from app.features.challenges.repository import challenge_repository
 from app.features.achievements.service import achievements_service
 from app.features.achievements.schemas import CheckAchievementsRequest
+
+logger = logging.getLogger("submissions")
 
 
 router = APIRouter(prefix="/submissions", tags=["submissions"], dependencies=[Depends(require_role("student"))])
@@ -183,10 +186,14 @@ async def submit_challenge(
 ):
     """Full snapshot submit flow using expected-output grading for each question."""
     # payload validation is handled by BatchSubmissionsPayload defined at module scope
+    
+    logger.info(f"🚀 SUBMIT_CHALLENGE CALLED: challenge={challenge_id[:8]}, user={current_user.id}")
 
     try:
         student_number = int(current_user.id)
-    except Exception:
+        logger.info(f"   ✅ Student number converted: {student_number}")
+    except Exception as e:
+        logger.error(f"   ❌ Failed to convert user_id to int: {e}")
         raise HTTPException(status_code=400, detail="invalid_student_number")
     try:
         attempt = await challenge_repository.create_or_get_open_attempt(challenge_id, student_number)
@@ -252,8 +259,15 @@ async def submit_challenge(
         }
         performance_payload = {k: v for k, v in performance_payload.items() if v is not None}
 
+        logger.info(f"🚀 REACHED ACHIEVEMENT BLOCK! student_number={student_number}, type={type(student_number)}")
+        logger.info(f"📋 Performance payload: {performance_payload}")
+        logger.info(f"📊 Breakdown ELO: {breakdown.elo_delta}, Badges: {breakdown.badge_tiers_awarded}")
+        
         achievement_summary = None
         try:
+            logger.info(f"🎯 STARTING ACHIEVEMENT PROCESSING for student {student_number}")
+            logger.info(f"   ELO Delta: {breakdown.elo_delta}, Badge Tiers: {breakdown.badge_tiers_awarded}")
+            
             achievement_summary = await achievements_service.check_achievements(
                 str(student_number),
                 CheckAchievementsRequest(
@@ -263,7 +277,60 @@ async def submit_challenge(
                     performance=performance_payload if performance_payload else None,
                 ),
             )
-        except Exception:
+            
+            logger.info(f"✅ Achievement summary created: ELO={achievement_summary.updated_elo if achievement_summary else 'None'}")
+            
+            # Update user_question_progress for each question
+            from app.features.achievements.repository import AchievementsRepository
+            achievements_repo = AchievementsRepository()
+            
+            for question_result in breakdown.question_results:
+                try:
+                    logger.info(f"📝 Updating question_progress for Q:{question_result.question_id[:8]}")
+                    await achievements_repo.update_question_progress(
+                        user_id=str(student_number),
+                        question_id=str(question_result.question_id),
+                        challenge_id=str(breakdown.challenge_id),
+                        attempt_id=str(attempt_id),
+                        tests_passed=question_result.tests_passed or 0,
+                        tests_total=question_result.tests_total or 0,
+                        elo_earned=question_result.elo_awarded or 0,
+                        gpa_contribution=question_result.gpa_awarded or 0,
+                    )
+                    logger.info(f"   ✅ Question progress updated")
+                except Exception as qp_err:
+                    logger.warning(f"   ❌ Failed to update question_progress: {qp_err}")
+                    pass  # Silently ignore if table doesn't exist
+            
+            # Update user_scores table with overall stats
+            if achievement_summary:
+                try:
+                    # Count total questions attempted and passed
+                    questions_attempted = len(breakdown.question_results)
+                    questions_passed = len(breakdown.passed_questions)
+                    challenges_completed = 1 if questions_passed >= (questions_attempted * 0.5) else 0  # 50% pass threshold
+                    total_badges = len(achievement_summary.unlocked_badges) if achievement_summary.unlocked_badges else 0
+                    
+                    logger.info(f"📊 Updating user_scores: attempted={questions_attempted}, passed={questions_passed}, badges={total_badges}")
+                    
+                    await achievements_repo.update_user_scores(
+                        user_id=str(student_number),
+                        elo=achievement_summary.updated_elo,
+                        gpa=achievement_summary.gpa,
+                        questions_attempted=questions_attempted,
+                        questions_passed=questions_passed,
+                        challenges_completed=challenges_completed,
+                        badges=total_badges,
+                    )
+                    
+                    logger.info(f"   ✅ user_scores updated successfully")
+                except Exception as scores_err:
+                    logger.warning(f"   ❌ Failed to update user_scores: {scores_err}")
+            else:
+                logger.warning(f"⚠️ No achievement_summary - skipping user_scores update")
+                    
+        except Exception as achievement_err:
+            logger.error(f"❌ Achievement processing failed: {achievement_err}")
             achievement_summary = None
 
         result_payload = {

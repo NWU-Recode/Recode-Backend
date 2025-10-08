@@ -1,0 +1,25 @@
+{
+  "duration_seconds": 300,
+  "submissions": {
+    "6363385e-ff33-464b-a106-c6a6ae74018e": {
+      "language_id": 71,
+      "source_code": "name = input()\nage = int(input())\nstudent = (name, age)\nprint(student)"
+    },
+    "c672ca99-0355-444b-837f-4834e811d872": {
+      "language_id": 71,
+      "source_code": "x = int(input())\ny = int(input())\npoint = (x, y)\nprint(f\"X: {point[0]}\")\nprint(f\"Y: {point[1]}\")"
+    },
+    "388a2b21-bab3-44a0-bd02-907adeebf686": {
+      "language_id": 71,
+      "source_code": "n = int(input())\nnumbers = tuple(map(int, input().split()))\ntarget = int(input())\ncount = numbers.count(target)\nprint(count)"
+    },
+    "77bdcd12-700e-4215-bf19-2ff134f1f33d": {
+      "language_id": 71,
+      "source_code": "n = int(input())\nstudents = []\nfor i in range(n):\n    line = input().split()\n    name = line[0]\n    score = int(line[1])\n    students.append((name, score))\nhighest_score = -1\nbest_student = \"\"\nfor student in students:\n    name, score = student\n    if score > highest_score:\n        highest_score = score\n        best_student = name\nprint(best_student)"
+    },
+    "7070bee5-088c-471c-af8b-9cbeb69ad4e8": {
+      "language_id": 71,
+      "source_code": "temperature_data = []\nfor i in range(7):\n    line = input().split()\n    day = line[0]\n    temp = int(line[1])\n    temperature_data.append((day, temp))\nhighest_temp = temperature_data[0][1]\nlowest_temp = temperature_data[0][1]\nhighest_day = temperature_data[0][0]\nlowest_day = temperature_data[0][0]\ntotal_temp = 0\ndays_above_20 = 0\nfor day, temp in temperature_data:\n    if temp > highest_temp:\n        highest_temp = temp\n        highest_day = day\n    if temp < lowest_temp:\n        lowest_temp = temp\n        lowest_day = day\n    total_temp += temp\n    if temp > 20:\n        days_above_20 += 1\naverage_temp = total_temp / 7\nprint(highest_day)\nprint(lowest_day)\nprint(f\"{average_temp:.1f}\")\nprint(days_above_20)"
+    }
+  }
+}

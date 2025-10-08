@@ -232,6 +232,21 @@ class AchievementsService:
             semester_start=semester_start,
             semester_end=semester_end,
         )
+        
+        # Update user_scores table with overall metrics
+        questions_passed = summary.passed
+        questions_attempted = summary.passed + summary.failed
+        challenges_completed = 1 if summary.ratio >= 0.5 else 0  # 50% threshold
+        await self.repo.update_user_scores(
+            user_id,
+            elo=new_elo,
+            gpa=gpa,
+            questions_attempted=questions_attempted,
+            questions_passed=questions_passed,
+            challenges_completed=challenges_completed,
+            badges=0,  # Will be updated separately when badges are awarded
+        )
+        
         await self._maybe_log_elo_event(
             user_id,
             summary,
@@ -316,7 +331,13 @@ class AchievementsService:
         )
 
     async def check_achievements(self, user_id: str, req: CheckAchievementsRequest) -> CheckAchievementsResponse:
+        import logging
+        logger = logging.getLogger("achievements")
+        logger.info(f"🏆 check_achievements CALLED for user {user_id}, submission {req.submission_id}")
+        
         summary = await self._load_attempt_summary(req.submission_id, user_id)
+        logger.info(f"   Loaded attempt summary: tier={summary.tier}, badges={req.badge_tiers}")
+        
         if not isinstance(summary.metadata, dict):
             summary.metadata = {}
         if req.performance:
@@ -353,6 +374,10 @@ class AchievementsService:
 
         new_elo = max(BASE_ELO, min(MAX_ELO, old_elo + delta))
         gpa = await self._compute_running_gpa(user_id)
+        
+        logger.info(f"   ELO: {old_elo} + {delta} = {new_elo}, GPA: {gpa}")
+        logger.info(f"   Calling update_user_elo...")
+        
         await self.repo.update_user_elo(
             user_id,
             elo_points=new_elo,
@@ -361,7 +386,12 @@ class AchievementsService:
             semester_id=semester_id,
             semester_start=semester_start,
             semester_end=semester_end,
+            elo_delta=delta,  # Pass delta to track total_awarded_elo
         )
+        
+        logger.info(f"   ✅ update_user_elo completed")
+        logger.info(f"   Calling _maybe_log_elo_event...")
+        
         await self._maybe_log_elo_event(
             user_id,
             summary,
@@ -649,19 +679,25 @@ class AchievementsService:
         semester_start: Optional[date] = None,
         semester_end: Optional[date] = None,
     ) -> None:
+        # Build payload with CORRECT column names for elo_events table
         payload = {
-            "user_id": user_id,
-            "challenge_id": summary.challenge_id,
             "challenge_attempt_id": summary.attempt_id,
-            "tier": summary.tier,
-            "delta": delta,
-            "result_ratio": summary.ratio,
-            "new_elo": new_elo,
-            "gpa_snapshot": gpa,
-            "recorded_at": datetime.utcnow().isoformat() + "Z",
+            "elo_change": delta,  # Renamed from "delta"
+            "elo_before": new_elo - delta,
+            "elo_after": new_elo,  # Renamed from "new_elo"
+            "event_type": "challenge_completion",
+            "created_at": datetime.utcnow().isoformat() + "Z",
         }
-        if reasons:
-            payload["reasons"] = reasons
+        
+        # Add student_id as integer if user_id is numeric
+        try:
+            payload["student_id"] = int(user_id)
+        except (ValueError, TypeError):
+            # If user_id is UUID, we can't use it for student_id
+            # The table may also have user_id as UUID, so add it too
+            payload["user_id"] = user_id
+        
+        # Add optional fields
         if summary.module_code:
             payload["module_code"] = summary.module_code
         if semester_id:
@@ -670,6 +706,10 @@ class AchievementsService:
             payload["semester_start"] = semester_start.isoformat()
         if semester_end:
             payload["semester_end"] = semester_end.isoformat()
+        if reasons:
+            payload["reasons"] = reasons
+        
+        # Add metadata from summary
         meta = summary.metadata if isinstance(summary.metadata, dict) else {}
         performance = meta.get("performance") if isinstance(meta.get("performance"), dict) else None
         if performance:
@@ -677,6 +717,7 @@ class AchievementsService:
         override = meta.get("elo_delta_override")
         if override is not None:
             payload["elo_override"] = override
+        
         try:
             await self.repo.log_elo_event(payload)
         except Exception:  # pragma: no cover - logging best effort

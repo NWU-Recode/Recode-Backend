@@ -783,14 +783,11 @@ async def _insert_challenge(
 
     if is_weekly:
         payload["week_number"] = effective_week
-        # Do not explicitly set the `tier` enum for weekly challenges. Different
-        # deployments may use different legacy enum members; leave relaxed matching in place
-        # the column unset so DB defaults or downstream logic can normalise it.
-        pass
+        # Explicitly set tier for weekly challenges (always "base")
+        payload["tier"] = "base"
     else:
-        # Do not set the `tier` enum value explicitly; deployments may use different
-        # enum labels. Keep week number and trigger_event metadata but leave tier
-        # unset so DB defaults or downstream logic can normalise it as needed.
+        # Explicitly set tier for special challenges (ruby/emerald/diamond)
+        payload["tier"] = tier
         if tier == "diamond":
             payload["week_number"] = 12
         else:
@@ -1157,6 +1154,13 @@ async def generate_and_save_tier(
                             qrow.setdefault("_persisted_tests", persisted_count)
                             if persisted_rows:
                                 qrow.setdefault("testcases", persisted_rows)
+                            # Always log test persistence summary (not just in debug mode)
+                            if tests:
+                                logger.info(f"Question {qid}: Persisted {persisted_count}/{len(tests)} test cases")
+                                if persisted_count < len(tests):
+                                    logger.warning(f"Question {qid}: {len(tests) - persisted_count} test cases FAILED to persist!")
+                                elif persisted_count == 0:
+                                    logger.error(f"Question {qid}: ALL {len(tests)} test cases FAILED to persist!")
                         except Exception:
                             pass
                         return qrow
@@ -1173,7 +1177,11 @@ async def generate_and_save_tier(
             # Fallback: return a minimal representation and include an error note
             return {"id": None, "challenge_id": challenge_id, "question_number": order_index, "sub_number": 0, "_error": "persist_failed"}
 
+        # Log test generation summary before attempting persistence
+        logger.info(f"Challenge {challenge.get('id')}: Processing {len(questions)} questions")
         for idx, question in enumerate(questions, start=1):
+            tests = question.get("tests") or []
+            logger.info(f"  Question {idx}: Has {len(tests)} tests in generated data")
             stored.append(await _insert_question(client, challenge_id=challenge.get("id"), question=question, order_index=idx))
     topics_joined = context.joined_topics()
     topics_count = len([item for item in topics_joined.split(",") if item.strip()])
