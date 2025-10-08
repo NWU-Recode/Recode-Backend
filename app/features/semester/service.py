@@ -26,14 +26,14 @@ class SemesterService:
     @staticmethod
     def list_semesters() -> List[SemesterResponse]:
         semesters = SemesterRepository.list_semesters()
-        return [SemesterResponse.from_orm(s) for s in semesters]
+        return [SemesterResponse.model_validate(s) for s in semesters]
 
     @staticmethod
     def current_semester() -> SemesterResponse:
         current = SemesterRepository.get_current_semester()
         if not current:
             raise ValueError("No current semester found")
-        return SemesterResponse.from_orm(current)
+        return SemesterResponse.model_validate(current)
     
     @staticmethod
     def get_user_modules(semester_id: str, user_id: str) -> List[ModuleResponse]:
