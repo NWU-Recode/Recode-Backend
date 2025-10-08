@@ -331,7 +331,13 @@ class AchievementsService:
         )
 
     async def check_achievements(self, user_id: str, req: CheckAchievementsRequest) -> CheckAchievementsResponse:
+        import logging
+        logger = logging.getLogger("achievements")
+        logger.info(f"🏆 check_achievements CALLED for user {user_id}, submission {req.submission_id}")
+        
         summary = await self._load_attempt_summary(req.submission_id, user_id)
+        logger.info(f"   Loaded attempt summary: tier={summary.tier}, badges={req.badge_tiers}")
+        
         if not isinstance(summary.metadata, dict):
             summary.metadata = {}
         if req.performance:
@@ -368,6 +374,10 @@ class AchievementsService:
 
         new_elo = max(BASE_ELO, min(MAX_ELO, old_elo + delta))
         gpa = await self._compute_running_gpa(user_id)
+        
+        logger.info(f"   ELO: {old_elo} + {delta} = {new_elo}, GPA: {gpa}")
+        logger.info(f"   Calling update_user_elo...")
+        
         await self.repo.update_user_elo(
             user_id,
             elo_points=new_elo,
@@ -376,7 +386,12 @@ class AchievementsService:
             semester_id=semester_id,
             semester_start=semester_start,
             semester_end=semester_end,
+            elo_delta=delta,  # Pass delta to track total_awarded_elo
         )
+        
+        logger.info(f"   ✅ update_user_elo completed")
+        logger.info(f"   Calling _maybe_log_elo_event...")
+        
         await self._maybe_log_elo_event(
             user_id,
             summary,

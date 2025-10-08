@@ -1,0 +1,25 @@
+{
+  "duration_seconds": 300,
+  "submissions": {
+    "question_6363385e-ff33-464b-a106-c6a6ae74018e": {
+      "language_id": 71,
+      "source_code": "# Read student information and create a tuple\nname = input()\nage = int(input())\n\n# Create and print the tuple\nstudent = (name, age)\nprint(student)"
+    },
+    "question_c672ca99-0355-444b-837f-4834e811d872": {
+      "language_id": 71,
+      "source_code": "# Read coordinates\nx = int(input())\ny = int(input())\n\n# Create tuple and access elements\npoint = (x, y)\nprint(f\"X: {point[0]}\")\nprint(f\"Y: {point[1]}\")"
+    },
+    "question_388a2b21-bab3-44a0-bd02-907adeebf686": {
+      "language_id": 71,
+      "source_code": "# Read the data\nn = int(input())\nnumbers = tuple(map(int, input().split()))\ntarget = int(input())\n\n# Count occurrences\ncount = numbers.count(target)\nprint(count)"
+    },
+    "question_77bdcd12-700e-4215-bf19-2ff134f1f33d": {
+      "language_id": 71,
+      "source_code": "# Read number of students\nn = int(input())\n\n# Process each student record\nstudents = []\nfor i in range(n):\n    line = input().split()\n    name = line[0]\n    score = int(line[1])\n    # Store as tuple\n    students.append((name, score))\n\n# Find student with highest score\nhighest_score = -1\nbest_student = \"\"\nfor student in students:\n    name, score = student  # Tuple unpacking\n    if score > highest_score:\n        highest_score = score\n        best_student = name\n\nprint(best_student)"
+    },
+    "question_7070bee5-088c-471c-af8b-9cbeb69ad4e8": {
+      "language_id": 71,
+      "source_code": "# Read temperature data for 7 days\ntemperature_data = []\nfor i in range(7):\n    line = input().split()\n    day = line[0]\n    temp = int(line[1])\n    # Store as tuple\n    temperature_data.append((day, temp))\n\n# Analyze the data\nhighest_temp = temperature_data[0][1]\nlowest_temp = temperature_data[0][1]\nhighest_day = temperature_data[0][0]\nlowest_day = temperature_data[0][0]\ntotal_temp = 0\ndays_above_20 = 0\n\nfor day, temp in temperature_data:\n    # Track highest and lowest\n    if temp > highest_temp:\n        highest_temp = temp\n        highest_day = day\n    if temp < lowest_temp:\n        lowest_temp = temp\n        lowest_day = day\n    \n    # Sum for average\n    total_temp += temp\n    \n    # Count days above 20\n    if temp > 20:\n        days_above_20 += 1\n\n# Calculate average\naverage_temp = total_temp / 7\n\n# Print results\nprint(highest_day)\nprint(lowest_day)\nprint(f\"{average_temp:.1f}\")\nprint(days_above_20)"
+    }
+  }
+}

@@ -224,6 +224,7 @@ class AchievementsRepository:
         semester_id: Optional[str] = None,
         semester_start: Optional[date] = None,
         semester_end: Optional[date] = None,
+        elo_delta: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         # Determine if user_id is an integer (profile_id) or UUID
         profile_id = None
@@ -235,6 +236,7 @@ class AchievementsRepository:
             
         payload: Dict[str, Any] = {
             "elo_points": elo_points,
+            "current_elo": elo_points,  # Also update current_elo field
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         if gpa is not None:
@@ -247,9 +249,31 @@ class AchievementsRepository:
             payload.setdefault("semester_start", semester_start.isoformat())
         if semester_end is not None:
             payload.setdefault("semester_end", semester_end.isoformat())
-            
-        client = await self._client()
         
+        # If elo_delta is positive, update total_awarded_elo and last_awarded_at
+        if elo_delta is not None and elo_delta > 0:
+            payload["last_awarded_at"] = datetime.now(timezone.utc).isoformat()
+            # We need to increment total_awarded_elo, so first fetch current value
+            client = await self._client()
+            if profile_id is not None:
+                current_query = client.table("user_elo").select("total_awarded_elo").eq("student_id", profile_id)
+            else:
+                current_query = client.table("user_elo").select("total_awarded_elo").eq("user_id", uuid_user_id)
+            
+            try:
+                current_resp = await self._execute(current_query.execute(), op="user_elo.select_total")
+                current_data = getattr(current_resp, "data", None)
+                if current_data and len(current_data) > 0:
+                    current_total = current_data[0].get("total_awarded_elo") or 0
+                    payload["total_awarded_elo"] = current_total + elo_delta
+                else:
+                    payload["total_awarded_elo"] = elo_delta
+            except Exception:
+                # If we can't fetch, just set it to the delta
+                payload["total_awarded_elo"] = elo_delta
+        else:
+            client = await self._client()
+            
         # Query by the appropriate ID field
         if profile_id is not None:
             query = client.table("user_elo").update(payload).eq("student_id", profile_id)
@@ -293,7 +317,10 @@ class AchievementsRepository:
         challenges_completed: int = 0,
         badges: int = 0,
     ) -> None:
-        """Update or insert user_scores table with overall performance metrics."""
+        """Update or insert user_scores table with overall performance metrics.
+        For counters (questions_attempted, etc.), this INCREMENTS the existing values.
+        For elo/gpa, this REPLACES the values with the new ones.
+        """
         # Detect if user_id is integer or UUID
         profile_id = None
         try:
@@ -304,48 +331,83 @@ class AchievementsRepository:
         
         client = await self._client()
         
-        # Try to update first
+        # First, try to fetch current values
         try:
-            update_payload = {
-                "elo": elo,
-                "gpa": gpa,
-                "last_updated": datetime.now(timezone.utc).isoformat(),
-            }
-            if questions_attempted > 0:
-                update_payload["total_questions_attempted"] = questions_attempted
-            if questions_passed > 0:
-                update_payload["total_questions_passed"] = questions_passed
-            if challenges_completed > 0:
-                update_payload["total_challenges_completed"] = challenges_completed
-            if badges > 0:
-                update_payload["total_badges"] = badges
-            
-            resp = await self._execute(
+            current_resp = await self._execute(
                 client.table("user_scores")
-                .update(update_payload)
+                .select("*")
                 .eq("student_id", profile_id)
                 .execute(),
-                op="user_scores.update"
+                op="user_scores.select"
             )
+            current_data = getattr(current_resp, "data", None)
             
-            if not getattr(resp, "data", None):
-                # No rows updated, try insert
+            if current_data and len(current_data) > 0:
+                # Record exists, increment counters
+                current = current_data[0]
+                update_payload = {
+                    "elo": elo,
+                    "gpa": gpa,
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                    "total_completed_questions": (current.get("total_completed_questions") or 0) + questions_attempted,
+                }
+                
+                # Only increment if we have new values
+                if questions_attempted > 0 or questions_passed > 0:
+                    # Increment questions_attempted if column exists
+                    if "total_questions_attempted" in str(current):
+                        update_payload["total_questions_attempted"] = (current.get("total_questions_attempted") or 0) + questions_attempted
+                    # Increment questions_passed if column exists
+                    if "total_questions_passed" in str(current):
+                        update_payload["total_questions_passed"] = (current.get("total_questions_passed") or 0) + questions_passed
+                
+                if challenges_completed > 0:
+                    if "total_challenges_completed" in str(current):
+                        update_payload["total_challenges_completed"] = (current.get("total_challenges_completed") or 0) + challenges_completed
+                
+                if badges > 0:
+                    if "total_badges" in str(current):
+                        update_payload["total_badges"] = (current.get("total_badges") or 0) + badges
+                
+                # Calculate total_earned_elo as difference from base ELO (1000 or 1200)
+                base_elo = 1000  # From table default
+                update_payload["total_earned_elo"] = max(0, elo - base_elo)
+                
+                await self._execute(
+                    client.table("user_scores")
+                    .update(update_payload)
+                    .eq("student_id", profile_id)
+                    .execute(),
+                    op="user_scores.update"
+                )
+            else:
+                # No record exists, insert new one
                 insert_payload = {
                     "student_id": profile_id,
                     "elo": elo,
-                    "total_earned_elo": elo - 1500,  # Assuming 1500 is starting ELO
+                    "total_earned_elo": max(0, elo - 1000),  # Base ELO from table default
                     "gpa": gpa,
-                    "total_questions_attempted": questions_attempted,
-                    "total_questions_passed": questions_passed,
-                    "total_challenges_completed": challenges_completed,
-                    "total_badges": badges,
+                    "total_completed_questions": questions_attempted,
                 }
+                
+                # Only add fields if they have values
+                if questions_attempted > 0:
+                    insert_payload["total_questions_attempted"] = questions_attempted
+                if questions_passed > 0:
+                    insert_payload["total_questions_passed"] = questions_passed
+                if challenges_completed > 0:
+                    insert_payload["total_challenges_completed"] = challenges_completed
+                if badges > 0:
+                    insert_payload["total_badges"] = badges
+                
                 await self._execute(
                     client.table("user_scores").insert(insert_payload).execute(),
                     op="user_scores.insert"
                 )
         except Exception as e:
-            # Table might not exist yet, ignore silently
+            # Table might not exist yet, log and ignore
+            import logging
+            logging.getLogger("achievements.repository").debug(f"Failed to update user_scores: {e}")
             pass
 
     async def update_question_progress(
