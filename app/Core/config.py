@@ -32,6 +32,14 @@ class Settings:
             self.judge0_timeout_s = float(os.getenv("JUDGE0_TIMEOUT", "30"))
         except Exception:
             self.judge0_timeout_s = 30.0
+        try:
+            self.judge0_small_batch_concurrency = int(os.getenv("JUDGE0_SMALL_BATCH_CONCURRENCY", "4"))
+        except Exception:
+            self.judge0_small_batch_concurrency = 4
+        try:
+            self.judge0_batch_poll_concurrency = int(os.getenv("JUDGE0_BATCH_POLL_CONCURRENCY", "8"))
+        except Exception:
+            self.judge0_batch_poll_concurrency = 8
         # Hugging Face content generation
         self.hf_api_token = os.getenv("HUGGINGFACE_API_TOKEN", "")
         self.hf_model_id = os.getenv("HF_MODEL_ID", "mistralai/Mistral-7B-Instruct-v0.3")

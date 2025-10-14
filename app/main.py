@@ -24,7 +24,7 @@ from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
 from app.features.challenges.endpoints import router as challenges_router, questions_router as challenge_questions_router
 from app.features.dashboard.endpoints import router as dashboard_router
-from app.features.submissions.endpoints import router as submissions_router
+from app.features.submissions.endpoints import router as submissions_router, router_mixed as submissions_router_mixed
 from app.features.analytics.endpoints import router as analytics_router
 from app.common.deps import get_current_user
 from app.common.middleware import SessionManagementMiddleware
@@ -32,6 +32,7 @@ from app.common.middleware import SessionManagementMiddleware
 from app.features.admin.endpoints import router as admin_router
 from app.features.students.endpoints import router as student_router
 from app.features.semester.endpoints import router as semester_router
+from routes.debug import router as debug_router
 
 
 app = FastAPI(title="Recode Backend")
@@ -136,11 +137,13 @@ app.include_router(slides_router, dependencies=protected_deps)
 app.include_router(slides_download_router, dependencies=protected_deps) 
 app.include_router(notifications_router, dependencies=protected_deps) 
 app.include_router(submissions_router, dependencies=protected_deps)
+app.include_router(submissions_router_mixed, dependencies=protected_deps)
 app.include_router(analytics_router)
 # vonani
 app.include_router(admin_router)
 app.include_router(semester_router)
 app.include_router(student_router)
+app.include_router(debug_router, prefix="/debug", tags=["debug"])
 
 # Static files
 static_dir = os.path.join(os.path.dirname(__file__), "static")

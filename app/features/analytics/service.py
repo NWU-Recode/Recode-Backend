@@ -73,9 +73,9 @@ def challenge_progress_service(
     user_id: int,
     role: str,
     module_code: str,
-    challenge_id: Optional[str] = None
+
 ):
     if role != "lecturer":
         raise HTTPException(status_code=403, detail="Access denied. Lecturer role required.")
     
-    return get_challenge_progress_per_student(db, user_id, module_code, challenge_id)
+    return get_challenge_progress_per_student(db, user_id, module_code)

@@ -47,7 +47,7 @@ def get_student_badges(
             SELECT 
                 b.badge_type::text as badge_type,
                 COUNT(ub.id) as badge_count,
-                MAX(ub.awarded_at)::text as latest_award
+                MAX(ub.date_earned)::text as latest_award
             FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
             JOIN questions q ON ub.question_id = q.id
@@ -66,7 +66,7 @@ def get_student_badges(
             SELECT 
                 b.badge_type::text as badge_type,
                 COUNT(ub.id) as badge_count,
-                MAX(ub.awarded_at)::text as latest_award
+                MAX(ub.date_earned)::text as latest_award
             FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
             JOIN questions q ON ub.question_id = q.id
@@ -117,7 +117,7 @@ def get_badge_summary(
             SELECT 
                 b.badge_type::text as badge_type,
                 COUNT(ub.id) as badge_count,
-                MAX(ub.awarded_at)::text as latest_award
+                MAX(ub.date_earned)::text as latest_award
             FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
             JOIN questions q ON ub.question_id = q.id
@@ -134,7 +134,7 @@ def get_badge_summary(
             SELECT 
                 b.badge_type::text as badge_type,
                 COUNT(ub.id) as badge_count,
-                MAX(ub.awarded_at)::text as latest_award
+                MAX(ub.date_earned)::text as latest_award
             FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
             JOIN questions q ON ub.question_id = q.id
@@ -282,113 +282,77 @@ def get_challenge_progress_per_student(
     db: Session, 
     lecturer_id: int, 
     module_code: str,
-    challenge_id: Optional[str] = None
 ):
     """
     Get student progress for challenges in a module.
-    Shows: student info, challenge name, highest badge, total time spent.
-    Time is calculated as sum of (finished_at - created_at) for all submissions.
+    Shows: student info, challenge name, highest badge, total time spent, total submissions.
     """
-    #verifying lecturer owns module
-    verify_query = text("""
-        SELECT code FROM modules 
-        WHERE code = :module_code AND lecturer_id = :lecturer_id
-    """)
-    module_check = db.execute(verify_query, {
-        "module_code": module_code,
-        "lecturer_id": lecturer_id
-    }).fetchone()
+    # Verify lecturer owns module
+    module_check = db.execute(
+        text("SELECT code FROM modules WHERE code = :module_code AND lecturer_id = :lecturer_id"),
+        {"module_code": module_code, "lecturer_id": lecturer_id}
+    ).fetchone()
     
     if not module_check:
-        raise HTTPException(
-            status_code=403,
-            detail="Module not found or access denied"
-        )
-    
-    #main query
-    base_query = """
+        raise HTTPException(status_code=403, detail="Module not found or access denied")
+    # Main query
+    query = f"""
         WITH badge_hierarchy AS (
-            SELECT 
-                'bronze'::text as badge_type, 1 as priority
-            UNION ALL SELECT 'silver'::text, 2
-            UNION ALL SELECT 'gold'::text, 3
-            UNION ALL SELECT 'ruby'::text, 4
-            UNION ALL SELECT 'emerald'::text, 5
-            UNION ALL SELECT 'diamond'::text, 6
+            SELECT 'bronze' AS badge_type, 1 AS priority
+            UNION ALL SELECT 'silver', 2
+            UNION ALL SELECT 'gold', 3
+            UNION ALL SELECT 'ruby', 4
+            UNION ALL SELECT 'emerald', 5
+            UNION ALL SELECT 'diamond', 6
         ),
         student_time_spent AS (
             SELECT 
                 cs.user_id,
-                cs.challenge_id,
-                SUM(
-                    EXTRACT(EPOCH FROM (cs.finished_at - cs.created_at)) * 1000
-                ) as time_ms,
-                COUNT(*) as submission_count
+                q.challenge_id,
+                SUM(EXTRACT(EPOCH FROM (cs.finished_at - cs.created_at)) * 1000) AS time_ms,
+                COUNT(*) AS submission_count
             FROM code_submissions cs
-            WHERE cs.challenge_id IN (
-                SELECT c.id FROM challenges c WHERE c.module_code = :module_code
-                {challenge_filter}
-            )
-            AND cs.finished_at IS NOT NULL
-            AND cs.created_at IS NOT NULL
-            GROUP BY cs.user_id, cs.challenge_id
+            JOIN questions q ON cs.question_id = q.id
+            WHERE cs.finished_at IS NOT NULL AND cs.created_at IS NOT NULL
+            GROUP BY cs.user_id, q.challenge_id
         ),
         student_badges AS (
-            SELECT 
-                ub.student_id,
-                ub.challenge_id,
-                b.badge_type::text as badge_type,
+            SELECT
+                ub.profile_id AS student_id,
+                q.challenge_id,
+                b.badge_type::text AS badge_type,
                 bh.priority
-            FROM user_badges ub
+            FROM user_badge ub
             JOIN badges b ON ub.badge_id = b.id
+            JOIN questions q ON ub.question_id = q.id
             JOIN badge_hierarchy bh ON b.badge_type::text = bh.badge_type
-            WHERE ub.challenge_id IN (
-                SELECT c.id FROM challenges c WHERE c.module_code = :module_code
-                {challenge_filter}
-            )
         )
-        SELECT 
-            p.id as student_number,
-            p.full_name as student_name,
-            c.id as challenge_id,
-            c.title as challenge_name,
+        SELECT
+            p.id AS student_number,
+            p.full_name AS student_name,
+            c.id AS challenge_id,
+            c.title AS challenge_name,
             COALESCE(
-                (SELECT sb.badge_type 
-                 FROM student_badges sb 
-                 WHERE sb.student_id = e.student_id 
-                   AND sb.challenge_id = c.id 
-                 ORDER BY sb.priority DESC 
-                 LIMIT 1),
+                (SELECT sb.badge_type
+                 FROM student_badges sb
+                 WHERE sb.student_id = e.student_id AND sb.challenge_id = c.id
+                 ORDER BY sb.priority DESC LIMIT 1),
                 'none'
-            ) as highest_badge,
-            COALESCE(sts.time_ms, 0) as total_time_ms,
-            COALESCE(sts.submission_count, 0) as total_submissions
+            ) AS highest_badge,
+            COALESCE(sts.time_ms, 0) AS total_time_ms,
+            COALESCE(sts.submission_count, 0) AS total_submissions
         FROM enrolments e
         JOIN profiles p ON e.student_id = p.id
-        CROSS JOIN challenges c
-        LEFT JOIN student_time_spent sts ON sts.user_id = e.student_id 
-            AND sts.challenge_id = c.id
+        JOIN challenges c ON c.module_code = :module_code 
+        LEFT JOIN student_time_spent sts ON sts.user_id = e.student_id AND sts.challenge_id = c.id
         WHERE e.module_id = (SELECT id FROM modules WHERE code = :module_code)
           AND e.status = 'active'
           AND p.role = 'student'
-          AND c.module_code = :module_code
-          {challenge_filter}
-        GROUP BY p.id, p.full_name, c.id, c.title, e.student_id, sts.time_ms, sts.submission_count
         ORDER BY p.full_name, c.title
     """
-    
-    #challenge filter
-    if challenge_id:
-        challenge_filter = "AND c.id = :challenge_id"
-        query = text(base_query.format(challenge_filter=challenge_filter))
-        result = db.execute(query, {
-            "module_code": module_code,
-            "challenge_id": challenge_id
-        })
-    else:
-        challenge_filter = ""
-        query = text(base_query.format(challenge_filter=challenge_filter))
-        result = db.execute(query, {"module_code": module_code})
-    
+
+    params = {"module_code": module_code}
+
+    result = db.execute(text(query), params)
     columns = result.keys()
     return [dict(zip(columns, row)) for row in result.fetchall()]
