@@ -1,3 +1,4 @@
+#app\DB\session.py
 """Session forge."""
 
 from __future__ import annotations
@@ -59,3 +60,6 @@ def get_db():
         yield db
     finally:
         db.close()
+        
+get_sync_session = get_db
+
