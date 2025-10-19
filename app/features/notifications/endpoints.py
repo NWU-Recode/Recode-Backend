@@ -1,6 +1,10 @@
 #app\features\notifications\endpoints.py
-from fastapi import APIRouter, HTTPException
-from app.features.notifications.repository import NotificationRepository
+from __future__ import annotations
+from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List
+from app.common.deps import get_current_user
+from app.features.notifications import repository as repo
+from app.features.notifications.schemas import NotificationOut
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 

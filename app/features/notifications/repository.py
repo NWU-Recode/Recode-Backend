@@ -2,151 +2,222 @@
 from __future__ import annotations
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+import smtplib
+from email.message import EmailMessage
+from typing import Any, Dict, List, Optional
+from datetime import datetime
 
 from sqlalchemy import text
-from app.DB.session import engine  # adjust import path to your setup
+from app.DB.session import engine
+from app.features.notifications.schemas import NotificationOut
 
 logger = logging.getLogger(__name__)
 
 
-class NotificationRepository:
-    @classmethod
-    async def create_notification(
-        cls,
-        user_id: int,
-        title: str,
-        message: str,
-        type_: str = "general",
-        priority: int = 1,
-        link_url: Optional[str] = None,
-        expires_at: Optional[datetime] = None,
-    ) -> Dict[str, Any]:
-        loop = asyncio.get_running_loop()
+# -------------------------------
+# 🔹 SYNC HELPERS (DB OPERATIONS)
+# -------------------------------
 
-        def _insert():
-            with engine.begin() as conn:
-                result = conn.execute(
-                    text("""
-                        INSERT INTO notification (user_id, title, message, type, priority, link_url, expires_at)
-                        VALUES (:user_id, :title, :message, :type, :priority, :link_url, :expires_at)
-                        RETURNING *
-                    """),
-                    dict(
-                        user_id=user_id,
-                        title=title,
-                        message=message,
-                        type=type_,
-                        priority=priority,
-                        link_url=link_url,
-                        expires_at=expires_at,
-                    ),
-                ).fetchone()
-                return dict(result._mapping)
+def _sync_fetch_challenge_by_id(challenge_id: str) -> Optional[Dict[str, Any]]:
+    with engine.connect() as conn:
+        r = conn.execute(
+            text("SELECT id::text AS id, title, module_code, due_date FROM challenges WHERE id = :id"),
+            {"id": challenge_id},
+        )
+        row = r.fetchone()
+        return dict(row._mapping) if row else None
 
-        return await loop.run_in_executor(None, _insert)
 
-    @classmethod
-    async def get_unread(cls, user_id: int) -> List[Dict[str, Any]]:
-        loop = asyncio.get_running_loop()
+def _sync_fetch_challenges_between(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    with engine.connect() as conn:
+        res = conn.execute(
+            text(
+                """
+                SELECT id::text AS id, title, module_code, due_date
+                FROM challenges
+                WHERE status = 'active' AND due_date BETWEEN :start AND :end
+                """
+            ),
+            {"start": start, "end": end},
+        )
+        return [dict(r._mapping) for r in res]
 
-        def _fetch():
-            with engine.connect() as conn:
-                rows = conn.execute(
-                    text("""
-                        SELECT * FROM notification
-                        WHERE user_id = :user_id AND read = false
-                        ORDER BY created_at DESC
-                    """),
-                    {"user_id": user_id},
-                ).fetchall()
-                return [dict(r._mapping) for r in rows]
 
-        return await loop.run_in_executor(None, _fetch)
+def _sync_get_module_id_by_code(module_code: str) -> Optional[str]:
+    with engine.connect() as conn:
+        r = conn.execute(
+            text("SELECT id::text AS id FROM modules WHERE code = :code LIMIT 1"),
+            {"code": module_code},
+        )
+        row = r.fetchone()
+        return row[0] if row else None
 
-    @classmethod
-    async def mark_as_read(cls, notification_id: str):
-        loop = asyncio.get_running_loop()
 
-        def _update():
-            with engine.begin() as conn:
-                conn.execute(
-                    text("UPDATE notification SET read = true WHERE id = :id"),
-                    {"id": notification_id},
-                )
+def _sync_get_enrolled_student_ids(module_id: str) -> List[int]:
+    with engine.connect() as conn:
+        res = conn.execute(
+            text(
+                """
+                SELECT student_id
+                FROM enrolments
+                WHERE module_id = :module_id AND status = 'active' AND student_id IS NOT NULL
+                """
+            ),
+            {"module_id": module_id},
+        )
+        return [int(r[0]) for r in res]
 
-        await loop.run_in_executor(None, _update)
 
-    @classmethod
-    async def user_has_notification(cls, user_id: int, title: str) -> bool:
-        loop = asyncio.get_running_loop()
+def _sync_insert_notification_if_not_exists(
+    user_id: int,
+    title: str,
+    message: str,
+    ntype: str,
+    link_url: Optional[str],
+    expires_at: Optional[datetime],
+) -> bool:
+    """Insert a notification if no duplicate in last 48h for same user/type/link."""
+    with engine.begin() as conn:
+        dup = conn.execute(
+            text(
+                """
+                SELECT 1 FROM notification
+                WHERE user_id = :user_id AND type = :type AND link_url = :link_url
+                  AND created_at >= now() - interval '48 hours'
+                LIMIT 1
+                """
+            ),
+            {"user_id": user_id, "type": ntype, "link_url": link_url},
+        ).fetchone()
+        if dup:
+            return False
 
-        def _check():
-            with engine.connect() as conn:
-                row = conn.execute(
-                    text("""
-                        SELECT 1 FROM notification
-                        WHERE user_id = :user_id AND title = :title
-                        LIMIT 1
-                    """),
-                    {"user_id": user_id, "title": title},
-                ).fetchone()
-                return row is not None
+        conn.execute(
+            text(
+                """
+                INSERT INTO notification
+                    (user_id, title, message, type, priority, link_url, expires_at, created_at, read)
+                VALUES
+                    (:user_id, :title, :message, :type, :priority, :link_url, :expires_at, now(), false)
+                """
+            ),
+            {
+                "user_id": user_id,
+                "title": title,
+                "message": message,
+                "type": ntype,
+                "priority": 1,
+                "link_url": link_url,
+                "expires_at": expires_at,
+            },
+        )
+        return True
 
-        return await loop.run_in_executor(None, _check)
 
-    @classmethod
-    async def create_notifications_for_challenge(cls, challenge_id: str, ntype: str = "general") -> int:
+def _sync_get_user_email(user_id: int) -> Optional[Dict[str, Any]]:
+    with engine.connect() as conn:
+        r = conn.execute(
+            text("SELECT email, full_name FROM profiles WHERE id = :id"),
+            {"id": user_id},
+        ).fetchone()
+        return dict(r._mapping) if r else None
+
+
+def _sync_get_notifications_for_user(user_id: int, only_unread: bool = False, limit: int = 100):
+    """Fetch notifications for a user."""
+    with engine.connect() as conn:
+        q = """
+            SELECT id::text AS id, user_id, title, message, type, priority,
+                   link_url, expires_at, created_at, read
+            FROM notification
+            WHERE user_id = :user_id
         """
-        Placeholder method to create notifications for a challenge.
-        Returns the number of notifications created.
-        """
-        # Here you would fetch users who need this challenge notification
-        # For demo, just log and return 1
-        logger.info(f"Creating notifications for challenge {challenge_id} of type {ntype}")
-        return 1
+        if only_unread:
+            q += " AND read = false"
+        q += " ORDER BY created_at DESC LIMIT :limit"
 
-    @classmethod
-    async def process_scheduled_notifications_between(cls, window_start: datetime, window_end: datetime) -> int:
-        """
-        Process scheduled notifications whose times fall within the given window.
-        Marks them as sent and returns the total number created.
-        """
-        loop = asyncio.get_running_loop()
+        res = conn.execute(text(q), {"user_id": user_id, "limit": limit})
+        return [NotificationOut(**dict(r._mapping)) for r in res]
 
-        def _process():
-            total_created = 0
-            with engine.begin() as conn:
-                # Fetch scheduled notifications
-                rows = conn.execute(
-                    text("""
-                        SELECT challenge_id, notification_type
-                        FROM notification_schedule
-                        WHERE notification_time BETWEEN :start AND :end
-                          AND sent = FALSE
-                    """),
-                    {"start": window_start, "end": window_end}
-                ).fetchall()
 
-                for row in rows:
-                    challenge_id = row["challenge_id"]
-                    ntype = row["notification_type"]
+def _sync_mark_notification_read(notification_id: int, user_id: int) -> bool:
+    with engine.begin() as conn:
+        r = conn.execute(
+            text("UPDATE notification SET read = true WHERE id = :id AND user_id = :user_id RETURNING id"),
+            {"id": notification_id, "user_id": user_id},
+        ).fetchone()
+        return bool(r)
 
-                    # Create notifications for this challenge
-                    created = asyncio.run(cls.create_notifications_for_challenge(challenge_id, ntype))
-                    total_created += created
 
-                    # Mark as sent
-                    conn.execute(
-                        text("""
-                            UPDATE notification_schedule
-                            SET sent = TRUE
-                            WHERE challenge_id = :cid AND notification_type = :ntype
-                        """),
-                        {"cid": challenge_id, "ntype": ntype}
-                    )
+def _sync_delete_notification(notification_id: int, user_id: int) -> bool:
+    with engine.begin() as conn:
+        r = conn.execute(
+            text("DELETE FROM notification WHERE id = :id AND user_id = :user_id RETURNING id"),
+            {"id": notification_id, "user_id": user_id},
+        ).fetchone()
+        return bool(r)
 
-            return total_created
 
-        return await loop.run_in_executor(None, _process)
+# -------------------------------
+# 🔹 ASYNC WRAPPERS
+# -------------------------------
+
+async def fetch_challenge(challenge_id: str) -> Optional[Dict[str, Any]]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_fetch_challenge_by_id, challenge_id)
+
+
+async def get_challenges_ending_between(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_fetch_challenges_between, start, end)
+
+
+async def create_notifications_for_challenge(challenge_id: str, ntype: str = "deadline") -> int:
+    """Create notifications for all enrolled students in a challenge."""
+    loop = asyncio.get_running_loop()
+    challenge = await fetch_challenge(challenge_id)
+    if not challenge:
+        return 0
+
+    module_code = challenge.get("module_code")
+    if not module_code:
+        logger.warning("Challenge %s has no module_code; skipping", challenge_id)
+        return 0
+
+    module_id = await loop.run_in_executor(None, _sync_get_module_id_by_code, module_code)
+    if not module_id:
+        logger.warning("No module found for code %s (challenge %s)", module_code, challenge_id)
+        return 0
+
+    student_ids = await loop.run_in_executor(None, _sync_get_enrolled_student_ids, module_id)
+    if not student_ids:
+        return 0
+
+    title = "Challenge Ending Soon" if ntype == "deadline" else "New Challenge Available"
+    message = f"{challenge.get('title')} ends in 24 hours" if ntype == "deadline" else f"{challenge.get('title')} is now live"
+    link = f"/challenges/{challenge_id}"
+
+    created = 0
+    for sid in student_ids:
+        ok = await loop.run_in_executor(
+            None, _sync_insert_notification_if_not_exists,
+            sid, title, message, ntype, link, challenge.get("due_date")
+        )
+        if ok:
+            created += 1
+    return created
+
+
+async def get_notifications_for_user(user_id: int, only_unread: bool = False, limit: int = 100):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_get_notifications_for_user, user_id, only_unread, limit)
+
+
+async def mark_notification_read(notification_id: int, user_id: int):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_mark_notification_read, notification_id, user_id)
+
+
+async def delete_notification(notification_id: int, user_id: int):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_delete_notification, notification_id, user_id)
