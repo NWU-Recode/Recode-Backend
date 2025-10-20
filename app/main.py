@@ -1,3 +1,4 @@
+# C:\Repos\Recode-Backend\app\main.py
 """FastAPI Heartbeat. Lean."""
 
 from __future__ import annotations
@@ -8,18 +9,20 @@ from fastapi.responses import PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import os
+import re
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.Core.config import get_settings
-
 from app.Auth.routes import router as auth_router
-from app.features.slidesDownload.endpoints import router as slides_download_router 
-from app.features.notifications.endpoints import router as notifications_router 
-from app.features.slides.endpoints import router as slides_router  
-from app.features.profiles.endpoints import router as profiles_router  # Supabase-backed
+from app.features.slidesDownload.endpoints import router as slides_download_router
+from app.features.notifications.endpoints import router as notifications_router
+from app.features.slides.endpoints import router as slides_router
+from app.features.profiles.endpoints import router as profiles_router
 from app.features.judge0.endpoints import public_router as judge0_public_router
 from app.features.judge0.endpoints import protected_router as judge0_protected_router
 from app.features.challenges.endpoints import router as challenges_router, questions_router as challenge_questions_router
@@ -28,31 +31,32 @@ from app.features.submissions.endpoints import router as submissions_router, rou
 from app.features.analytics.endpoints import router as analytics_router
 from app.common.deps import get_current_user
 from app.common.middleware import SessionManagementMiddleware
-# vonani routers
 from app.features.admin.endpoints import router as admin_router
 from app.features.students.endpoints import router as student_router
 from app.features.semester.endpoints import router as semester_router
 from routes.debug import router as debug_router
-
+from app.api.notifications_schedule import router as notifications_schedule_router
+from app.jobs.notification_scheduler import start_notification_scheduler
 
 app = FastAPI(title="Recode Backend")
+_settings = get_settings()
+_START_TIME = datetime.now(timezone.utc)
 
+
+# ------------------------
+# CORS Setup
+# ------------------------
 def _split_env_csv(name: str, default: str = ""):
     raw = os.getenv(name, default)
     return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
 
 _FRONTEND_ORIGINS = _split_env_csv(
     "ALLOW_ORIGINS",
     "https://recode-frontend.vercel.app,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000",
 )
 
-
-# CORS middleware
-import re
-
-# compile origin regex once for reuse
 _CORS_ORIGIN_REGEX = re.compile(r"https?://(.+\.)?vercel\.app|https?://(localhost|127\.0\.0\.1)(:\d+)?", re.I)
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,9 +68,6 @@ app.add_middleware(
 )
 
 
-# Fallback middleware: ensure CORS headers are present on responses when the origin
-# matches the allowed origins or regex. This is defensive: some serverless/proxy
-# setups may alter headers; this middleware sets them if missing.
 @app.middleware("http")
 async def _ensure_cors_headers(request: Request, call_next):
     origin = request.headers.get("origin")
@@ -79,10 +80,8 @@ async def _ensure_cors_headers(request: Request, call_next):
             elif _CORS_ORIGIN_REGEX.match(origin):
                 allowed = True
         if allowed:
-            # Respect any existing header values set by CORSMiddleware but ensure they exist
             response.headers.setdefault("Access-Control-Allow-Origin", origin)
             response.headers.setdefault("Access-Control-Allow-Credentials", "true")
-            # Vary by Origin to prevent caching issues at proxies/CDNs
             vary = response.headers.get("Vary")
             if vary:
                 if "Origin" not in [v.strip() for v in vary.split(",")]:
@@ -90,17 +89,20 @@ async def _ensure_cors_headers(request: Request, call_next):
             else:
                 response.headers["Vary"] = "Origin"
     except Exception:
-        # Don't break request flow on CORS helper failure
         pass
     return response
 
-# Session middleware
+
+# ------------------------
+# Custom Middlewares
+# ------------------------
 app.add_middleware(SessionManagementMiddleware, auto_refresh=True)
 
-# Middleware: request id
+
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    import uuid, logging
+    import uuid
+
     incoming = request.headers.get("X-Request-Id") or request.headers.get("X-Request-ID")
     req_id = incoming or str(uuid.uuid4())
     request.state.request_id = req_id
@@ -111,46 +113,54 @@ async def request_id_middleware(request: Request, call_next):
     logger.info("request.end", extra={"request_id": req_id, "path": request.url.path, "status_code": response.status_code})
     return response
 
-# Middleware: timing
+
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):
     from time import perf_counter
+
     t0 = perf_counter()
     resp = await call_next(request)
     dt = int((perf_counter() - t0) * 1000)
     print(f"{request.method} {request.url.path} {dt}ms {resp.status_code}")
     return resp
 
-_START_TIME = datetime.now(timezone.utc)
-_settings = get_settings()
 
+# ------------------------
 # Routers
-app.include_router(auth_router)
+# ------------------------
 protected_deps = [Depends(get_current_user)]
+
+app.include_router(auth_router)
 app.include_router(profiles_router, dependencies=protected_deps)
 app.include_router(judge0_public_router)
 app.include_router(judge0_protected_router, dependencies=protected_deps)
 app.include_router(challenges_router, dependencies=protected_deps)
 app.include_router(challenge_questions_router, dependencies=protected_deps)
 app.include_router(dashboard_router, dependencies=protected_deps)
-app.include_router(slides_router, dependencies=protected_deps)          
-app.include_router(slides_download_router, dependencies=protected_deps) 
-app.include_router(notifications_router, dependencies=protected_deps) 
+app.include_router(slides_router, dependencies=protected_deps)
+app.include_router(slides_download_router, dependencies=protected_deps)
+app.include_router(notifications_router, dependencies=protected_deps)
+app.include_router(notifications_schedule_router, dependencies=protected_deps)
 app.include_router(submissions_router, dependencies=protected_deps)
 app.include_router(submissions_router_mixed, dependencies=protected_deps)
 app.include_router(analytics_router)
-# vonani
 app.include_router(admin_router)
 app.include_router(semester_router)
 app.include_router(student_router)
 app.include_router(debug_router, prefix="/debug", tags=["debug"])
 
+
+# ------------------------
 # Static files
+# ------------------------
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-# Root & health
+
+# ------------------------
+# Meta endpoints
+# ------------------------
 @app.get("/", tags=["meta"], summary="API Root")
 async def root():
     return {
@@ -161,15 +171,18 @@ async def root():
         "health": "/healthz"
     }
 
+
 @app.get("/healthz", tags=["meta"], summary="Liveness / readiness probe")
 async def healthz() -> Dict[str, Any]:
+    import time
+    from app.DB.session import engine
+
     now = datetime.now(timezone.utc)
     uptime_seconds = (now - _START_TIME).total_seconds()
     db_status: str = "unknown"
     db_latency_ms: float | None = None
+
     try:
-        import time
-        from app.DB.session import engine
         start = time.perf_counter()
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             conn.execute(text("SELECT 1"))
@@ -198,12 +211,10 @@ async def healthz() -> Dict[str, Any]:
             ),
             "judge0": "configured" if judge0_ready else "missing-config",
         },
-        "counts": {
-            "routes": route_count,
-            "models": 0,
-        },
+        "counts": {"routes": route_count, "models": 0},
         "tags": tags,
     }
+
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -213,10 +224,8 @@ async def favicon():
     return PlainTextResponse("favicon.ico not found", status_code=404)
 
 
-# Catch-all to serve SPA index for unknown GET routes (useful for client-side routing / SPA reloads)
 @app.get("/{full_path:path}", include_in_schema=False)
 async def spa_catch_all(request: Request, full_path: str):
-    # Only serve index.html for GET requests and when static dir exists
     try:
         if request.method != "GET":
             return PlainTextResponse("Not Found", status_code=404)
@@ -228,101 +237,71 @@ async def spa_catch_all(request: Request, full_path: str):
     return PlainTextResponse("Not Found", status_code=404)
 
 
-# Background publisher: periodically compute current week for each module and publish challenges
+# ------------------------
+# Background Tasks
+# ------------------------
 @app.on_event("startup")
-async def _start_background_publisher():
-    import asyncio, logging
-    from datetime import datetime, timezone
+async def _start_background_tasks():
+    import logging
+
     logger = logging.getLogger("publisher")
 
-    async def _compute_week_from_start(start_date):
-        from datetime import datetime, timezone
-        try:
-            if not start_date:
-                return None
-            # start_date may be ISO string or date; attempt parse
-            if isinstance(start_date, str):
-                try:
-                    start = datetime.fromisoformat(start_date).date()
-                except Exception:
-                    return None
-            else:
-                start = start_date
-            today = datetime.now(timezone.utc).date()
-            delta_days = (today - start).days
-            if delta_days < 0:
-                return None
-            week = (delta_days // 7) + 1
-            if week < 1:
-                week = 1
-            if week > 12:
-                week = 12
-            return week
-        except Exception:
-            return None
-
+    # Publisher loop
     async def _publisher_loop():
-        # Lazy imports to avoid startup import cycles
         from app.features.admin.repository import ModuleRepository
         from app.features.challenges.repository import challenge_repository
         from app.demo.timekeeper import apply_demo_offset_to_semester_start
+        from datetime import datetime, timezone
+        import os
 
         while True:
             try:
-                # Fetch all modules and determine their semester windows
-                try:
-                    # ModuleRepository.list_modules is not present as static fetch; use DB directly via ModuleRepository.get_module_by_code over modules list
-                    client = await __import__("app.DB.supabase", fromlist=["get_supabase"]).get_supabase()
-                    all_modules_resp = await client.table("modules").select("code, semester_id").execute()
-                    modules = all_modules_resp.data or []
-                except Exception:
-                    modules = []
+                client = await __import__("app.DB.supabase", fromlist=["get_supabase"]).get_supabase()
+                all_modules_resp = await client.table("modules").select("code, semester_id").execute()
+                modules = all_modules_resp.data or []
 
                 for mod in modules:
                     try:
                         module_code = mod.get("code")
                         semester_id = mod.get("semester_id")
-                        # Resolve semester window
                         window = await ModuleRepository.get_semester_window_for_module_code(module_code)
                         start_date = window.get("start_date")
-                        # apply demo offset if helper exists
                         try:
                             start_date = apply_demo_offset_to_semester_start(start_date, module_code)
                         except Exception:
                             pass
-                        week = await _compute_week_from_start(start_date)
-                        if week is None:
-                            continue
-                        # Publish challenges for this week scoped to module+semester if method exists
-                        try:
-                            pub_fn = getattr(challenge_repository, "publish_for_week", None)
-                            if callable(pub_fn):
-                                await pub_fn(week, module_code=module_code, semester_id=semester_id)
-                            else:
-                                logger.debug("publish_for_week not available on challenge_repository; skipping for module %s", module_code)
-                        except Exception as e:
-                            logger.exception("Failed to publish for week %s module %s: %s", week, module_code, e)
-                        # Enforce active limit per module if method exists
-                        try:
-                            enforce_fn = getattr(challenge_repository, "enforce_active_limit", None)
-                            if callable(enforce_fn):
-                                await enforce_fn(module_code=module_code, semester_id=semester_id, keep_count=2)
-                            else:
-                                logger.debug("enforce_active_limit not available on challenge_repository; skipping for module %s", module_code)
-                        except Exception as e:
-                            logger.exception("Failed to enforce active limit for module %s: %s", module_code, e)
-                    except Exception:
-                        logger.exception("Error while handling module in publisher loop: %s", mod)
-                # Sleep for interval (default 60s)
+
+                        today = datetime.now(timezone.utc).date()
+                        if isinstance(start_date, str):
+                            start_date = datetime.fromisoformat(start_date).date()
+                        delta_days = (today - start_date).days
+                        week = max(1, min(12, (delta_days // 7) + 1))
+
+                        pub_fn = getattr(challenge_repository, "publish_for_week", None)
+                        if callable(pub_fn):
+                            await pub_fn(week, module_code=module_code, semester_id=semester_id)
+
+                        enforce_fn = getattr(challenge_repository, "enforce_active_limit", None)
+                        if callable(enforce_fn):
+                            await enforce_fn(module_code=module_code, semester_id=semester_id, keep_count=2)
+                    except Exception as e:
+                        logger.exception("Module loop error: %s", e)
+
                 await asyncio.sleep(int(os.getenv("PUBLISHER_INTERVAL_SEC", "60")))
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("Background publisher loop failed unexpectedly")
+                logger.exception("Publisher loop failed")
                 await asyncio.sleep(60)
 
-    # Schedule the background publisher
     try:
         asyncio.create_task(_publisher_loop())
     except Exception:
         logging.getLogger("publisher").exception("Failed to start background publisher")
+
+    try:
+        asyncio.create_task(start_notification_scheduler())
+    except Exception:
+        logging.getLogger("notification_scheduler").exception(
+            "Failed to start background notification scheduler"
+        )
