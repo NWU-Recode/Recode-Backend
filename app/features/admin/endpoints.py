@@ -8,6 +8,7 @@ from app.features.semester.service import SemesterService
 from app.demo.timekeeper import *
 from app.common.deps import get_current_user, CurrentUser
 from app.DB.session import get_db
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.features.analytics.schema import AdminModuleOverviewOut,ModuleOverviewOut
@@ -436,6 +437,8 @@ async def demo_skip_weeks(
     db.commit()
     db.refresh(current_semester)
     
+    db.execute(text("SELECT refresh_all_challenge_statuses()"))
+
     return {
         "semester_id": str(current_semester.id),
         "semester_name": f"{current_semester.term_name} {current_semester.year}",
@@ -480,6 +483,8 @@ async def demo_clear_weeks(
     db.commit()
     db.refresh(current_semester)
     
+    db.execute(text("SELECT refresh_all_challenge_statuses()"))
+
     return {
         "semester_id": str(current_semester.id),
         "semester_name": f"{current_semester.term_name} {current_semester.year}",
