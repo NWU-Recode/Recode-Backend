@@ -1,6 +1,7 @@
 from pydantic import BaseModel,computed_field, Field
 from typing import List, Optional, Dict
 from uuid import UUID
+from datetime import datetime
 
 # ------------------- Student -------------------
 
@@ -10,6 +11,7 @@ class StudentChallengeFeedbackOut(BaseModel):
     challenge_id: UUID
     challenge_name: str
     challenge_type: str
+    challenge_status: str
     week_number: Optional[int]
     module_code: str
     module_name: str
@@ -17,6 +19,8 @@ class StudentChallengeFeedbackOut(BaseModel):
     questions_correct: int
     challenge_completion_rate: float
     challenge_tier: Optional[str] = None
+    release_date: Optional[datetime] = None 
+    due_date: Optional[datetime] = None  
 
 
 
@@ -31,6 +35,7 @@ class ChallengeProgressOut(BaseModel):
     challenge_id: Optional[UUID]
     challenge_name: Optional[str]
     challenge_type: Optional[str]
+    challenge_status: Optional[str]
     week_number: Optional[int]=None
     challenge_tier: Optional[str]
     module_code: Optional[str]

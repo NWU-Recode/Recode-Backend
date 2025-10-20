@@ -164,7 +164,8 @@ def get_challenge_progress(db: Session,  lecturer_id: int):
             cps.challenge_completion_rate,
             cps.difficulty_breakdown,
             cps.avg_elo_of_successful_students,
-            cps.avg_completion_time_minutes
+            cps.avg_completion_time_minutes,
+            cps.challenge_status
         FROM challenge_progress_summary cps
         JOIN modules m ON cps.module_code = m.code
         WHERE m.lecturer_id = :lecturer_id
