@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from app.DB.supabase import get_supabase
 from sqlalchemy.orm import Session
 from .repository import *
+from .schema import *
 from fastapi import HTTPException
 
 #from .repository import *
@@ -79,3 +80,15 @@ def challenge_progress_service(
         raise HTTPException(status_code=403, detail="Access denied. Lecturer role required.")
     
     return get_challenge_progress_per_student(db, user_id, module_code)
+
+def get_student_elo_weekly(
+    student_id: int,
+    module_code: Optional[str] = None,
+) -> List[StudentEloDistributionWeekly]:
+    """Get weekly ELO distribution for a student."""
+    data =get_student_elo_distribution_weekly(
+        student_id=student_id,
+        module_code=module_code,
+    )
+    return [StudentEloDistributionWeekly(**record) for record in data]
+
