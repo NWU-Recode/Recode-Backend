@@ -1,7 +1,9 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from typing import Optional
+from typing import Optional, List
+from uuid import UUID
 from fastapi import HTTPException
+from app.DB.session import get_db
 # ------------------- Students -------------------
 # Student Challenge Feedback
 def get_student_challenges(db: Session, student_id: int):
@@ -357,3 +359,53 @@ def get_challenge_progress_per_student(
     result = db.execute(text(query), params)
     columns = result.keys()
     return [dict(zip(columns, row)) for row in result.fetchall()]
+
+def get_student_elo_distribution_weekly(
+        student_id: int,
+        module_code: Optional[str] = None,
+        semester_id: Optional[UUID] = None
+    ) -> List[dict]:
+        """Get weekly ELO distribution for a specific student.
+        
+        Args:
+            student_id: The student's profile ID
+            module_code: Optional module code filter
+            semester_id: Optional semester ID filter
+            
+        Returns:
+            List of weekly ELO distribution records
+        """
+        db = next(get_db())
+        try:
+            # Build the query with filters
+            query = """
+                SELECT
+                    student_id,
+                    module_code,
+                    week_start,
+                    week_number,
+                    total_events,
+                    total_elo_change,
+                    avg_elo,
+                    latest_elo
+                FROM public.vw_student_elo_distribution_weekly
+                WHERE student_id = :student_id
+            """
+            
+            params = {"student_id": student_id}
+            
+            if module_code:
+                query += " AND module_code = :module_code"
+                params["module_code"] = module_code
+        
+            
+            query += " ORDER BY week_start DESC"
+            
+            result = db.execute(text(query), params)
+            
+            # Convert rows to dictionaries
+            columns = result.keys()
+            return [dict(zip(columns, row)) for row in result.fetchall()]
+            
+        finally:
+            db.close()
