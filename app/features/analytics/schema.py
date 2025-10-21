@@ -1,7 +1,7 @@
 from pydantic import BaseModel,computed_field, Field
 from typing import List, Optional, Dict
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime,date
 
 # ------------------- Student -------------------
 
@@ -128,3 +128,24 @@ class ChallengeProgressResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+class ELODistribution(BaseModel):
+    student_id: int
+    module_code: Optional[str] = None
+    week_start: Optional[date] = None
+    week_number: int
+    total_events: Optional[int] = None
+    total_elo_change: Optional[int] = None
+    avg_elo: Optional[float] = None
+    latest_elo: Optional[int] = None
+
+class StudentEloDistributionWeekly(BaseModel):
+    """Schema for weekly ELO distribution view."""
+    student_id: int
+    module_code: str
+    week_start: date
+    week_number: int
+    total_events: int
+    total_elo_change: int
+    avg_elo: float
+    latest_elo: int

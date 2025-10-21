@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from .service import *
 from .schema import *
+from app.features.analytics.service import get_student_elo_weekly
 from app.common.deps import get_current_user, CurrentUser
 from app.DB.session import get_db
 
-router = APIRouter()
+router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 ## ------------------- Student -------------------
 
@@ -104,3 +105,34 @@ def challenge_progress(
         current_user.role,
         module_code,
     )
+
+@router.get(
+    "/distribution/weekly",
+    response_model=List[ELODistribution],
+    summary="Get student's weekly ELO distribution"
+)
+async def get_my_elo_distribution_weekly(
+    module_code: Optional[str] = Query(None, description="Filter by module code"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Get the authenticated student's weekly ELO distribution.
+    
+    Returns weekly aggregated ELO data including:
+    - Total events per week
+    - Total ELO change per week
+    - Average ELO per week
+    - Latest ELO value for the week
+    
+    **Students can only see their own data.**
+    """
+    try:
+        return get_student_elo_weekly(
+            student_id=current_user.id,
+            module_code=module_code,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch ELO distribution: {str(e)}"
+        )
