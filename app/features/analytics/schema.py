@@ -1,6 +1,7 @@
 from pydantic import BaseModel,computed_field, Field
 from typing import List, Optional, Dict
 from uuid import UUID
+from datetime import datetime,date
 
 # ------------------- Student -------------------
 
@@ -10,6 +11,7 @@ class StudentChallengeFeedbackOut(BaseModel):
     challenge_id: UUID
     challenge_name: str
     challenge_type: str
+    challenge_status: str
     week_number: Optional[int]
     module_code: str
     module_name: str
@@ -17,6 +19,8 @@ class StudentChallengeFeedbackOut(BaseModel):
     questions_correct: int
     challenge_completion_rate: float
     challenge_tier: Optional[str] = None
+    release_date: Optional[datetime] = None 
+    due_date: Optional[datetime] = None  
 
 
 
@@ -31,6 +35,7 @@ class ChallengeProgressOut(BaseModel):
     challenge_id: Optional[UUID]
     challenge_name: Optional[str]
     challenge_type: Optional[str]
+    challenge_status: Optional[str]
     week_number: Optional[int]=None
     challenge_tier: Optional[str]
     module_code: Optional[str]
@@ -40,7 +45,7 @@ class ChallengeProgressOut(BaseModel):
     challenge_participation_rate: Optional[float]
     challenge_completion_rate: Optional[float]
     difficulty_breakdown: Optional[Dict[str, int]]
-    avg_elo_of_successful_students: Optional[float]
+    avg_elo_earned: Optional[float]
     avg_completion_time_minutes: Optional[float]
 
 # ------------------- Modules -------------------
@@ -108,7 +113,7 @@ class ChallengeProgressResponse(BaseModel):
     student_name: str
     challenge_name: str
     highest_badge: str  # bronze, silver, gold, ruby, emerald, diamond, or none
-    total_time_ms: int  # Sum of (finished_at - created_at) for all submissions
+    total_time_ms: float # Sum of (finished_at - created_at) for all submissions
 
     
     @computed_field
@@ -123,3 +128,24 @@ class ChallengeProgressResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+class ELODistribution(BaseModel):
+    student_id: int
+    module_code: Optional[str] = None
+    week_start: Optional[date] = None
+    week_number: int
+    total_events: Optional[int] = None
+    total_elo_change: Optional[int] = None
+    avg_elo: Optional[float] = None
+    latest_elo: Optional[int] = None
+
+class StudentEloDistributionWeekly(BaseModel):
+    """Schema for weekly ELO distribution view."""
+    student_id: int
+    module_code: str
+    week_start: date
+    week_number: int
+    total_events: int
+    total_elo_change: int
+    avg_elo: float
+    latest_elo: int

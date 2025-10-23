@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from .service import *
 from .schema import *
+from app.features.analytics.service import get_student_elo_weekly
 from app.common.deps import get_current_user, CurrentUser
 from app.DB.session import get_db
 
-router = APIRouter()
+router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 ## ------------------- Student -------------------
 
@@ -97,10 +98,68 @@ def challenge_progress(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Get student progress for challenges in a module.
+    Shows: student info, challenge name, highest badge, total time spent, total submissions.
+    """
+    # Verify lecturer owns module
+    module_check = db.execute(
+        text("SELECT code FROM modules WHERE code = :module_code AND lecturer_id = :lecturer_id"),
+        {"module_code": module_code, "lecturer_id": current_user.id}
+    ).fetchone()
     
-    return challenge_progress_service(
-        db,
-        current_user.id,
-        current_user.role,
-        module_code,
-    )
+    if not module_check:
+        raise HTTPException(status_code=403, detail="Module not found or access denied")
+    
+    # Use the view - much simpler!
+    query = """
+        SELECT
+            student_number,
+            student_name,
+            challenge_id,
+            challenge_name,
+            highest_badge,
+            total_time_ms,
+            completed_submissions,
+            total_submissions,
+            elo_earned,
+            gpa_score
+        FROM vw_student_challenge_progress
+        WHERE module_code = :module_code
+        ORDER BY student_name, challenge_name
+    """
+
+    result = db.execute(text(query), {"module_code": module_code})
+    columns = result.keys()
+    return [dict(zip(columns, row)) for row in result.fetchall()]
+
+@router.get(
+    "/distribution/weekly",
+    response_model=List[ELODistribution],
+    summary="Get student's weekly ELO distribution"
+)
+async def get_my_elo_distribution_weekly(
+    module_code: Optional[str] = Query(None, description="Filter by module code"),
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    """
+    Get the authenticated student's weekly ELO distribution.
+    
+    Returns weekly aggregated ELO data including:
+    - Total events per week
+    - Total ELO change per week
+    - Average ELO per week
+    - Latest ELO value for the week
+    
+    **Students can only see their own data.**
+    """
+    try:
+        return get_student_elo_weekly(
+            student_id=current_user.id,
+            module_code=module_code,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch ELO distribution: {str(e)}"
+        )

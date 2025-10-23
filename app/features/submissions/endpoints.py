@@ -1,11 +1,16 @@
+# app/features/submissions/endpoints.py
 from __future__ import annotations
 
 import logging
+<<<<<<< HEAD
 from datetime import datetime
+=======
+from datetime import datetime, timezone
+from typing import Dict, Optional, Any
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, model_validator
-from typing import Dict, Optional
 
 from app.common.deps import CurrentUser, get_current_user, require_role
 from app.features.submissions.schemas import (
@@ -21,11 +26,21 @@ from app.features.challenges.repository import challenge_repository
 from app.features.achievements.service import achievements_service
 from app.features.achievements.schemas import CheckAchievementsRequest
 
+<<<<<<< HEAD
 logger = logging.getLogger("submissions")
 
+=======
+# New imports for persistence
+from app.DB.supabase import get_supabase
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
 
-router = APIRouter(prefix="/submissions", tags=["submissions"], dependencies=[Depends(require_role("student"))])
+logger = logging.getLogger("submissions")
+
+router = APIRouter(
+    prefix="/submissions", tags=["submissions"], dependencies=[Depends(require_role("student"))]
+)
 router_mixed = APIRouter(prefix="/submissions", tags=["submissions"])
+
 
 class BatchSubmissionsPayload(BaseModel):
     submissions: Dict[str, BatchSubmissionEntry]
@@ -74,15 +89,13 @@ class BatchSubmissionsPayload(BaseModel):
     ),
 )
 async def quick_test_question_by_qid(
-    question_id: str,
-    payload: QuestionEvaluationRequest,
-    current_user: CurrentUser = Depends(get_current_user),
+    question_id: str, payload: QuestionEvaluationRequest, current_user: CurrentUser = Depends(get_current_user)
 ):
     """Resolve question -> challenge and run only the expected-output comparison for preview purposes."""
     try:
         student_number = int(current_user.id)
     except Exception:
-        raise HTTPException(status_code=400, detail='invalid_student_number')
+        raise HTTPException(status_code=400, detail="invalid_student_number")
     q = await submissions_repository.get_question(question_id)
     if not q:
         raise HTTPException(status_code=404, detail="question_not_found")
@@ -94,7 +107,7 @@ async def quick_test_question_by_qid(
         return await submissions_service.evaluate_question(
             challenge_id=challenge_id,
             question_id=question_id,
-            submitted_output=payload.output,  # Use the output from payload, not hardcoded None
+            submitted_output=payload.output,
             source_code=payload.source_code,
             language_id=payload.language_id,
             include_private=False,
@@ -114,9 +127,7 @@ async def quick_test_question_by_qid(
     summary="(debug) Return the question bundle including tests",
 )
 async def get_question_bundle_debug(
-    challenge_id: str,
-    question_id: str,
-    current_user: CurrentUser = Depends(require_role("student", "lecturer"))
+    challenge_id: str, question_id: str, current_user: CurrentUser = Depends(require_role("student", "lecturer"))
 ):
     try:
         return await submissions_service.get_question_bundle(challenge_id, question_id)
@@ -160,12 +171,12 @@ async def submit_question(
     except ValueError as exc:
         message = str(exc)
         status_map = {
-            'challenge_not_found': 404,
-            'question_not_found': 404,
-            'question_not_in_snapshot': 404,
-            'attempt_limit_reached': 400,
-            'challenge_already_submitted': 409,
-            'challenge_attempt_expired': 409,
+            "challenge_not_found": 404,
+            "question_not_found": 404,
+            "question_not_in_snapshot": 404,
+            "attempt_limit_reached": 400,
+            "challenge_already_submitted": 409,
+            "challenge_attempt_expired": 409,
         }
         raise HTTPException(status_code=status_map.get(message, 400), detail=message)
 
@@ -185,8 +196,11 @@ async def submit_challenge(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Full snapshot submit flow using expected-output grading for each question."""
+<<<<<<< HEAD
     # payload validation is handled by BatchSubmissionsPayload defined at module scope
     
+=======
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
     logger.info(f"🚀 SUBMIT_CHALLENGE CALLED: challenge={challenge_id[:8]}, user={current_user.id}")
 
     try:
@@ -195,6 +209,7 @@ async def submit_challenge(
     except Exception as e:
         logger.error(f"   ❌ Failed to convert user_id to int: {e}")
         raise HTTPException(status_code=400, detail="invalid_student_number")
+
     try:
         attempt = await challenge_repository.create_or_get_open_attempt(challenge_id, student_number)
         attempt_id = attempt.get("id")
@@ -262,12 +277,20 @@ async def submit_challenge(
         logger.info(f"🚀 REACHED ACHIEVEMENT BLOCK! student_number={student_number}, type={type(student_number)}")
         logger.info(f"📋 Performance payload: {performance_payload}")
         logger.info(f"📊 Breakdown ELO: {breakdown.elo_delta}, Badges: {breakdown.badge_tiers_awarded}")
+<<<<<<< HEAD
         
+=======
+
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
         achievement_summary = None
         try:
             logger.info(f"🎯 STARTING ACHIEVEMENT PROCESSING for student {student_number}")
             logger.info(f"   ELO Delta: {breakdown.elo_delta}, Badge Tiers: {breakdown.badge_tiers_awarded}")
+<<<<<<< HEAD
             
+=======
+
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
             achievement_summary = await achievements_service.check_achievements(
                 str(student_number),
                 CheckAchievementsRequest(
@@ -277,6 +300,7 @@ async def submit_challenge(
                     performance=performance_payload if performance_payload else None,
                 ),
             )
+<<<<<<< HEAD
             
             logger.info(f"✅ Achievement summary created: ELO={achievement_summary.updated_elo if achievement_summary else 'None'}")
             
@@ -284,6 +308,18 @@ async def submit_challenge(
             from app.features.achievements.repository import AchievementsRepository
             achievements_repo = AchievementsRepository()
             
+=======
+
+            logger.info(
+                f"✅ Achievement summary created: ELO={achievement_summary.updated_elo if achievement_summary else 'None'}"
+            )
+
+            # Update user_question_progress for each question
+            from app.features.achievements.repository import AchievementsRepository
+
+            achievements_repo = AchievementsRepository()
+
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
             for question_result in breakdown.question_results:
                 try:
                     logger.info(f"📝 Updating question_progress for Q:{question_result.question_id[:8]}")
@@ -301,6 +337,7 @@ async def submit_challenge(
                 except Exception as qp_err:
                     logger.warning(f"   ❌ Failed to update question_progress: {qp_err}")
                     pass  # Silently ignore if table doesn't exist
+<<<<<<< HEAD
             
             # Update user_scores table with overall stats
             if achievement_summary:
@@ -313,6 +350,21 @@ async def submit_challenge(
                     
                     logger.info(f"📊 Updating user_scores: attempted={questions_attempted}, passed={questions_passed}, badges={total_badges}")
                     
+=======
+
+            # Update user_scores table with overall stats
+            if achievement_summary:
+                try:
+                    questions_attempted = len(breakdown.question_results)
+                    questions_passed = len(breakdown.passed_questions)
+                    challenges_completed = 1 if questions_passed >= (questions_attempted * 0.5) else 0
+                    total_badges = len(achievement_summary.unlocked_badges) if achievement_summary.unlocked_badges else 0
+
+                    logger.info(
+                        f"📊 Updating user_scores: attempted={questions_attempted}, passed={questions_passed}, badges={total_badges}"
+                    )
+
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
                     await achievements_repo.update_user_scores(
                         user_id=str(student_number),
                         elo=achievement_summary.updated_elo,
@@ -322,13 +374,207 @@ async def submit_challenge(
                         challenges_completed=challenges_completed,
                         badges=total_badges,
                     )
+<<<<<<< HEAD
                     
+=======
+
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
                     logger.info(f"   ✅ user_scores updated successfully")
                 except Exception as scores_err:
                     logger.warning(f"   ❌ Failed to update user_scores: {scores_err}")
             else:
                 logger.warning(f"⚠️ No achievement_summary - skipping user_scores update")
+<<<<<<< HEAD
                     
+=======
+
+            # ----------------------------
+            # NEW: Persist rewards to DB
+            # ----------------------------
+            try:
+                client = await get_supabase()
+
+                # Helper to extract properties from achievement_summary safely
+                def _extract(summary_obj: Any, key: str) -> Any:
+                    try:
+                        return getattr(summary_obj, key)
+                    except Exception:
+                        pass
+                    try:
+                        return summary_obj.get(key)
+                    except Exception:
+                        pass
+                    try:
+                        return summary_obj.model_dump().get(key)
+                    except Exception:
+                        return None
+
+                # Collect common values
+                updated_elo = _extract(achievement_summary, "updated_elo")
+                previous_elo = _extract(achievement_summary, "previous_elo") or _extract(
+                    achievement_summary, "previousElo"
+                ) or None
+                unlocked_badges = _extract(achievement_summary, "unlocked_badges") or _extract(
+                    achievement_summary, "unlockedBadges"
+                ) or []
+                new_title_id = (
+                    _extract(achievement_summary, "new_title_id")
+                    or _extract(achievement_summary, "newTitleId")
+                    or _extract(achievement_summary, "title_id")
+                    or None
+                )
+
+                # If updated_elo is missing, compute from DB current value + breakdown.elo_delta
+                if updated_elo is None and breakdown and isinstance(breakdown.elo_delta, int):
+                    try:
+                        resp = await client.table("user_elo").select("*").eq("student_id", student_number).limit(1).execute()
+                        rows = getattr(resp, "data", None) or []
+                        existing = rows[0] if rows else None
+                        current_before = existing.get("current_elo") if existing else None
+                        if current_before is not None:
+                            previous_elo = int(current_before)
+                            updated_elo = int(current_before) + int(breakdown.elo_delta)
+                        else:
+                            previous_elo = 0
+                            updated_elo = int(breakdown.elo_delta)
+                    except Exception:
+                        previous_elo = None
+                        updated_elo = None
+
+                # Fetch profile to get supabase_id uuid for user_id field in elo_events
+                profile_supabase_id = None
+                try:
+                    resp = await client.table("profiles").select("supabase_id").eq("id", student_number).limit(1).execute()
+                    rows = getattr(resp, "data", None) or []
+                    if rows:
+                        profile_supabase_id = rows[0].get("supabase_id")
+                except Exception:
+                    profile_supabase_id = None
+
+                # Persist user_elo (upsert)
+                if updated_elo is not None:
+                    try:
+                        # fetch existing row to compute total_awarded_elo
+                        try:
+                            resp = await client.table("user_elo").select("*").eq("student_id", student_number).limit(1).execute()
+                            rows = getattr(resp, "data", None) or []
+                            existing = rows[0] if rows else None
+                        except Exception:
+                            existing = None
+
+                        # Determine previous_elo fallback
+                        if previous_elo is None:
+                            try:
+                                if existing and existing.get("current_elo") is not None:
+                                    previous_elo = int(existing.get("current_elo"))
+                                else:
+                                    previous_elo = 0
+                            except Exception:
+                                previous_elo = 0
+
+                        # Compute elo_delta_val (prefer breakdown.elo_delta)
+                        try:
+                            elo_delta_val = int(breakdown.elo_delta) if breakdown and hasattr(breakdown, "elo_delta") and breakdown.elo_delta is not None else (int(updated_elo) - int(previous_elo) if (previous_elo is not None and updated_elo is not None) else 0)
+                        except Exception:
+                            try:
+                                elo_delta_val = int(updated_elo) - int(previous_elo)
+                            except Exception:
+                                elo_delta_val = 0
+
+                        total_awarded = (existing.get("total_awarded_elo") if existing and existing.get("total_awarded_elo") is not None else 0)
+                        try:
+                            total_awarded = int(total_awarded) + int(elo_delta_val)
+                        except Exception:
+                            total_awarded = int(elo_delta_val)
+
+                        upsert_payload = {
+                            "student_id": student_number,
+                            "current_elo": int(updated_elo),
+                            "total_awarded_elo": total_awarded,
+                            "last_awarded_at": datetime.now(timezone.utc).isoformat(),
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        # Keep profile_id if present in existing row (defensive)
+                        if existing and existing.get("profile_id") is not None:
+                            upsert_payload["profile_id"] = existing.get("profile_id")
+
+                        await client.table("user_elo").upsert(upsert_payload).execute()
+                        logger.info(f"   ✅ user_elo upserted for student={student_number} current_elo={updated_elo}")
+                    except Exception as ue:
+                        logger.warning(f"   ❌ Failed to upsert user_elo for student {student_number}: {ue}")
+
+                    # Insert a single elo_events audit record
+                    try:
+                        event_payload = {
+                            "user_id": profile_supabase_id,
+                            "student_id": student_number,
+                            "event_type": "challenge_submission",
+                            "elo_change": int(elo_delta_val) if 'elo_delta_val' in locals() else (int(updated_elo) - int(previous_elo) if (previous_elo is not None and updated_elo is not None) else 0),
+                            "elo_before": int(previous_elo) if previous_elo is not None else None,
+                            "elo_after": int(updated_elo) if updated_elo is not None else None,
+                            "challenge_id": challenge_id,
+                            "attempt_id": str(attempt_id),
+                            "submission_id": str(attempt_id),
+                            "question_id": None,
+                            "metadata": {
+                                "gpa_score": getattr(breakdown, "gpa_score", None) if breakdown else None,
+                                "tests_total": getattr(breakdown, "tests_total", None) if breakdown else None,
+                                "tests_passed": getattr(breakdown, "tests_passed_total", None) if breakdown else None,
+                            },
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        # Clean None values (Supabase client tolerates missing keys but this keeps payload tidy)
+                        event_payload = {k: v for k, v in event_payload.items() if v is not None}
+                        await client.table("elo_events").insert(event_payload).execute()
+                        logger.info(f"   ✅ elo_events inserted for student={student_number}")
+                    except Exception as ee:
+                        logger.warning(f"   ❌ Failed to insert elo_events for student {student_number}: {ee}")
+
+                # Persist badges (if any)
+                try:
+                    if unlocked_badges:
+                        # unlocked_badges may be list of dicts or strings - normalize to list of ids
+                        badge_ids: list = []
+                        if isinstance(unlocked_badges, (list, tuple)):
+                            for item in unlocked_badges:
+                                if isinstance(item, dict):
+                                    bid = item.get("id") or item.get("badge_id") or item.get("badgeId")
+                                    if bid:
+                                        badge_ids.append(bid)
+                                else:
+                                    badge_ids.append(item)
+                        elif isinstance(unlocked_badges, str):
+                            badge_ids = [unlocked_badges]
+                        else:
+                            badge_ids = []
+
+                        for bid in badge_ids:
+                            try:
+                                badge_payload = {
+                                    "profile_id": student_number,
+                                    "badge_id": str(bid),
+                                    "date_earned": datetime.now(timezone.utc).isoformat(),
+                                    "question_id": None,
+                                }
+                                await client.table("user_badge").insert(badge_payload).execute()
+                                logger.info(f"   ✅ user_badge inserted for student={student_number} badge={bid}")
+                            except Exception as ub_err:
+                                logger.warning(f"   ❌ Failed to insert user_badge for student {student_number} badge {bid}: {ub_err}")
+                except Exception as badges_err:
+                    logger.warning(f"   ❌ Badges persistence failed: {badges_err}")
+
+                # Persist title change if present
+                if new_title_id:
+                    try:
+                        await client.table("profiles").update({"title_id": new_title_id}).eq("id", student_number).execute()
+                        logger.info(f"   ✅ profiles.title_id updated for student={student_number} -> title={new_title_id}")
+                    except Exception as title_err:
+                        logger.warning(f"   ❌ Failed to update profiles.title_id for student {student_number}: {title_err}")
+
+            except Exception as persist_err:
+                logger.warning(f"⚠️ Reward persistence failed (non-fatal): {persist_err}")
+
+>>>>>>> 05bddc2e9cc7cf94a7990070906f0d83ac5a0755
         except Exception as achievement_err:
             logger.error(f"❌ Achievement processing failed: {achievement_err}")
             achievement_summary = None
@@ -345,8 +591,5 @@ async def submit_challenge(
 
     return result_payload
 
-        
-
 
 __all__ = ["router"]
-

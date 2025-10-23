@@ -2,48 +2,40 @@
 from __future__ import annotations
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone, time as dt_time
+from datetime import datetime, timedelta, timezone
 
-from app.features.notifications import repository as notif_repo
+from app.features.notifications.repository import NotificationRepository
 
 logger = logging.getLogger("notification_scheduler")
 
 
-async def _sleep_until_next_utc_midnight():
-    now = datetime.now(timezone.utc)
-    # next midnight UTC
-    tomorrow = (now + timedelta(days=1)).date()
-    target = datetime.combine(tomorrow, dt_time(0, 0), tzinfo=timezone.utc)
-    delta = (target - now).total_seconds()
-    if delta < 0:
-        delta = 0
-    logger.info("Notifications scheduler sleeping until %s (UTC) -> %s seconds", target.isoformat(), delta)
-    await asyncio.sleep(delta)
-
-
 async def start_notification_scheduler():
     """
-    Start the notifications scheduler that runs daily at midnight UTC.
-    This function is intended to be started once at app startup (create_task).
+    Background scheduler that processes scheduled notifications every minute.
     """
-    logger.info("Starting notification scheduler (daily at midnight UTC)")
+    logger.info("Notification scheduler started")
     while True:
         try:
-            await _sleep_until_next_utc_midnight()
+            now = datetime.now(timezone.utc)
+            window_start = now
+            window_end = now + timedelta(seconds=60)  # look 1 minute ahead
 
-            # compute target = now + 24 hours; but because we run at midnight,
-            # this picks challenges with due_date roughly tomorrow midnight
-            target = datetime.now(timezone.utc) + timedelta(hours=24)
-            window_start = target - timedelta(seconds=60)
-            window_end = target + timedelta(seconds=60)
+            created_count = await NotificationRepository.process_scheduled_notifications_between(
+                window_start, window_end
+            )
+            logger.info(f"Scheduled notifications processed: {created_count}")
 
-            logger.info("Running daily notification job for due_date window %s - %s", window_start.isoformat(), window_end.isoformat())
-
-            created = await notif_repo.create_notifications_for_challenges_between(window_start, window_end)
-            logger.info("Notifications created from daily job: %s", created)
-        except asyncio.CancelledError:
-            logger.info("Notification scheduler cancelled, exiting")
-            break
-        except Exception:
-            logger.exception("Notification scheduler loop failed; will retry in 60s")
+            # Sleep until the next minute
             await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            logger.info("Notification scheduler cancelled")
+            break
+        except Exception as e:
+            logger.exception(f"Notification scheduler error: {e}, retrying in 60s")
+            await asyncio.sleep(60)
+
+
+# Optional: helper to run scheduler standalone for testing
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(start_notification_scheduler())

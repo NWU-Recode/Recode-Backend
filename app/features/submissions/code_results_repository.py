@@ -1,6 +1,8 @@
+
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 
@@ -83,7 +85,11 @@ class CodeResultsRepository:
         challenge_id: Optional[str] = None,
         question_id: Optional[str] = None,
         summary: Optional[Dict[str, Any]] = None,
+        results_id: Optional[str] = None,  # NEW: Accept pre-generated results_id
     ) -> Optional[str]:
+        import logging
+        logger = logging.getLogger(__name__)
+        
         client = await self._client()
         summary = dict(summary or {})
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -101,6 +107,7 @@ class CodeResultsRepository:
         payload: Dict[str, Any] = {
             "user_id": user_id,
             "challenge_id": challenge_id,
+            "question_id": question_id,  # NEW: Add question_id to code_submissions
             "source_code": source_code,
             "language_id": language_id,
             "stdin": stdin,
@@ -108,6 +115,11 @@ class CodeResultsRepository:
             "token": token,
             "created_at": now_iso,
         }
+        
+        # NEW: Add results_id if provided
+        if results_id:
+            payload["results_id"] = results_id
+            
         if "finished_at" not in summary:
             payload["finished_at"] = now_iso
 
@@ -137,10 +149,24 @@ class CodeResultsRepository:
         self,
         submission_id: str,
         results: Iterable[Dict[str, Any]],
-    ) -> None:
+        result_id: Optional[str] = None,  # NEW: Accept pre-generated result_id
+    ) -> Optional[str]:
+        """
+        Insert code_results records. 
+        Returns the result_id of the first record (for linking back to code_submissions).
+        """
         records = []
-        for item in results:
+        first_result_id = result_id or str(uuid.uuid4())
+        
+        for idx, item in enumerate(results):
             record = dict(item)
+            
+            # NEW: Use pre-generated ID for first record, generate for rest
+            if idx == 0 and result_id:
+                record["id"] = result_id
+            elif "id" not in record:
+                record["id"] = str(uuid.uuid4())
+                
             record.setdefault("submission_id", submission_id)
             created_at = record.get("created_at")
             if created_at is None:
@@ -162,13 +188,16 @@ class CodeResultsRepository:
             elif isinstance(record.get("compile_output"), (dict, list)):
                 record["compile_output"] = json.dumps(record["compile_output"])
             records.append({k: v for k, v in record.items() if v is not None})
+            
         if not records:
-            return
+            return None
+            
         client = await self._client()
         try:
             await client.table("code_results").insert(records).execute()
+            return first_result_id
         except Exception:
-            return
+            return None
 
     async def log_test_batch(
         self,
@@ -184,9 +213,72 @@ class CodeResultsRepository:
         challenge_id: Optional[str] = None,
         question_id: Optional[str] = None,
     ) -> Optional[str]:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔍 log_test_batch called: user={user_id}, question={question_id}, challenge={challenge_id}")
+        """
+        NEW: Fixed to handle circular foreign key relationship properly.
+        Steps:
+        1. Generate results_id upfront
+        2. Insert code_results with that ID (submission_id will be NULL initially)
+        3. Insert code_submissions with the results_id
+        4. Update code_results to link back to submission_id
+        """
         records_list = list(test_records)
         effective_summary = dict(summary or {})
         effective_summary.setdefault("number_of_runs", len(records_list) or None)
+        
+        # Step 1: Generate result_id upfront
+        result_id = str(uuid.uuid4())
+        
+        # Step 2: Insert code_results FIRST (without submission_id)
+        client = await self._client()
+        results_to_insert = []
+        
+        logger.info(f"📝 Processing {len(records_list)} test records")
+        
+        for idx, item in enumerate(records_list):
+            record = dict(item)
+            
+            # Map TestRunResultSchema fields to code_results columns
+            result_record = {
+                "id": result_id if idx == 0 else str(uuid.uuid4()),
+                "submission_id": None,  # Will be updated later
+                "stdout": record.get("stdout"),
+                "stderr": record.get("stderr"),
+                "compile_output": record.get("compile_output"),
+                "execution_time": record.get("execution_time"),
+                "memory_used": record.get("memory_used") or record.get("memory_used_kb"),
+                "status_id": record.get("status_id", 3),
+                "status_description": record.get("status_description", "Unknown"),
+                "is_correct": record.get("passed", False),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            
+            # Handle compile_output as JSON if needed
+            if isinstance(result_record.get("compile_output"), (dict, list)):
+                result_record["compile_output"] = json.dumps(result_record["compile_output"])
+            
+            # Remove None values but keep empty strings and False
+            cleaned_record = {}
+            for k, v in result_record.items():
+                if v is not None:
+                    cleaned_record[k] = v
+                elif k in ("status_id", "status_description", "is_correct"):  # Required fields
+                    cleaned_record[k] = result_record[k]
+            
+            results_to_insert.append(cleaned_record)
+            logger.debug(f"   Test {idx}: status={cleaned_record.get('status_id')}, correct={cleaned_record.get('is_correct')}")
+        
+        try:
+            await client.table("code_results").insert(results_to_insert).execute()
+            logger.info(f"✅ Inserted {len(results_to_insert)} code_results records")
+        except Exception as e:
+            logger.error(f"❌ Failed to insert code_results: {e}")
+            print(f"Failed to insert code_results: {e}")
+            return None
+        
+        # Step 3: Create code_submission with results_id
         submission_id = await self.create_submission(
             user_id=user_id,
             language_id=language_id,
@@ -197,10 +289,27 @@ class CodeResultsRepository:
             challenge_id=challenge_id,
             question_id=question_id,
             summary=effective_summary,
+            results_id=result_id,  # Link to the code_results we just created
         )
+        
         if not submission_id:
+            logger.error(f"❌ Failed to create code_submission")
             return None
-        await self.insert_results(submission_id, records_list)
+        
+        logger.info(f"✅ Created code_submission: {submission_id}")
+        
+        # Step 4: Update code_results to link back to submission
+        try:
+            result_ids = [r["id"] for r in results_to_insert]
+            await client.table("code_results").update({
+                "submission_id": submission_id
+            }).in_("id", result_ids).execute()
+            logger.info(f"✅ Updated {len(result_ids)} code_results with submission_id={submission_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to update code_results with submission_id: {e}")
+            print(f"Failed to update code_results with submission_id: {e}")
+        
+        logger.info(f"🎉 log_test_batch completed successfully: submission_id={submission_id}")
         return submission_id
 
 
