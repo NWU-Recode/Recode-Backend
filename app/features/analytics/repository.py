@@ -165,7 +165,7 @@ def get_challenge_progress(db: Session,  lecturer_id: int):
             cps.challenge_participation_rate,
             cps.challenge_completion_rate,
             cps.difficulty_breakdown,
-            cps.avg_elo_of_successful_students,
+            cps.avg_elo_earned,
             cps.avg_completion_time_minutes,
             cps.challenge_status
         FROM challenge_progress_summary cps
@@ -399,7 +399,7 @@ def get_student_elo_distribution_weekly(
                 params["module_code"] = module_code
         
             
-            query += " ORDER BY week_start DESC"
+            query += " ORDER BY week_number DESC"
             
             result = db.execute(text(query), params)
             

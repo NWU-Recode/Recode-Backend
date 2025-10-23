@@ -98,13 +98,40 @@ def challenge_progress(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Get student progress for challenges in a module.
+    Shows: student info, challenge name, highest badge, total time spent, total submissions.
+    """
+    # Verify lecturer owns module
+    module_check = db.execute(
+        text("SELECT code FROM modules WHERE code = :module_code AND lecturer_id = :lecturer_id"),
+        {"module_code": module_code, "lecturer_id": current_user.id}
+    ).fetchone()
     
-    return challenge_progress_service(
-        db,
-        current_user.id,
-        current_user.role,
-        module_code,
-    )
+    if not module_check:
+        raise HTTPException(status_code=403, detail="Module not found or access denied")
+    
+    # Use the view - much simpler!
+    query = """
+        SELECT
+            student_number,
+            student_name,
+            challenge_id,
+            challenge_name,
+            highest_badge,
+            total_time_ms,
+            completed_submissions,
+            total_submissions,
+            elo_earned,
+            gpa_score
+        FROM vw_student_challenge_progress
+        WHERE module_code = :module_code
+        ORDER BY student_name, challenge_name
+    """
+
+    result = db.execute(text(query), {"module_code": module_code})
+    columns = result.keys()
+    return [dict(zip(columns, row)) for row in result.fetchall()]
 
 @router.get(
     "/distribution/weekly",
