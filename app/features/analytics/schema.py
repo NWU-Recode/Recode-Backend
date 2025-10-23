@@ -45,7 +45,7 @@ class ChallengeProgressOut(BaseModel):
     challenge_participation_rate: Optional[float]
     challenge_completion_rate: Optional[float]
     difficulty_breakdown: Optional[Dict[str, int]]
-    avg_elo_of_successful_students: Optional[float]
+    avg_elo_earned: Optional[float]
     avg_completion_time_minutes: Optional[float]
 
 # ------------------- Modules -------------------
@@ -113,7 +113,7 @@ class ChallengeProgressResponse(BaseModel):
     student_name: str
     challenge_name: str
     highest_badge: str  # bronze, silver, gold, ruby, emerald, diamond, or none
-    total_time_ms: int  # Sum of (finished_at - created_at) for all submissions
+    total_time_ms: float # Sum of (finished_at - created_at) for all submissions
 
     
     @computed_field
